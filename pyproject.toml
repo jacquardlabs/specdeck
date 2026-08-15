@@ -1,18 +1,12 @@
-# No [build-system] yet — there is no package to build. Packaging, the CLI entry
-# point, and semantic-release config land with Phase 1, alongside CI.
-[project]
-name = "specdeck"
-version = "0.0.0"
-description = "Executable behavioral specs for LLM systems — prose criteria, deterministic wires, pinned judges"
-readme = "README.md"
-requires-python = ">=3.11"
-license = "MIT"
-authors = [{ name = "Jacquard Labs" }]
-
-# Deliberately empty. Additions beyond httpx, pydantic, typer, and rich need an
-# explicit ask — including inspect-ai, which is gated on the Phase-1 backend spike
-# (see DECISIONS.md).
-dependencies = []
+# Tool config only. There is no [project] or [build-system] table yet, because there
+# is no package to build — the two together without a source tree make `pip install -e .`
+# fail on a build backend rather than cleanly do nothing. Packaging metadata, the CLI
+# entry point, and semantic-release config land with Phase 1, alongside CI.
+#
+# Language decisions until then: Python 3.11 floor, 3.12 dev pin (.python-version),
+# uv for all tooling. Dependencies stay limited to httpx, pydantic, typer, and rich —
+# anything beyond those needs an explicit ask, including inspect-ai, which is gated on
+# the Phase-1 backend spike (see DECISIONS.md).
 
 [tool.ruff]
 line-length = 100
