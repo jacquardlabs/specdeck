@@ -33,7 +33,9 @@ same change. Two things to get right then:
   title produces no release rather than an error, which is the quiet failure worth knowing
   about.
 - **Small PRs, one per milestone.**
-- **`uv` for all Python tooling.** Python 3.11+.
+- **`uv` for all Python tooling.** The floor is 3.11 and the CI matrix will test it;
+  `.python-version` pins 3.12 as the local dev target, matching the sibling repos. The two
+  numbers differ on purpose.
 - **Ask before adding a dependency** beyond `httpx`, `pydantic`, `typer`, and `rich`.
 - **Every decision gets a DECISIONS.md line** — date, decision, alternative rejected.
 - **Real provider calls only behind `--live`.** The default mode replays cassettes.
