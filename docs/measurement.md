@@ -69,7 +69,8 @@ Chronically low agreement on a criterion is a lint suggestion: "ambiguous — re
 fix is the SME's, not the judge's.
 
 **Target:** ≥80% agreement on the demo suite. Below that after rubric iteration is a Phase 3
-kill criterion — see [PRODUCT.md](../PRODUCT.md).
+kill criterion — the gate is [#31](https://github.com/jacquardlabs/specdeck/issues/31), and it
+closes on a recorded decision either way. Rationale in [PRODUCT.md](../PRODUCT.md).
 
 ## Variance attribution
 

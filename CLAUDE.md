@@ -1,6 +1,7 @@
 # specdeck
 
-Card-based eval runner for LLM systems. Read [PRODUCT.md](PRODUCT.md) before proposing
+Card-based eval runner for LLM systems. Read [PRODUCT.md](PRODUCT.md) and the
+[open milestones](https://github.com/jacquardlabs/specdeck/milestones) before proposing
 anything; read [DECISIONS.md](DECISIONS.md) before proposing anything that contradicts it.
 
 **Repo state: pre-Phase-1.** No source code yet. The current artifacts are the product
