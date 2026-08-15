@@ -1,0 +1,35 @@
+# No [build-system] yet — there is no package to build. Packaging, the CLI entry
+# point, and semantic-release config land with Phase 1, alongside CI.
+[project]
+name = "specdeck"
+version = "0.0.0"
+description = "Executable behavioral specs for LLM systems — prose criteria, deterministic wires, pinned judges"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+authors = [{ name = "Jacquard Labs" }]
+
+# Deliberately empty. Additions beyond httpx, pydantic, typer, and rich need an
+# explicit ask — including inspect-ai, which is gated on the Phase-1 backend spike
+# (see DECISIONS.md).
+dependencies = []
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# Selected explicitly rather than extended from the defaults, which grow between
+# releases — a floating rule set turns a pinned linter into an unpinned one.
+select = [
+    "E",   # pycodestyle errors
+    "F",   # pyflakes
+    "W",   # pycodestyle warnings
+    "I",   # isort
+    "UP",  # pyupgrade
+    "B",   # bugbear
+    "SIM", # simplify
+]
+
+[tool.ruff.format]
+quote-style = "double"
