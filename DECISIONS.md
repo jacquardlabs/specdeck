@@ -20,6 +20,8 @@ section. A decision that turns out wrong gets a new entry, not an edit.
 | 2026-08-15 | **Parser scope** — a ~50-line parser over the card's four blocks. | Gherkin and step definitions: a second language to learn, and step definitions land the SME back in code. |
 | 2026-08-15 | **Coverage never gates CI**, with one exception: per-feature definition obligations, which are binary and non-gameable. | Coverage percentage thresholds — gameable, and they punish honest denominators. |
 | 2026-08-15 | **Governance** — the card format and property IR spec live in a separate repo under a permissive license, from day one. | Keeping the format inside the runner repo, which couples format stability to runner churn. |
+| 2026-08-15 | **Progress tracking lives in GitHub milestones and issues**, one milestone per phase. PRODUCT.md holds personas, principles, non-goals, and kill criteria only. | A roadmap section in PRODUCT.md — it drifts from the real issue state, and nothing makes anyone notice. |
+| 2026-08-15 | **Each gated phase ends in a kill-gate decision issue** (#31, #35) that closes with a recorded outcome, either way. | Letting a milestone close when its last feature issue closes — that records that work finished, not that the gate was evaluated. |
 
 ## Deferred — decided by a spike, not by argument
 

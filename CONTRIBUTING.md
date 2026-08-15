@@ -26,6 +26,18 @@ same change. Two things to get right then:
 - A Python matrix leg is one required context each. Adding a version to the matrix means
   adding a context to the ruleset in the same change.
 
+## Issues and milestones
+
+Progress is tracked in issues, not in docs. One milestone per phase, each carrying its exit
+artifact in the description.
+
+- **Every PR closes an issue.** `Closes #N` in the body. File one first if none exists.
+- **Milestone = phase.** An issue with no milestone is identified but not scheduled, and
+  that is a deliberate state — do not milestone it to make a board look complete.
+- **Kill gates are issues** (#31, #35). They close when the decision is recorded, either
+  way. A milestone that runs out of features has not passed its gate.
+- **Deferred findings get an issue before the PR opens**, not after.
+
 ## Conventions
 
 - **Conventional Commits** for commit subjects and PR titles. GitHub's squash-merge uses
@@ -45,7 +57,7 @@ same change. Two things to get right then:
 | Path | What |
 |---|---|
 | `README.md` | What specdeck is, and the target surface |
-| `PRODUCT.md` | Personas, principles, phases, non-goals, kill criteria |
+| `PRODUCT.md` | Personas, principles, non-goals, kill criteria — no roadmap; that is in milestones |
 | `DECISIONS.md` | Locked decisions and open spikes |
 | `docs/card-format.md` | Card spec, wire semantics, lint rules |
 | `docs/measurement.md` | Cells, coverage, mutation, calibration |

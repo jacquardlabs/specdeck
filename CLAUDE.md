@@ -29,8 +29,12 @@ TDD the three shared artifacts first, because everything else reads them:
 
 Then: card parser → wires engine → judge step → single-cell report → lint.
 
-Phase gates are in [PRODUCT.md](PRODUCT.md). Do not start a phase before the prior phase's
-public artifact ships.
+Phases are [GitHub milestones](https://github.com/jacquardlabs/specdeck/milestones), each
+carrying its exit artifact in the description. Do not start a phase before the prior
+phase's artifact ships. Phases 3 and 4 end in kill-gate decision issues (#31, #35) — those
+close with a recorded decision, either way, not by running out of features.
+
+Work comes from issues. If you are about to do something with no issue, file one first.
 
 ## Tech stack
 

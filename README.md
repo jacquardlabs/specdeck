@@ -6,8 +6,10 @@ cards against a provider × prompt matrix and reports pass rate, cost, and judge
 
 > **Status: pre-Phase-1.** Nothing here runs yet. This repo currently holds the product
 > definition, the card format spec, and the decision log. Every command and card shown
-> below describes the target surface, not shipped behavior. Track progress in
-> [PRODUCT.md](PRODUCT.md); decisions land in [DECISIONS.md](DECISIONS.md).
+> below describes the target surface, not shipped behavior. Progress is tracked in
+> [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
+> product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
+> [DECISIONS.md](DECISIONS.md).
 
 ## Why
 
