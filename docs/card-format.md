@@ -5,8 +5,9 @@ layout, the wire language under it, and the lint rules that check both.
 
 **Status.** The four blocks, tiers, binary judge verdicts, and the lockfile ship. The wire
 palette ships `never`, `at_most`, and bounds; `eventually`, after-K-then-Y, and precedence
-do not, and a card using one fails with the issue it waits on named. Lint ships nothing
-yet. See [DECISIONS.md](../DECISIONS.md).
+do not, and a card using one fails with the issue it waits on named. Lint ships its static
+and vocabulary-fed rules; the definition-fed, wireable-prose, and ledger-fed groups do not.
+See [DECISIONS.md](../DECISIONS.md).
 
 ## The file
 
@@ -133,6 +134,7 @@ data source they need.
 |---|---|---|
 | **Static** | 1 | Zone structure. Dead fixture and policy paths. Lockfile freshness. Contradictory wires. Credit weight validity. Judge and agent sharing a model family (warning). |
 | **Vocabulary-fed** | 1–2 | Wires referencing unknown tools. Invalid pattern × scope combinations. |
+
 | **Definition-fed** | 2 | Introspect the agent definition — a LangGraph graph, OpenAI SDK hand-offs, MCP configs, Claude Code subagent files. Obligations below. |
 | **Wireable prose** | 4 | Countable assertions in prose → suggest a wire. Paraphrase-duplicate criteria, via local embeddings. |
 | **Ledger-fed** | 3+ | Criteria with chronically low SME–judge agreement, flagged "ambiguous — reword." |
@@ -151,3 +153,13 @@ that silently degrades is worse than one that reports its own blindness.
 
 Machine-verifiable violations are errors. Anything about the content of prose is a
 suggestion. Never style-police the SME zone.
+
+A rule may also warn, when a violation is machine-verifiable but not definitively wrong —
+a card with no prose block, or a wire that restates another. And a rule reports itself
+**skipped** when it lacked the data to run at all, naming what was missing. A check that
+silently degrades is worse than one that reports its own blindness, and a clean report has
+to mean one thing.
+
+The tool vocabulary is introspected — the tool registry, MCP schemas, the agent roster.
+Until that introspection exists, `specdeck lint --vocabulary <file>` takes a flat list, and
+without it `unknown-tool` reports itself skipped rather than passing.

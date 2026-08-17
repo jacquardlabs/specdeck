@@ -1,0 +1,21 @@
+# Hook revs are pinned exactly, for the same reason ruff is pinned in pyproject.toml and
+# the CI actions are pinned to SHAs: a hook that drifts between runs is not a check.
+#
+# CI runs these same hooks (.github/workflows/ci.yml), so the two cannot disagree about
+# what "clean" means.
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff-check
+      - id: ruff-format
+
+  - repo: local
+    hooks:
+      # Dogfooding: if our own cards do not survive our own linter, the linter is wrong.
+      - id: specdeck-lint
+        name: specdeck lint
+        entry: uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/vocabulary.txt
+        language: system
+        files: ^cards/
+        pass_filenames: false
