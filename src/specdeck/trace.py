@@ -50,6 +50,18 @@ class GenAI:
     OUTPUT_MESSAGES = "gen_ai.output.messages"
 
 
+class Specdeck:
+    """The reserved namespace for domain events the GenAI semconv does not define.
+
+    A marker is stamped on the span it describes. In an eval the simulator stamps it; in
+    production the agent's own instrumentation does, which is what lets one property serve
+    the runtime monitor as well as the eval. Legal names are declared alongside the tool
+    vocabulary, so an unknown marker is a lint error rather than a wire that never fires.
+    """
+
+    MARKER = "specdeck.marker"
+
+
 #: Required attributes per operation. The semconv marks more as Recommended; only the ones
 #: a wire or the judge cannot do without are enforced.
 REQUIRED_ATTRIBUTES: dict[Operation, tuple[str, ...]] = {
@@ -103,6 +115,11 @@ class Span(BaseModel):
     @property
     def duration_s(self) -> float:
         return (self.end_time - self.start_time).total_seconds()
+
+    @property
+    def marker(self) -> str | None:
+        value = self.attributes.get(Specdeck.MARKER)
+        return str(value) if value is not None else None
 
     @property
     def input_messages(self) -> list[Message]:

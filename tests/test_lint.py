@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from specdeck.lint import Severity, lint_card, lint_paths
+from specdeck.lint import Severity, Vocabulary, lint_card, lint_paths
 from specdeck.lockfile import Lockfile
 
 GOOD = """\
@@ -87,11 +87,13 @@ class TestWires:
         card.write_text("# Scenario: x\nThe agent answers.\nwire:\n  - t: wibble\n")
         assert "wire-syntax" in rules(lint_card(card), Severity.ERROR)
 
-    def test_a_deferred_pattern_names_the_issue_it_waits_on(self, tmp_path: Path) -> None:
+    def test_a_pattern_the_palette_names_but_does_not_implement_says_so(
+        self, tmp_path: Path
+    ) -> None:
         card = tmp_path / "x.md"
-        card.write_text("# Scenario: x\nThe agent answers.\nwire:\n  - t: after 3 non_agreement\n")
+        card.write_text("# Scenario: x\nThe agent answers.\nwire:\n  - t: eventually\n")
         message = next(f.message for f in lint_card(card) if f.rule == "wire-syntax")
-        assert "#47" in message
+        assert "not implemented" in message
 
     def test_never_and_at_most_on_the_same_tool_contradict(self, tmp_path: Path) -> None:
         card = tmp_path / "x.md"
@@ -130,13 +132,12 @@ class TestVocabulary:
     def test_an_unknown_tool_is_an_error_when_a_vocabulary_is_supplied(
         self, card_dir: Path
     ) -> None:
-        findings = lint_card(card_dir / "refund.md", vocabulary={"web_search"})
+        findings = lint_card(card_dir / "refund.md", vocabulary=Vocabulary(tools={"web_search"}))
         assert "unknown-tool" in rules(findings, Severity.ERROR)
 
     def test_a_known_tool_passes(self, card_dir: Path) -> None:
-        findings = lint_card(
-            card_dir / "refund.md", vocabulary={"web_search", "modify_reservation"}
-        )
+        vocabulary = Vocabulary(tools={"web_search", "modify_reservation"})
+        findings = lint_card(card_dir / "refund.md", vocabulary=vocabulary)
         assert rules(findings, Severity.ERROR) == []
 
     def test_the_rule_reports_itself_skipped_without_a_vocabulary(self, card_dir: Path) -> None:
@@ -243,3 +244,38 @@ class TestThisReposOwnCards:
         cards = Path(__file__).resolve().parent.parent / "cards"
         result = lint_paths([cards], vocabulary=_vocabulary(cards / "vocabulary.txt"))
         assert [f for f in result.findings if f.rule == "unknown-tool"] == []
+
+
+class TestMarkerVocabulary:
+    def test_an_undeclared_marker_is_an_error(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text(
+            "# Scenario: x\nThe agent answers.\nwire:\n  - transfer_to_human: after 3 impatience\n"
+        )
+        findings = lint_card(card, vocabulary=Vocabulary(tools={"transfer_to_human"}))
+        assert "unknown-marker" in rules(findings, Severity.ERROR)
+
+    def test_a_declared_marker_passes(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text(
+            "# Scenario: x\nThe agent answers.\n"
+            "wire:\n  - transfer_to_human: after 3 non_agreement\n"
+        )
+        vocabulary = Vocabulary(tools={"transfer_to_human"}, markers={"non_agreement"})
+        assert rules(lint_card(card, vocabulary=vocabulary), Severity.ERROR) == []
+
+    def test_the_follow_up_tool_of_an_escalation_is_checked_too(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text(
+            "# Scenario: x\nThe agent answers.\nwire:\n  - not_a_tool: after 3 non_agreement\n"
+        )
+        findings = lint_card(card, vocabulary=Vocabulary(markers={"non_agreement"}))
+        assert "unknown-tool" in rules(findings, Severity.ERROR)
+
+    def test_both_rules_report_themselves_skipped_without_a_vocabulary(
+        self, card_dir: Path
+    ) -> None:
+        skipped = {
+            f.rule for f in lint_card(card_dir / "refund.md") if f.severity is Severity.SKIPPED
+        }
+        assert {"unknown-tool", "unknown-marker"} <= skipped

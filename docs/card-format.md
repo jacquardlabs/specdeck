@@ -4,10 +4,10 @@ The card is the product. This document is the spec everything else anchors to: t
 layout, the wire language under it, and the lint rules that check both.
 
 **Status.** The four blocks, tiers, binary judge verdicts, and the lockfile ship. The wire
-palette ships `never`, `at_most`, and bounds; `eventually`, after-K-then-Y, and precedence
-do not, and a card using one fails with the issue it waits on named. Lint ships its static
-and vocabulary-fed rules; the definition-fed, wireable-prose, and ledger-fed groups do not.
-See [DECISIONS.md](../DECISIONS.md).
+palette ships `never`, `at_most`, bounds, and after-K-then-Y; `eventually` and precedence
+do not, and a card using one fails saying so. Lint ships its static and vocabulary-fed
+rules; the definition-fed, wireable-prose, and ledger-fed groups do not. See
+[DECISIONS.md](../DECISIONS.md).
 
 ## The file
 
@@ -103,12 +103,18 @@ card format changing.
   precedence — plus **bounds**, which compare a trace-level measure against a limit.
   `latency: under 120s` and `response_tokens under 400` are bounds, and no Dwyer pattern
   expresses them: `response_tokens` is a sum across `chat` spans, so no event selector
-  reaches it. Whether bounds are properly part of the palette is
-  [#53](https://github.com/jacquardlabs/specdeck/issues/53); the runner implements them
-  either way, because the example card above needs them.
+  reaches it. Measures are a closed set the palette owns, so lint rejects an unknown one
+  without anything being declared.
 - **Scopes** are `globally`, between two events, and after K occurrences.
 - **Event selectors** use OTel GenAI vocabulary — `invoke_agent`, `execute_tool`,
-  `retrieval`, and tool names.
+  `retrieval`, and tool names — plus **domain events** in a reserved `specdeck.*`
+  namespace, for behaviour the semconv has no place for. The escalation wire above
+  triggers on `non_agreement`, and no `gen_ai.*` attribute means "the traveller
+  disagreed". A marker is stamped on the span it describes: in an eval the simulator
+  stamps it, and in production the agent's own instrumentation does, which is what lets
+  one property serve the runtime monitor as well. Legal marker names are declared
+  alongside the tool vocabulary, so an unknown one is a lint error rather than a wire
+  that never fires.
 
 This is a fixed palette, not a general logic. Anything the palette cannot express is a
 gap to discuss, not a reason to widen the language.
@@ -160,6 +166,8 @@ a card with no prose block, or a wire that restates another. And a rule reports 
 silently degrades is worse than one that reports its own blindness, and a clean report has
 to mean one thing.
 
-The tool vocabulary is introspected — the tool registry, MCP schemas, the agent roster.
-Until that introspection exists, `specdeck lint --vocabulary <file>` takes a flat list, and
-without it `unknown-tool` reports itself skipped rather than passing.
+The tool and marker vocabularies are introspected — the tool registry, MCP schemas, the
+agent roster. Until that introspection exists, `specdeck lint --vocabulary <file>` takes a
+declared list under `[tools]` and `[markers]` headings, and without it `unknown-tool` and
+`unknown-marker` report themselves skipped rather than passing. Measures need no
+declaration: they are the palette's own closed set.

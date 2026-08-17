@@ -1,6 +1,7 @@
 import pytest
 
 from specdeck.ir import (
+    AfterKThen,
     AtMost,
     Bound,
     Measure,
@@ -160,3 +161,60 @@ class TestRoundTrip:
             {"id": "budget", "rule": {"pattern": "at_most", "n": 2, "selector": {"tool": "search"}}}
         )
         assert isinstance(restored.rule, AtMost)
+
+
+class TestAfterKThen:
+    def _trace(self, markers: int, escalates: bool):
+        from specdeck.trace import Specdeck
+
+        spans = [span("root", Operation.INVOKE_AGENT, parent=None, duration=20.0)]
+        for i in range(markers):
+            spans.append(
+                span(
+                    f"chat-{i}",
+                    Operation.CHAT,
+                    offset=float(i),
+                    **{Specdeck.MARKER: "pushback"},
+                )
+            )
+        if escalates:
+            escalation = span("tool-esc", Operation.EXECUTE_TOOL, offset=float(markers) + 1)
+            escalation.attributes[GenAI.TOOL_NAME] = "escalate"
+            spans.append(escalation)
+        return trace(*spans)
+
+    def _rule(self):
+        return AfterKThen(
+            k=3,
+            trigger=Selector(marker="pushback"),
+            then=Selector(operation=Operation.EXECUTE_TOOL, tool="escalate"),
+        )
+
+    def test_is_vacuously_true_below_k(self) -> None:
+        verdict = evaluate(gate(self._rule()), self._trace(markers=2, escalates=False))
+        assert verdict.passed
+        assert "under k=3" in verdict.detail
+
+    def test_fails_when_k_is_reached_and_nothing_follows(self) -> None:
+        verdict = evaluate(gate(self._rule()), self._trace(markers=3, escalates=False))
+        assert not verdict.passed
+        assert "0 follow-ups" in verdict.detail
+
+    def test_passes_when_the_follow_up_occurs_after_the_kth_trigger(self) -> None:
+        assert evaluate(gate(self._rule()), self._trace(markers=3, escalates=True)).passed
+
+    def test_a_follow_up_before_the_kth_trigger_does_not_count(self) -> None:
+        from specdeck.trace import Specdeck
+
+        early = span("tool-esc", Operation.EXECUTE_TOOL, offset=0.0)
+        early.attributes[GenAI.TOOL_NAME] = "escalate"
+        spans = [span("root", Operation.INVOKE_AGENT, parent=None, duration=20.0), early]
+        spans += [
+            span(f"chat-{i}", Operation.CHAT, offset=float(i) + 1, **{Specdeck.MARKER: "pushback"})
+            for i in range(3)
+        ]
+        assert not evaluate(gate(self._rule()), trace(*spans)).passed
+
+    def test_it_round_trips_through_serialisation(self) -> None:
+        prop = gate(self._rule())
+        assert Property.model_validate(prop.model_dump()) == prop

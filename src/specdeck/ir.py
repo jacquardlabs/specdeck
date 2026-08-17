@@ -29,7 +29,7 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
-from .trace import GenAI, Operation, Span, Trace
+from .trace import GenAI, Operation, Span, Specdeck, Trace
 
 
 class Tier(StrEnum):
@@ -56,6 +56,9 @@ class Selector(BaseModel):
     operation: Operation | None = None
     tool: str | None = None
     finish_reason: str | None = None
+    #: A `specdeck.*` domain event. Not semconv vocabulary, by decision: the semconv has
+    #: no place for "the traveller disagreed", and after-K-then-Y needs exactly that.
+    marker: str | None = None
 
     def matches(self, span: Span) -> bool:
         if self.operation is not None and span.operation is not self.operation:
@@ -66,11 +69,11 @@ class Selector(BaseModel):
             reasons = span.attributes.get(GenAI.RESPONSE_FINISH_REASONS) or []
             if self.finish_reason not in reasons:
                 return False
-        return True
+        return self.marker is None or span.attributes.get(Specdeck.MARKER) == self.marker
 
     def describe(self) -> str:
-        parts = [str(v) for v in (self.operation, self.tool, self.finish_reason) if v is not None]
-        return " ".join(parts) or "any span"
+        fields = (self.operation, self.tool, self.finish_reason, self.marker)
+        return " ".join(str(v) for v in fields if v is not None) or "any span"
 
 
 class Scope(BaseModel):
@@ -137,7 +140,36 @@ class Bound(BaseModel):
         return float(trace.total_output_tokens)
 
 
-Rule = Annotated[Never | AtMost | Bound, Field(discriminator="pattern")]
+class AfterKThen(BaseModel):
+    """Once the trigger has occurred k times, the follow-up must occur after it.
+
+    Vacuously true below k: a card saying "escalate after 3 pushbacks" asserts nothing
+    about a run with two. Reporting that as a pass would be right but unreadable, so the
+    detail says the trigger never reached k rather than leaving it implied.
+    """
+
+    pattern: Literal["after_k_then"] = "after_k_then"
+    k: int
+    trigger: Selector
+    then: Selector
+
+    @model_validator(mode="after")
+    def _check_k(self) -> AfterKThen:
+        if self.k < 1:
+            raise ValueError(f"after-K-then-Y needs k of at least 1, got {self.k}")
+        return self
+
+    def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
+        triggers = [s for s in spans if self.trigger.matches(s)]
+        if len(triggers) < self.k:
+            return True, f"{self.trigger.describe()} occurred {len(triggers)}x, under k={self.k}"
+        cutoff = triggers[self.k - 1].start_time
+        after = [s for s in spans if self.then.matches(s) and s.start_time >= cutoff]
+        detail = f"k={self.k} reached, {len(after)} follow-up{'' if len(after) == 1 else 's'}"
+        return bool(after), detail
+
+
+Rule = Annotated[Never | AtMost | Bound | AfterKThen, Field(discriminator="pattern")]
 
 
 class Property(BaseModel):

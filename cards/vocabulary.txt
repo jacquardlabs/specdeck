@@ -6,6 +6,7 @@
 # can run at all, and the file is a lint input rather than a spec surface.
 #
 # tau-bench airline domain.
+[tools]
 book_reservation
 calculate
 cancel_reservation
@@ -20,3 +21,8 @@ transfer_to_human_agents
 update_reservation_baggages
 update_reservation_flights
 update_reservation_passengers
+
+# Domain events the simulator stamps as `specdeck.marker`, which the GenAI semconv has no
+# place for. In production the agent's own instrumentation stamps them instead.
+[markers]
+non_agreement

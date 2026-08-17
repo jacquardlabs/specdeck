@@ -25,7 +25,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card, CardError, parse
-from .ir import AtMost, Bound, Never, Property
+from .ir import AfterKThen, AtMost, Bound, Measure, Never, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import Lockfile, StaleLock
 from .wires import WireError, compile_wires
@@ -67,8 +67,19 @@ class Result(BaseModel):
         return Counter(f.severity.value for f in self.findings)
 
 
+class Vocabulary(BaseModel):
+    """What a card is allowed to name. Introspected in the end; declared for now.
+
+    Tools and markers are open sets the project declares. Measures are closed — they are
+    the palette's own, so lint checks them against `Measure` and needs nothing declared.
+    """
+
+    tools: set[str] = set()
+    markers: set[str] = set()
+
+
 def lint_paths(
-    paths: list[Path], *, lock: Lockfile | None = None, vocabulary: set[str] | None = None
+    paths: list[Path], *, lock: Lockfile | None = None, vocabulary: Vocabulary | None = None
 ) -> Result:
     findings: list[Finding] = []
     for card_path in _cards(paths):
@@ -77,7 +88,7 @@ def lint_paths(
 
 
 def lint_card(
-    path: Path | str, *, lock: Lockfile | None = None, vocabulary: set[str] | None = None
+    path: Path | str, *, lock: Lockfile | None = None, vocabulary: Vocabulary | None = None
 ) -> list[Finding]:
     path = Path(path)
     name = str(path)
@@ -209,36 +220,80 @@ def _consistency(properties: list[Property], name: str) -> list[Finding]:
 
 
 def _vocabulary(
-    properties: list[Property], name: str, vocabulary: set[str] | None
+    properties: list[Property], name: str, vocabulary: Vocabulary | None
 ) -> list[Finding]:
-    tools = sorted(
-        {
-            p.rule.selector.tool
-            for p in properties
-            if isinstance(p.rule, Never | AtMost) and p.rule.selector.tool
-        }
-    )
+    """Wires may only name things that exist: tools, markers, and measures."""
+    findings = _measures(properties, name)
     if vocabulary is None:
-        return [
+        return findings + [
             Finding(
-                rule="unknown-tool",
+                rule=rule,
                 severity=Severity.SKIPPED,
                 card=name,
                 message=(
-                    "no tool vocabulary supplied, so wires naming a tool that does not "
-                    "exist cannot be caught here; pass --vocabulary"
+                    f"no {noun} vocabulary supplied, so wires naming a {noun} that does "
+                    "not exist cannot be caught here; pass --vocabulary"
                 ),
             )
+            for rule, noun in (("unknown-tool", "tool"), ("unknown-marker", "marker"))
         ]
-    return [
+    findings += [
         Finding(
             rule="unknown-tool",
             severity=Severity.ERROR,
             card=name,
-            message=f"wire names {tool!r}, which is not in the tool vocabulary",
+            message=f"wire names tool {tool!r}, which is not in the vocabulary",
         )
-        for tool in tools
-        if tool not in vocabulary
+        for tool in _named_tools(properties)
+        if tool not in vocabulary.tools
+    ]
+    findings += [
+        Finding(
+            rule="unknown-marker",
+            severity=Severity.ERROR,
+            card=name,
+            message=f"wire triggers on marker {marker!r}, which is not in the vocabulary",
+        )
+        for marker in _named_markers(properties)
+        if marker not in vocabulary.markers
+    ]
+    return findings
+
+
+def _named_tools(properties: list[Property]) -> list[str]:
+    tools: set[str] = set()
+    for prop in properties:
+        rule = prop.rule
+        if isinstance(rule, Never | AtMost) and rule.selector.tool:
+            tools.add(rule.selector.tool)
+        elif isinstance(rule, AfterKThen) and rule.then.tool:
+            tools.add(rule.then.tool)
+    return sorted(tools)
+
+
+def _named_markers(properties: list[Property]) -> list[str]:
+    return sorted(
+        {
+            p.rule.trigger.marker
+            for p in properties
+            if isinstance(p.rule, AfterKThen) and p.rule.trigger.marker
+        }
+    )
+
+
+def _measures(properties: list[Property], name: str) -> list[Finding]:
+    """Measures are the palette's own closed set, so nothing needs declaring."""
+    known = {m.value for m in Measure}
+    return [
+        Finding(
+            rule="unknown-measure",
+            severity=Severity.ERROR,
+            card=name,
+            message=f"wire bounds {p.rule.measure!r}, which is not a known measure "
+            f"({', '.join(sorted(known))})",
+        )
+        for p in properties
+        if isinstance(p.rule, Bound) and p.rule.measure.value not in known
     ]
 
 
