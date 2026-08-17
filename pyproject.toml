@@ -5,8 +5,8 @@
 #
 # Language decisions until then: Python 3.11 floor, 3.12 dev pin (.python-version),
 # uv for all tooling. Dependencies stay limited to httpx, pydantic, typer, and rich —
-# anything beyond those needs an explicit ask, including inspect-ai, which is gated on
-# the Phase-1 backend spike (see DECISIONS.md).
+# anything beyond those needs an explicit ask. inspect-ai is not among them: the backend
+# spike closed against it (see DECISIONS.md, 2026-08-16).
 
 [tool.ruff]
 line-length = 100

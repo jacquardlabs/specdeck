@@ -67,7 +67,8 @@ way — see the kill criteria below.
 - A metric zoo.
 - Prompt management.
 - Anything that auto-edits a user's card.
-- Sandbox engineering, if the Inspect spike passes.
+- Sandbox engineering. specdeck reads traces and calls the judge and simulator; the agent
+  runs under the user's own adapter, inside whatever isolation they already have.
 
 ## Kill criteria
 
