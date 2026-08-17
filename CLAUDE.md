@@ -11,9 +11,9 @@ definition, the card format spec, and the decision log.
 
 - **Do not improvise product decisions.** When the spec conflicts with something discovered
   in code, stop and ask.
-- **The execution backend is undecided.** No document and no code may assume specdeck
-  compiles to Inspect AI, or that it does not, until the Phase-1 spike resolves the open
-  entry in DECISIONS.md.
+- **The execution backend is our own loop** (DECISIONS.md, 2026-08-16). Inspect `.eval`
+  logs are an accepted trace source — readable as zstd-compressed JSON, without the
+  `inspect-ai` package. Reintroducing Inspect as a dependency needs a new decision entry.
 - **Keep DECISIONS.md current.** Date, decision, alternative rejected — one line each. A
   decision that turns out wrong gets a new entry, never an edit.
 - **Never auto-edit a user's card.** Drafting output is a PR.
@@ -41,7 +41,7 @@ Work comes from issues. If you are about to do something with no issue, file one
 
 - Python 3.11+, `uv` for all tooling.
 - Dependencies: `httpx`, `pydantic`, `typer`, `rich`. Anything beyond those needs an
-  explicit ask — including `inspect-ai`, which is gated on the backend spike.
+  explicit ask. `inspect-ai` is not one of them: the backend spike closed against it.
 - `ruff` for lint and format.
 - MIT license.
 

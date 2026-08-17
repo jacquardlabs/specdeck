@@ -22,12 +22,8 @@ section. A decision that turns out wrong gets a new entry, not an edit.
 | 2026-08-15 | **Governance** — the card format and property IR spec live in a separate repo under a permissive license, from day one. | Keeping the format inside the runner repo, which couples format stability to runner churn. |
 | 2026-08-15 | **Progress tracking lives in GitHub milestones and issues**, one milestone per phase. PRODUCT.md holds personas, principles, non-goals, and kill criteria only. | A roadmap section in PRODUCT.md — it drifts from the real issue state, and nothing makes anyone notice. |
 | 2026-08-15 | **Each gated phase ends in a kill-gate decision issue** (#31, #35) that closes with a recorded outcome, either way. | Letting a milestone close when its last feature issue closes — that records that work finished, not that the gate was evaluated. |
+| 2026-08-16 | **Execution backend** — our own loop. The IR, judge, and trace schema are backend-independent and stay that way; Inspect logs are an accepted trace source, not the runner. One τ-bench card ran both ways over four agent scripts with zero verdict disagreement. The deciding fact: the trace comes from the adapter or from raw OTLP, so a harness transcript is never the agent's trace source — and Inspect emits no `ToolEvent` at all for a bridged agent, which is what a user-owned agent is. [Report](docs/spikes/execution-backend.md). | Compiling cards to Inspect `Task`s: it buys sandboxing for code specdeck never executes, provider portability needed at two call sites, and an audit log of a run whose trace already arrives by another route, while coupling the card format to Inspect's `Task` surface. |
 
 ## Deferred — decided by a spike, not by argument
 
-| Opened | Question | How it gets decided |
-|---|---|---|
-| 2026-08-15 | **Execution backend** — compile cards to Inspect AI `Task`s, or build our own loop? Inspect would give sandboxing, audit logs, and provider portability for free; the cost is coupling the card format's evolution to Inspect's `Task` surface. | A 3-day Phase-1 spike that compiles one τ-bench card both ways. Decide on the port cost of the wire IR and on whether the judge step survives the round-trip. Record the outcome here before any Phase-1 code depends on it. |
-
-Until this entry resolves, no document in this repo may state that specdeck compiles to
-Inspect, or that it does not.
+None open.

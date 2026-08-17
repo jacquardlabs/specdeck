@@ -76,7 +76,7 @@ Intent, not a claim about shipped behavior:
 | Tool | What it specs | What specdeck intends to add |
 |---|---|---|
 | promptfoo | per-output asserts in YAML | conversation-level scenarios, trace-temporal wires, statistical cells, calibration ledger |
-| Inspect | Python `Task`s for eval engineers | an SME-facing spec layer above it — possibly compiling to it |
+| Inspect | Python `Task`s for eval engineers | an SME-facing spec layer with its own runner; Inspect logs are an accepted trace source |
 | LangWatch Scenario | a code DSL for developers | a card a non-developer edits |
 | Braintrust / LangSmith | a spec that lives in their database | a spec that lives in your repo |
 
