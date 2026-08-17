@@ -4,12 +4,30 @@ Executable behavioral specs for LLM systems. A domain expert writes a prose crit
 A developer wires deterministic constraints under it. The runner executes the resulting
 cards against a provider × prompt matrix and reports pass rate, cost, and judge drift.
 
-> **Status: pre-Phase-1.** Nothing here runs yet. This repo currently holds the product
-> definition, the card format spec, and the decision log. Every command and card shown
-> below describes the target surface, not shipped behavior. Progress is tracked in
+> **Status: Phase 1, walking skeleton.** One card runs end to end against a recorded
+> trace. Everything else below — the provider matrix, coverage, calibration, drafting —
+> describes the target surface, not shipped behavior. Progress is tracked in
 > [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
 > product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
 > [DECISIONS.md](DECISIONS.md).
+
+## What runs today
+
+```console
+$ uv run specdeck run cards/basic-economy-return-change.md \
+    --trace cards/traces/run-01.otlp.json --runs 1 --pass-threshold 1
+
+  gate     PASS   1/1 runs   (passes at 1)
+  credit   4/4   (over 1 passing run)
+```
+
+A τ-bench airline card, its wires evaluated against a raw OTLP export, its prose graded by
+a pinned judge replaying a recorded cassette. No API key, no network. The trace is a real
+OpenTelemetry GenAI export rather than a specdeck-shaped file, because an agent already
+emitting OTel needs no adapter.
+
+Not yet: running the agent itself, the provider matrix, lint, and every pattern in the
+wire palette beyond `never`, `at_most`, and bounds.
 
 ## Why
 

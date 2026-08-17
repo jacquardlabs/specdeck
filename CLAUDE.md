@@ -4,8 +4,10 @@ Card-based eval runner for LLM systems. Read [PRODUCT.md](PRODUCT.md) and the
 [open milestones](https://github.com/jacquardlabs/specdeck/milestones) before proposing
 anything; read [DECISIONS.md](DECISIONS.md) before proposing anything that contradicts it.
 
-**Repo state: pre-Phase-1.** No source code yet. The current artifacts are the product
-definition, the card format spec, and the decision log.
+**Repo state: Phase 1, walking skeleton.** `src/specdeck/` runs one card against a
+recorded trace: trace schema, property IR, lockfile, card parser, wires engine, trace
+input, judge step, cell runner, report, CLI. Not yet built: running the agent, the
+provider matrix, and lint.
 
 ## Non-negotiables
 
