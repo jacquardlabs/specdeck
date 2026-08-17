@@ -27,7 +27,8 @@ provider matrix, and lint.
 TDD the three shared artifacts first, because everything else reads them:
 
 1. **Trace schema** — the OTel GenAI event log.
-2. **Property IR** — pattern × scope × event selector.
+2. **Property IR** — the intermediate representation wires compile to:
+   pattern × scope × event selector. Defined in [docs/card-format.md](docs/card-format.md).
 3. **Lockfile** — `spec.lock.toml`.
 
 Then: card parser → wires engine → judge step → single-cell report → lint.

@@ -1,4 +1,7 @@
-"""Property IR: pattern x scope x event selector.
+"""Property IR — the intermediate representation wires compile to.
+
+A wire is text the developer writes; a property is the data the engine checks. This module
+is that data: pattern x scope x event selector, and nothing else.
 
 A fixed palette, not a general logic. Anything the palette cannot express is a gap to
 discuss, not a reason to widen the language.

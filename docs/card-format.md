@@ -81,11 +81,19 @@ criteria.
 
 ## Wire semantics
 
-Wires compile to a small property IR:
+Wires compile to a **property IR** — an intermediate representation. The wire is what the
+developer writes; the property is what the engine checks. Between them sits one small
+structure, and every wire in the palette reduces to it:
 
 ```
 pattern × scope × event selector
 ```
+
+The IR exists so that layer has exactly one shape. A wire is text, and text has to be
+parsed, linted, rendered, and compared across card versions. A property is data — it
+serialises, it round-trips, and it can be evaluated by something that never saw the card.
+That separation is what lets the same property serve three deployment modes without the
+card format changing.
 
 - **Patterns** are the Dwyer set: `never`, `at_most`, `eventually`, after-K-then-Y,
   precedence.
