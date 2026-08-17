@@ -94,9 +94,13 @@ class TestBound:
             gate(Bound(measure=Measure.TOTAL_OUTPUT_TOKENS, limit=100)), refusal_trace
         ).passed
 
-    def test_the_limit_is_inclusive(self, refusal_trace) -> None:
-        assert evaluate(
+    def test_the_limit_is_exclusive_because_the_card_says_under(self, refusal_trace) -> None:
+        # The trace totals exactly 150; `under 150` is not satisfied by 150.
+        assert not evaluate(
             gate(Bound(measure=Measure.TOTAL_OUTPUT_TOKENS, limit=150)), refusal_trace
+        ).passed
+        assert evaluate(
+            gate(Bound(measure=Measure.TOTAL_OUTPUT_TOKENS, limit=151)), refusal_trace
         ).passed
 
     def test_detail_reports_the_measured_value(self, refusal_trace) -> None:

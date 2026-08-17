@@ -113,7 +113,11 @@ class AtMost(BaseModel):
 
 
 class Bound(BaseModel):
-    """A trace-level measure stays at or under a limit. Inclusive."""
+    """A trace-level measure stays strictly under a limit.
+
+    Exclusive, because the card says `under 120s` and `at_most 2` in the same palette:
+    the two words mean different things, and a run that took exactly 120s is not under it.
+    """
 
     pattern: Literal["bound"] = "bound"
     measure: Measure
@@ -125,7 +129,7 @@ class Bound(BaseModel):
             # does not report usage — a gate that can never fire is worse than no gate.
             return False, f"no chat span reports {GenAI.USAGE_OUTPUT_TOKENS}"
         actual = self._measure(trace)
-        return actual <= self.limit, f"{actual:g} against limit {self.limit:g}"
+        return actual < self.limit, f"{actual:g}, under {self.limit:g}"
 
     def _measure(self, trace: Trace) -> float:
         if self.measure is Measure.AGENT_DURATION_S:

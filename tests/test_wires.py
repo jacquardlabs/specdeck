@@ -85,8 +85,20 @@ class TestDeferred:
             compile_wire("some_tool: wibble 3")
 
     def test_a_non_numeric_budget_is_rejected(self) -> None:
-        with pytest.raises(WireError, match=r"whole number"):
+        with pytest.raises(WireError, match=r"expected a number"):
             compile_wire("web_search: at_most lots")
+
+    def test_a_fractional_call_budget_is_rejected(self) -> None:
+        with pytest.raises(WireError, match=r"whole number"):
+            compile_wire("web_search: at_most 2.5")
+
+    def test_a_seconds_suffix_on_a_token_bound_is_rejected(self) -> None:
+        # `response_tokens under 400s` used to compile to a 400-token bound.
+        with pytest.raises(WireError, match=r"expected a number"):
+            compile_wire("response_tokens under 400s")
+
+    def test_latency_still_takes_the_seconds_suffix(self) -> None:
+        assert compile_wire("latency: under 120s").rule.limit == 120.0
 
 
 class TestCompileCard:

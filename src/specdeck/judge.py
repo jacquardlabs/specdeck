@@ -98,11 +98,26 @@ class JudgeResult(BaseModel):
 def criteria_of(card: Card) -> list[Criterion]:
     """The prose block is one gate criterion. Quoted credit entries are the rest."""
     criteria = [Criterion(id="prose", text=card.prose, tier=Tier.GATE)]
-    criteria += [
-        Criterion(id=_slug(entry.text), text=entry.text, tier=Tier.CREDIT, weight=entry.weight)
-        for entry in card.credit_criteria
-    ]
+    seen = {"prose"}
+    for entry in card.credit_criteria:
+        criteria.append(
+            Criterion(
+                id=_unique(_slug(entry.text), seen),
+                text=entry.text,
+                tier=Tier.CREDIT,
+                weight=entry.weight,
+            )
+        )
     return criteria
+
+
+def _unique(slug: str, seen: set[str]) -> str:
+    """Ids are the judge's reply keys, so a collision silently drops a whole criterion."""
+    candidate, suffix = slug, 2
+    while candidate in seen:
+        candidate, suffix = f"{slug}_{suffix}", suffix + 1
+    seen.add(candidate)
+    return candidate
 
 
 def rubric_text(criteria: list[Criterion]) -> str:
@@ -299,5 +314,16 @@ def _call(prompt: str, model: str) -> str:
     return str(text)
 
 
+SLUG_MAX = 48
+
+
 def _slug(text: str) -> str:
-    return re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_")[:48]
+    """A stable id. Truncated at a word boundary — a slug cut mid-word reads as a typo
+    to the judge that has to echo it back, and to anyone reading a report."""
+    words = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_").split("_")
+    slug = ""
+    for word in words:
+        if slug and len(slug) + 1 + len(word) > SLUG_MAX:
+            break
+        slug = f"{slug}_{word}" if slug else word
+    return slug[:SLUG_MAX] or "criterion"

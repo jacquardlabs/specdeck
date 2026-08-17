@@ -62,7 +62,7 @@ def compile_wire(text: str, *, tier: Tier = Tier.GATE, weight: int = 0) -> Prope
             id=f"at_most:{subject}",
             tier=tier,
             weight=weight,
-            rule=AtMost(n=int(_number(rule.removeprefix("at_most"), text)), selector=tool),
+            rule=AtMost(n=_whole(rule.removeprefix("at_most"), text), selector=tool),
         )
     raise WireError(f"{text!r}: unrecognised rule {rule!r}")
 
@@ -98,12 +98,28 @@ def _bound(id: str, measure: Measure, rule: str, text: str, tier: Tier, weight: 
         id=id,
         tier=tier,
         weight=weight,
-        rule=Bound(measure=measure, limit=_number(rule.removeprefix("under"), text)),
+        rule=Bound(
+            measure=measure,
+            # Only a duration takes the unit. `response_tokens under 400s` is nonsense
+            # and used to compile to a 400-token bound.
+            limit=_number(
+                rule.removeprefix("under"), text, seconds=measure is Measure.AGENT_DURATION_S
+            ),
+        ),
     )
 
 
-def _number(fragment: str, text: str) -> float:
-    match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)s?\s*", fragment)
+def _number(fragment: str, text: str, *, seconds: bool = False) -> float:
+    match = re.fullmatch(rf"\s*(\d+(?:\.\d+)?){'s?' if seconds else ''}\s*", fragment)
     if not match:
-        raise WireError(f"{text!r}: expected a whole number, got {fragment.strip()!r}")
+        expected = "a number, optionally suffixed `s`" if seconds else "a number"
+        raise WireError(f"{text!r}: expected {expected}, got {fragment.strip()!r}")
     return float(match.group(1))
+
+
+def _whole(fragment: str, text: str) -> int:
+    """A count, which unlike a bound cannot be fractional."""
+    number = _number(fragment, text)
+    if number != int(number):
+        raise WireError(f"{text!r}: a call budget must be a whole number, got {number:g}")
+    return int(number)

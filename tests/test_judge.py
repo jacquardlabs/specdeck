@@ -272,3 +272,22 @@ class TestMissingVerdicts:
     def test_an_ungraded_id_names_itself(self) -> None:
         with pytest.raises(JudgeError, match=r"tone"):
             parse_response('{"verdicts": {"prose": true}}', ["prose", "tone"])
+
+
+class TestCriterionIds:
+    def test_slugs_truncate_at_a_word_boundary(self) -> None:
+        card = parse_text(
+            "# Scenario: x\np\ncredit:\n"
+            '  - "names the travel-insurance route without the traveller asking twice": 1\n'
+        )
+        credit = criteria_of(card)[1]
+        assert not credit.id.endswith("_")
+        assert credit.id.split("_")[-1] in credit.text.lower().replace("-", "_").split()
+
+    def test_two_criteria_sharing_a_long_prefix_get_distinct_ids(self) -> None:
+        shared = "the agent explains the basic economy restriction in plain language"
+        card = parse_text(
+            f'# Scenario: x\np\ncredit:\n  - "{shared} once": 1\n  - "{shared} twice": 1\n'
+        )
+        ids = [c.id for c in criteria_of(card)]
+        assert len(set(ids)) == len(ids), ids
