@@ -1,0 +1,4 @@
+{
+  "model": "claude-sonnet-5",
+  "response": "{\"verdicts\": {\"prose\": true, \"tone_stays_apologetic_and_professional\": true, \"names_the_travel_insurance_route_without_the_tra\": true}, \"reasons\": {\"prose\": \"The agent correctly identified the basic economy restriction, refused to modify flights, and offered the insurance-based cancellation alternative without promising exceptions.\", \"tone_stays_apologetic_and_professional\": \"The agent used an apologetic opening ('I'm sorry') and maintained a professional, helpful tone throughout.\", \"names_the_travel_insurance_route_without_the_tra\": \"The agent proactively named the travel insurance cancellation option after a single request, without needing to be asked twice.\"}}"
+}
