@@ -14,6 +14,7 @@ Variance, latency percentiles, and the dollar estimate are #52.
 
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pydantic import BaseModel
@@ -26,6 +27,10 @@ from .wires import compile_wires, gates_pass
 
 DEFAULT_N = 5
 DEFAULT_K = 4
+
+#: Runs in flight at once. Bounded rather than unbounded: a gather over a provider x prompt
+#: matrix is a rate-limit incident, not parallelism.
+DEFAULT_CONCURRENCY = 4
 
 
 class CellError(Exception):
@@ -76,6 +81,33 @@ def run_cell(
     k: int = DEFAULT_K,
     judge_model: str = DEFAULT_JUDGE_MODEL,
     live: bool = False,
+    concurrency: int = DEFAULT_CONCURRENCY,
+) -> Cell:
+    """Synchronous entry point. The CLI and tests call this; it owns the event loop."""
+    return asyncio.run(
+        run_cell_async(
+            card,
+            traces,
+            cassettes=cassettes,
+            n=n,
+            k=k,
+            judge_model=judge_model,
+            live=live,
+            concurrency=concurrency,
+        )
+    )
+
+
+async def run_cell_async(
+    card: Card,
+    traces: list[Trace],
+    *,
+    cassettes: Path | str,
+    n: int = DEFAULT_N,
+    k: int = DEFAULT_K,
+    judge_model: str = DEFAULT_JUDGE_MODEL,
+    live: bool = False,
+    concurrency: int = DEFAULT_CONCURRENCY,
 ) -> Cell:
     if len(traces) != n:
         raise CellError(
@@ -94,19 +126,24 @@ def run_cell(
         c.weight for c in criteria if c.tier is Tier.CREDIT
     )
 
-    results = [
-        _run(
-            trace,
-            gate_wires=gate_wires,
-            credit_wires=credit_wires,
-            criteria=criteria,
-            policy=policy,
-            cassettes=cassettes,
-            judge_model=judge_model,
-            live=live,
-        )
-        for trace in traces
-    ]
+    # The one place runs fan out. Bounding it here keeps concurrency a property of the
+    # cell rather than something each caller has to remember.
+    limit = asyncio.Semaphore(max(1, concurrency))
+
+    async def one(trace: Trace) -> Run:
+        async with limit:
+            return await _run(
+                trace,
+                gate_wires=gate_wires,
+                credit_wires=credit_wires,
+                criteria=criteria,
+                policy=policy,
+                cassettes=cassettes,
+                judge_model=judge_model,
+                live=live,
+            )
+
+    results = list(await asyncio.gather(*(one(trace) for trace in traces)))
     passing = [r for r in results if r.passed]
     return Cell(
         card_path=card.path,
@@ -136,7 +173,7 @@ def _policy(card: Card) -> str:
     return path.read_text()
 
 
-def _run(
+async def _run(
     trace: Trace,
     *,
     gate_wires: list[Property],
@@ -153,7 +190,7 @@ def _run(
         return Run(passed=False, wires=wire_verdicts, judged=None, credit_earned=0)
 
     # 2. Gate criteria.
-    judged = judge(
+    judged = await judge(
         criteria, trace, policy=policy, cassettes=cassettes, model=judge_model, live=live
     )
     if not judged.gate_passed:

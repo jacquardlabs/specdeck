@@ -180,3 +180,54 @@ class TestVacuousBounds:
         assert cell.passed is False
         assert cell.judge_calls == 0
         assert "reports" in cell.results[0].wires[0].detail
+
+
+class TestConcurrency:
+    def test_runs_are_bounded_not_unbounded(self, tmp_path: Path, card) -> None:
+        # A gather over a provider x prompt matrix is a rate-limit incident, not
+        # parallelism, so the cell caps how many runs are in flight.
+        import specdeck.cell as cell_module
+
+        traces = [conversation() for _ in range(6)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        peak = 0
+        live = 0
+        original = cell_module._run
+
+        async def counting(*args, **kwargs):
+            nonlocal peak, live
+            live += 1
+            peak = max(peak, live)
+            try:
+                return await original(*args, **kwargs)
+            finally:
+                live -= 1
+
+        cell_module._run = counting
+        try:
+            run_cell(card, traces, cassettes=tmp_path, n=6, k=1, concurrency=2)
+        finally:
+            cell_module._run = original
+        assert peak <= 2
+
+    def test_every_run_still_completes_under_the_bound(self, tmp_path: Path, card) -> None:
+        traces = [conversation() for _ in range(6)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=6, k=6, concurrency=2)
+        assert (cell.passes, len(cell.results)) == (6, 6)
+
+    def test_the_gate_short_circuit_survives_overlapping_runs(self, tmp_path: Path, card) -> None:
+        # No cassette for the failing traces: if concurrency broke the ordering and the
+        # judge were called for them, this would raise.
+        traces = [conversation(), conversation(forbidden=True), conversation(forbidden=True)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=3, k=1, concurrency=3)
+        assert cell.judge_calls == 1
+
+    def test_results_stay_in_the_order_the_traces_were_given(self, tmp_path: Path, card) -> None:
+        # The report details "the first failing run"; that is only meaningful if the
+        # results keep the caller's order rather than completion order.
+        traces = [conversation(), conversation(forbidden=True), conversation()]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=3, k=1, concurrency=3)
+        assert [r.passed for r in cell.results] == [True, False, True]
