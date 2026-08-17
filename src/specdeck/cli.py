@@ -3,15 +3,18 @@
 from __future__ import annotations
 
 import os
+from itertools import groupby
 from pathlib import Path
 
 import typer
 from rich.console import Console
+from rich.text import Text
 
 from specdeck import __version__
 from specdeck.card import Card, CardError, parse
 from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
+from specdeck.lint import Result, Severity, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock
 from specdeck.report import render
 from specdeck.trace import Trace
@@ -154,3 +157,67 @@ def _lock_key(card_path: Path, lock_path: Path) -> str:
     """
     relative = os.path.relpath(card_path.resolve(), lock_path.resolve().parent)
     return relative.replace(os.sep, "/")
+
+
+@app.command()
+def lint(
+    paths: list[Path] = typer.Argument(None, help="Cards, or directories holding them."),  # noqa: B008
+    lock_path: Path | None = typer.Option(  # noqa: B008
+        None, "--lock", help=f"Verify freshness against this {LOCKFILE_NAME}."
+    ),
+    vocabulary_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--vocabulary",
+        help="A file of known tool names, one per line. Without it, unknown-tool is skipped.",
+    ),
+) -> None:
+    """Check cards. Zero tokens, no network."""
+    console = Console()
+    try:
+        result = lint_paths(
+            paths or [Path("cards")],
+            lock=Lockfile.load(lock_path) if lock_path else None,
+            vocabulary=_vocabulary(vocabulary_path),
+        )
+    except USER_ERRORS as error:
+        console.print(f"[red]error[/red] {error}")
+        raise typer.Exit(2) from None
+
+    _render_lint(result, console)
+    raise typer.Exit(0 if result.ok else 1)
+
+
+def _vocabulary(path: Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    return {
+        line.strip()
+        for line in path.read_text().splitlines()
+        if line.strip() and not line.startswith("#")
+    }
+
+
+#: Skipped is dim rather than absent: a rule that could not run is not a rule that passed.
+_STYLES = {
+    Severity.ERROR: "red",
+    Severity.WARNING: "yellow",
+    Severity.SUGGESTION: "cyan",
+    Severity.SKIPPED: "dim",
+}
+
+
+def _render_lint(result: Result, console: Console) -> None:
+    console.print()
+    for card, findings in groupby(result.findings, key=lambda f: f.card):
+        listed = list(findings)
+        console.print(Text(card, style="bold"))
+        for finding in listed:
+            line = Text("  ")
+            line.append(f"{finding.severity.value:<10}", style=_STYLES[finding.severity])
+            line.append(f"{finding.rule:<22}")
+            line.append(finding.message, style="dim")
+            console.print(line)
+        console.print()
+    counts = result.counts()
+    tally = ", ".join(f"{counts[s.value]} {s.value}" for s in Severity if counts[s.value])
+    console.print(f"[dim]{tally or 'nothing to report'}[/dim]\n")

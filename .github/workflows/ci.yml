@@ -35,6 +35,9 @@ jobs:
       - run: uv sync --locked
       - run: uv run ruff check .
       - run: uv run ruff format --check .
+      # The same command .pre-commit-config.yaml runs, so a card cannot be clean locally
+      # and dirty in CI.
+      - run: uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/vocabulary.txt
 
   test:
     # Job name renders as "test (3.11)" / "test (3.12)". The ruleset's required

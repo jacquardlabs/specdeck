@@ -43,8 +43,23 @@ the rubric and simulator prompt. `--live` calls the judge once and records the r
 `cassettes/` beside the card. Every run after that needs neither flag and makes no network
 call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
 
-Not yet: running the agent itself, the provider matrix, lint, and every pattern in the
-wire palette beyond `never`, `at_most`, and bounds.
+### Lint
+
+```console
+$ uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/vocabulary.txt
+```
+
+Zero tokens, no network. Checks structure, dead fixture and policy paths, lockfile
+freshness, wire syntax, and contradictory or redundant wires; with a tool vocabulary it
+also catches wires naming a tool that does not exist. A rule that lacks the data it needs
+reports itself **skipped** rather than passing quietly. It never reads the content of the
+prose block — that zone is the SME's.
+
+Runs in pre-commit and in CI, from the same command.
+
+Not yet: running the agent itself, the provider matrix, the definition-fed and
+prose-aware lint groups, and every pattern in the wire palette beyond `never`, `at_most`,
+and bounds.
 
 ## Why
 
