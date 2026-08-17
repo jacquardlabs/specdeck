@@ -1,0 +1,84 @@
+{
+  "reservations": {
+    "SI5UKW": {
+      "reservation_id": "SI5UKW",
+      "user_id": "amelia_rossi_1297",
+      "origin": "MIA",
+      "destination": "PHX",
+      "flight_type": "one_way",
+      "cabin": "basic_economy",
+      "flights": [
+        {
+          "origin": "MIA",
+          "destination": "LAS",
+          "flight_number": "HAT062",
+          "date": "2024-05-16",
+          "price": 67
+        },
+        {
+          "origin": "LAS",
+          "destination": "PHX",
+          "flight_number": "HAT284",
+          "date": "2024-05-17",
+          "price": 57
+        }
+      ],
+      "passengers": [
+        {
+          "first_name": "Amelia",
+          "last_name": "Rossi",
+          "dob": "1960-01-19"
+        }
+      ],
+      "payment_history": [
+        {
+          "payment_id": "credit_card_4579924",
+          "amount": 124
+        }
+      ],
+      "created_at": "2024-05-11T00:08:57",
+      "total_baggages": 0,
+      "nonfree_baggages": 0,
+      "insurance": "no"
+    }
+  },
+  "users": {
+    "amelia_rossi_1297": {
+      "name": {
+        "first_name": "Amelia",
+        "last_name": "Rossi"
+      },
+      "address": {
+        "address1": "747 Maple Drive",
+        "address2": "Suite 422",
+        "city": "Indianapolis",
+        "country": "USA",
+        "state": "IN",
+        "zip": "46256"
+      },
+      "email": "amelia.rossi3096@example.com",
+      "dob": "1960-01-19",
+      "payment_methods": {
+        "credit_card_4579924": {
+          "source": "credit_card",
+          "brand": "visa",
+          "last_four": "3507",
+          "id": "credit_card_4579924"
+        },
+        "gift_card_3871331": {
+          "source": "gift_card",
+          "amount": 118,
+          "id": "gift_card_3871331"
+        }
+      },
+      "saved_passengers": [
+        {
+          "first_name": "Raj",
+          "last_name": "Kovacs",
+          "dob": "1996-02-03"
+        }
+      ],
+      "membership": "regular"
+    }
+  }
+}

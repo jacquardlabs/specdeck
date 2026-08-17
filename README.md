@@ -133,3 +133,7 @@ Intent, not a claim about shipped behavior:
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The demo cards under `cards/` derive from [τ-bench](https://github.com/sierra-research/tau-bench)
+(MIT, © 2024 Sierra) — the airline policy verbatim, the fixtures as slices, the scenario prose
+adapted from its task instructions. See [NOTICE](NOTICE).

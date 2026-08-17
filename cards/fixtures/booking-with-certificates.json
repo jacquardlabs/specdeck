@@ -1,0 +1,52 @@
+{
+  "users": {
+    "mia_li_3668": {
+      "name": {
+        "first_name": "Mia",
+        "last_name": "Li"
+      },
+      "address": {
+        "address1": "975 Sunset Drive",
+        "address2": "Suite 217",
+        "city": "Austin",
+        "country": "USA",
+        "state": "TX",
+        "zip": "78750"
+      },
+      "email": "mia.li3818@example.com",
+      "dob": "1990-04-05",
+      "payment_methods": {
+        "credit_card_4421486": {
+          "source": "credit_card",
+          "brand": "visa",
+          "last_four": "7447",
+          "id": "credit_card_4421486"
+        },
+        "certificate_4856383": {
+          "source": "certificate",
+          "amount": 100,
+          "id": "certificate_4856383"
+        },
+        "certificate_7504069": {
+          "source": "certificate",
+          "amount": 250,
+          "id": "certificate_7504069"
+        },
+        "credit_card_1955700": {
+          "source": "credit_card",
+          "brand": "visa",
+          "last_four": "1907",
+          "id": "credit_card_1955700"
+        }
+      },
+      "saved_passengers": [
+        {
+          "first_name": "Amelia",
+          "last_name": "Ahmed",
+          "dob": "1957-03-21"
+        }
+      ],
+      "membership": "gold"
+    }
+  }
+}
