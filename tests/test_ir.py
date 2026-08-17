@@ -74,7 +74,7 @@ class TestAtMost:
         assert evaluate(gate(rule), refusal_trace).detail == "1 call, budget 3"
 
     def test_a_negative_budget_is_rejected(self) -> None:
-        with pytest.raises(ValueError, match="at_most"):
+        with pytest.raises(ValueError, match=r"at_most"):
             AtMost(n=-1, selector=Selector(operation=Operation.EXECUTE_TOOL))
 
 
@@ -121,11 +121,11 @@ class TestProperty:
         assert (verdict.tier, verdict.weight, verdict.passed) == (Tier.CREDIT, 2, True)
 
     def test_a_gate_property_may_not_carry_a_weight(self) -> None:
-        with pytest.raises(ValueError, match="weight"):
+        with pytest.raises(ValueError, match=r"weight"):
             Property(id="w", tier=Tier.GATE, weight=2, rule=Never(selector=Selector()))
 
     def test_a_credit_property_needs_a_positive_weight(self) -> None:
-        with pytest.raises(ValueError, match="weight"):
+        with pytest.raises(ValueError, match=r"weight"):
             Property(id="w", tier=Tier.CREDIT, weight=0, rule=Never(selector=Selector()))
 
     def test_evaluate_all_preserves_order_and_ids(self, refusal_trace) -> None:

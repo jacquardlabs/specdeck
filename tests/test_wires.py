@@ -73,19 +73,19 @@ class TestDeferred:
         ],
     )
     def test_after_k_then_y_names_the_issue_it_waits_on(self, text: str) -> None:
-        with pytest.raises(WireError, match="#47"):
+        with pytest.raises(WireError, match=r"#47"):
             compile_wire(text)
 
     def test_eventually_says_it_is_deferred(self) -> None:
-        with pytest.raises(WireError, match="not in the tracer"):
+        with pytest.raises(WireError, match=r"not in the tracer"):
             compile_wire("send_confirmation: eventually")
 
     def test_an_unrecognised_rule_names_the_wire(self) -> None:
-        with pytest.raises(WireError, match="wibble"):
+        with pytest.raises(WireError, match=r"wibble"):
             compile_wire("some_tool: wibble 3")
 
     def test_a_non_numeric_budget_is_rejected(self) -> None:
-        with pytest.raises(WireError, match="whole number"):
+        with pytest.raises(WireError, match=r"whole number"):
             compile_wire("web_search: at_most lots")
 
 
@@ -109,7 +109,7 @@ class TestCompileCard:
 
     def test_the_error_names_the_card_and_the_wire(self) -> None:
         card = parse_text("# Scenario: x\np\nwire:\n  - t: wibble\n", path="cards/x.md")
-        with pytest.raises(WireError, match="cards/x.md"):
+        with pytest.raises(WireError, match=r"cards/x.md"):
             compile_wires(card)
 
 

@@ -28,7 +28,9 @@ Issues = "https://github.com/jacquardlabs/specdeck/issues"
 specdeck = "specdeck.cli:app"
 
 [build-system]
-requires = ["hatchling"]
+# Pinned like every other build input: the backend executes on every install,
+# and PEP 639 `license = "MIT"` above needs >=1.27 to be emitted at all.
+requires = ["hatchling>=1.27,<2"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
@@ -57,6 +59,7 @@ select = [
     "UP",  # pyupgrade
     "B",   # bugbear
     "SIM", # simplify
+    "RUF", # ruff-specific, including RUF100 for stale noqa directives
 ]
 
 [tool.ruff.format]

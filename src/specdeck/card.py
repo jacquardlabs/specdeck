@@ -51,15 +51,27 @@ class Card(BaseModel):
     @property
     def policy_path(self) -> Path | None:
         """The policy document, resolved against the card that names it."""
-        if not self.context.policy:
-            return None
-        return (Path(self.path).parent / self.context.policy).resolve()
+        return self._contained(self.context.policy, "policy")
 
     @property
     def fixture_path(self) -> Path | None:
-        if not self.context.fixture:
+        """The fixture data, resolved against the card that names it."""
+        return self._contained(self.context.fixture, "fixture")
+
+    def _contained(self, value: str, key: str) -> Path | None:
+        """Resolve a card-declared path, refusing anything outside the card's directory.
+
+        Cards are contributed and reviewed in PRs, so the value is untrusted input. The
+        policy file's bytes reach the judge prompt and, under `--live`, a third-party API:
+        an unconstrained `../../../.ssh/id_rsa` would be read and sent.
+        """
+        if not value:
             return None
-        return (Path(self.path).parent / self.context.fixture).resolve()
+        root = Path(self.path).parent.resolve()
+        resolved = (root / value).resolve()
+        if resolved != root and root not in resolved.parents:
+            raise CardError(f"{self.path}: {key} {value!r} resolves outside the card's directory")
+        return resolved
 
 
 def parse(path: Path | str) -> Card:
@@ -83,6 +95,13 @@ def parse_text(text: str, path: str = "<card>") -> Card:
             blocks[keyword], current = [], keyword
             continue
         if line.strip() and line == line.lstrip():
+            if current is not None and line.startswith("- "):
+                # Silently reclassifying this as prose unenforces every wire on the card
+                # and reports the run as passing, so it is an error rather than a guess.
+                raise CardError(
+                    f"{path}:{number}: `{current}:` entries are indented under it; "
+                    f"this one starts at column zero, which ends the block — {line.strip()!r}"
+                )
             current = None  # a keyed block ends at the first unindented line
         if current is None:
             prose.append(line)

@@ -160,6 +160,18 @@ class Trace(BaseModel):
         return next(s for s in self.spans if s.parent_span_id is None)
 
     @property
+    def reports_output_tokens(self) -> bool:
+        """Whether any chat span carries usage at all.
+
+        The attribute is Recommended, not Required, so a trace without it is valid. A
+        token bound over such a trace would read 0 and pass forever, which is why the
+        distinction between "used none" and "did not say" is kept rather than summed away.
+        """
+        return any(
+            s.attributes.get(GenAI.USAGE_OUTPUT_TOKENS) is not None for s in self.of(Operation.CHAT)
+        )
+
+    @property
     def total_output_tokens(self) -> int:
         return sum(
             int(s.attributes.get(GenAI.USAGE_OUTPUT_TOKENS) or 0) for s in self.of(Operation.CHAT)

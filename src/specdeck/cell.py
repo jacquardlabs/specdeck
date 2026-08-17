@@ -19,8 +19,8 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card
-from .ir import Tier, Verdict, evaluate_all
-from .judge import DEFAULT_JUDGE_MODEL, JudgeResult, criteria_of, judge
+from .ir import Property, Tier, Verdict, evaluate_all
+from .judge import DEFAULT_JUDGE_MODEL, Criterion, JudgeResult, criteria_of, judge
 from .trace import Trace
 from .wires import compile_wires, gates_pass
 
@@ -51,7 +51,7 @@ class Cell(BaseModel):
     runs: int
     threshold: int
     passes: int
-    credit_earned: float | None
+    credit_mean: float | None
     credit_total: int
     judge_model: str
     judge_calls: int
@@ -63,8 +63,8 @@ class Cell(BaseModel):
 
     @property
     def credit_score(self) -> float | None:
-        """Weighted credit over the passing runs. None when no run passed."""
-        return self.credit_earned
+        """Weighted credit averaged over the passing runs. None when no run passed."""
+        return self.credit_mean
 
 
 def run_cell(
@@ -89,7 +89,7 @@ def run_cell(
     gate_wires = [p for p in properties if p.tier is Tier.GATE]
     credit_wires = [p for p in properties if p.tier is Tier.CREDIT]
     criteria = criteria_of(card)
-    policy = card.policy_path.read_text() if card.policy_path and card.policy_path.exists() else ""
+    policy = _policy(card)
     credit_total = sum(p.weight for p in credit_wires) + sum(
         c.weight for c in criteria if c.tier is Tier.CREDIT
     )
@@ -114,7 +114,7 @@ def run_cell(
         runs=n,
         threshold=k,
         passes=len(passing),
-        credit_earned=(sum(r.credit_earned for r in passing) / len(passing) if passing else None),
+        credit_mean=(sum(r.credit_earned for r in passing) / len(passing) if passing else None),
         credit_total=credit_total,
         judge_model=judge_model,
         judge_calls=sum(r.judge_called for r in results),
@@ -122,12 +122,26 @@ def run_cell(
     )
 
 
+def _policy(card: Card) -> str:
+    """The policy the judge grades against, or an error naming the card's own value.
+
+    Falling back to an empty policy would have the judge grade a run with no rules and
+    say nothing about it — and under --live that verdict is then recorded as the fixture.
+    """
+    path = card.policy_path
+    if path is None:
+        return ""
+    if not path.exists():
+        raise CellError(f"{card.path}: policy {card.context.policy!r} does not exist at {path}")
+    return path.read_text()
+
+
 def _run(
     trace: Trace,
     *,
-    gate_wires,
-    credit_wires,
-    criteria,
+    gate_wires: list[Property],
+    credit_wires: list[Property],
+    criteria: list[Criterion],
     policy: str,
     cassettes: Path | str,
     judge_model: str,

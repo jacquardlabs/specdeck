@@ -107,3 +107,119 @@ def _run_copy(cards: Path, card: Path):
         "--cassettes",
         str(cards / "cassettes"),
     )
+
+
+class TestFailingCellExitsOne:
+    def test_a_failed_gate_wire_exits_one_not_zero(self, tmp_path: Path) -> None:
+        # A failing card that exits 0 would pass CI silently.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "run-01.otlp.json"
+        broken = trace_path.read_text().replace(
+            "get_reservation_details", "update_reservation_flights"
+        )
+        trace_path.write_text(broken)
+        result = _run_copy(cards, cards / CARD.name)
+        assert result.exit_code == 1, result.stdout
+        assert "FAIL" in result.stdout
+
+    def test_the_three_exit_codes_are_distinct(self, tmp_path: Path) -> None:
+        assert demo().exit_code == 0
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.lock.toml").unlink()
+        assert _run_copy(cards, cards / CARD.name).exit_code == 2
+
+
+class TestRelock:
+    def test_relock_writes_the_card_key_semconv_and_judge(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.lock.toml").unlink()
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "run-01.otlp.json"),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--relock",
+        )
+        assert result.exit_code == 0, result.stdout
+        written = (cards / "spec.lock.toml").read_text()
+        assert f'[cards."{CARD.name}"]' in written
+        assert "semantic-conventions-genai" in written
+        assert 'model = "claude-sonnet-5"' in written
+
+    def test_relock_does_not_invent_a_simulator_pin(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.lock.toml").unlink()
+        invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "run-01.otlp.json"),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--relock",
+        )
+        written = (cards / "spec.lock.toml").read_text()
+        simulator = written.split("[simulator]")[1].split("[")[0]
+        assert 'model = ""' in simulator
+
+    def test_relock_adopts_the_supplied_judge_model(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "run-01.otlp.json"),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--judge-model",
+            "claude-opus-5",
+            "--relock",
+        )
+        assert 'model = "claude-opus-5"' in (cards / "spec.lock.toml").read_text()
+        # The judge is now pinned to a model with no cassette, so the run cannot replay.
+        assert result.exit_code == 2
+
+    def test_a_judge_model_disagreeing_with_the_lock_is_refused(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "run-01.otlp.json"),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--judge-model",
+            "claude-opus-5",
+        )
+        assert result.exit_code == 2
+        assert "disagrees with the pinned" in result.stdout
+
+
+class TestCassetteDefault:
+    def test_cassettes_resolve_beside_the_card_with_no_flag(self, tmp_path: Path) -> None:
+        # The README command carries no --cassettes; it has to work from anywhere.
+        cards = _copy_cards(tmp_path)
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "run-01.otlp.json"),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+        )
+        assert result.exit_code == 0, result.stdout

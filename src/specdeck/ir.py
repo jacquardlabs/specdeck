@@ -120,6 +120,10 @@ class Bound(BaseModel):
     limit: float
 
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
+        if self.measure is Measure.TOTAL_OUTPUT_TOKENS and not trace.reports_output_tokens:
+            # Summing an absent attribute to 0 would pass this bound on every trace that
+            # does not report usage — a gate that can never fire is worse than no gate.
+            return False, f"no chat span reports {GenAI.USAGE_OUTPUT_TOKENS}"
         actual = self._measure(trace)
         return actual <= self.limit, f"{actual:g} against limit {self.limit:g}"
 

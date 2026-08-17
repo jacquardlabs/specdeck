@@ -120,7 +120,7 @@ class TestCanonical:
     def test_a_schema_violation_names_the_file_and_the_span(self, tmp_path: Path) -> None:
         broken = json.loads(json.dumps(CANONICAL))
         del broken["spans"][1]["attributes"][GenAI.TOOL_NAME]
-        with pytest.raises(TraceError, match="run.json.*tool-0"):
+        with pytest.raises(TraceError, match=r"run.json.*tool-0"):
             load_trace(write(tmp_path, "run.json", broken))
 
 
@@ -150,7 +150,7 @@ class TestOtlp:
         payload = json.loads(json.dumps(OTLP))
         del payload["resourceSpans"][0]["scopeSpans"][0]["scope"]["version"]
         path = write(tmp_path, "otlp.json", payload)
-        with pytest.raises(TraceError, match="semconv"):
+        with pytest.raises(TraceError, match=r"semconv"):
             load_trace(path)
         assert load_trace(path, semconv=SEMCONV).semconv == SEMCONV
 
@@ -188,15 +188,15 @@ class TestOtlp:
 
 class TestErrors:
     def test_a_missing_file_names_the_path(self, tmp_path: Path) -> None:
-        with pytest.raises(TraceError, match="absent.json"):
+        with pytest.raises(TraceError, match=r"absent.json"):
             load_trace(tmp_path / "absent.json")
 
     def test_malformed_json_names_the_file(self, tmp_path: Path) -> None:
         path = tmp_path / "run.json"
         path.write_text("{not json")
-        with pytest.raises(TraceError, match="run.json"):
+        with pytest.raises(TraceError, match=r"run.json"):
             load_trace(path)
 
     def test_an_unrecognised_shape_says_what_it_accepts(self, tmp_path: Path) -> None:
-        with pytest.raises(TraceError, match="resourceSpans"):
+        with pytest.raises(TraceError, match=r"resourceSpans"):
             load_trace(write(tmp_path, "run.json", {"events": []}))

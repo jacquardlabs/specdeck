@@ -39,15 +39,15 @@ class TestVerify:
         lock().verify("cards/basic-economy.md", rubric=PROSE, simulator=SIMULATOR)
 
     def test_an_edited_rubric_is_stale_and_says_so(self) -> None:
-        with pytest.raises(StaleLock, match="rubric.*--relock"):
+        with pytest.raises(StaleLock, match=r"rubric.*--relock"):
             lock().verify("cards/basic-economy.md", rubric=PROSE + " More.", simulator=SIMULATOR)
 
     def test_an_edited_simulator_prompt_is_stale(self) -> None:
-        with pytest.raises(StaleLock, match="simulator"):
+        with pytest.raises(StaleLock, match=r"simulator"):
             lock().verify("cards/basic-economy.md", rubric=PROSE, simulator="calm traveller")
 
     def test_an_unlocked_card_is_stale(self) -> None:
-        with pytest.raises(StaleLock, match="not in the lockfile"):
+        with pytest.raises(StaleLock, match=r"not in the lockfile"):
             lock().verify("cards/refund.md", rubric=PROSE, simulator=SIMULATOR)
 
     def test_the_error_names_every_drift_at_once(self) -> None:
@@ -61,7 +61,7 @@ class TestSemconv:
         lock().verify_semconv("semantic-conventions-genai@1.38.0")
 
     def test_a_different_semconv_is_stale(self) -> None:
-        with pytest.raises(StaleLock, match="semconv"):
+        with pytest.raises(StaleLock, match=r"semconv"):
             lock().verify_semconv("semantic-conventions-genai@1.39.0")
 
 
@@ -90,7 +90,7 @@ class TestToml:
         assert Lockfile.load(path) == lock()
 
     def test_a_missing_lockfile_reports_relock(self, tmp_path: Path) -> None:
-        with pytest.raises(StaleLock, match="--relock"):
+        with pytest.raises(StaleLock, match=r"--relock"):
             Lockfile.load(tmp_path / "absent.lock.toml")
 
 

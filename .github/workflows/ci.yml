@@ -9,16 +9,27 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
-# Actions are pinned to exact release tags, not to a moving major: astral-sh/setup-uv
-# publishes releases past v7 but stops pushing the major alias there, so `@v10` does not
-# resolve at all. Pinning both the same way keeps the failure mode uniform.
+# Actions are pinned to commit SHAs, not tags. A tag is mutable: a compromised publisher
+# re-points it and every later run executes new code in the runner before any project code,
+# with no diff in this repo to show it. The trailing comment carries the human-readable
+# version. (astral-sh/setup-uv also stops pushing a moving major alias after v7, so `@v10`
+# does not resolve at all — the SHA solves both problems.)
+#
+# GITHUB_TOKEN is read-only and not persisted into .git/config, so the third-party code
+# these jobs execute — build backends, dependency hooks, pytest plugins — cannot read a
+# writable credential off disk.
+permissions:
+  contents: read
+
 jobs:
   lint:
     name: lint
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
       - run: uv sync --locked
@@ -36,8 +47,10 @@ jobs:
       matrix:
         python-version: ["3.11", "3.12"]
     steps:
-      - uses: actions/checkout@v7.0.1
-      - uses: astral-sh/setup-uv@v10.0.1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
         with:
           enable-cache: true
           python-version: ${{ matrix.python-version }}

@@ -56,7 +56,7 @@ class TestSpan:
         assert span("tool-0", Operation.EXECUTE_TOOL, duration=0.25).duration_s == 0.25
 
     def test_an_unknown_operation_names_the_span(self) -> None:
-        with pytest.raises(ValidationError, match="embedding-0.*gen_ai.operation.name"):
+        with pytest.raises(ValidationError, match=r"embedding-0.*gen_ai.operation.name"):
             Span(
                 span_id="embedding-0",
                 name="embeddings",
@@ -66,7 +66,7 @@ class TestSpan:
             )
 
     def test_a_missing_operation_names_the_span(self) -> None:
-        with pytest.raises(ValidationError, match="mystery-0.*gen_ai.operation.name"):
+        with pytest.raises(ValidationError, match=r"mystery-0.*gen_ai.operation.name"):
             Span(span_id="mystery-0", name="?", start_time=T0, end_time=T0)
 
     @pytest.mark.parametrize(
@@ -82,11 +82,11 @@ class TestSpan:
     ) -> None:
         attributes = span("s", operation).attributes
         del attributes[missing]
-        with pytest.raises(ValidationError, match=f"s.*{missing}"):
+        with pytest.raises(ValidationError, match=rf"s.*{missing}"):
             Span(span_id="s", name="s", start_time=T0, end_time=T0, attributes=attributes)
 
     def test_a_span_cannot_end_before_it_starts(self) -> None:
-        with pytest.raises(ValidationError, match="backwards-0"):
+        with pytest.raises(ValidationError, match=r"backwards-0"):
             Span(
                 span_id="backwards-0",
                 name="chat",
@@ -126,21 +126,21 @@ class TestTrace:
         assert three_span_trace.total_output_tokens == 0
 
     def test_a_trace_needs_exactly_one_root(self) -> None:
-        with pytest.raises(ValidationError, match="exactly one root"):
+        with pytest.raises(ValidationError, match=r"exactly one root"):
             trace(
                 span("root-a", Operation.INVOKE_AGENT, parent=None),
                 span("root-b", Operation.INVOKE_AGENT, parent=None, offset=5.0),
             )
 
     def test_a_dangling_parent_is_rejected_by_span_id(self) -> None:
-        with pytest.raises(ValidationError, match="orphan-0.*ghost"):
+        with pytest.raises(ValidationError, match=r"orphan-0.*ghost"):
             trace(
                 span("root", Operation.INVOKE_AGENT, parent=None),
                 span("orphan-0", Operation.CHAT, parent="ghost"),
             )
 
     def test_duplicate_span_ids_are_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="chat-0"):
+        with pytest.raises(ValidationError, match=r"chat-0"):
             trace(
                 span("root", Operation.INVOKE_AGENT, parent=None),
                 span("chat-0", Operation.CHAT),
@@ -148,7 +148,7 @@ class TestTrace:
             )
 
     def test_an_empty_trace_is_rejected(self) -> None:
-        with pytest.raises(ValidationError, match="at least one span"):
+        with pytest.raises(ValidationError, match=r"at least one span"):
             trace()
 
 

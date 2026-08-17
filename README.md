@@ -26,6 +26,23 @@ a pinned judge replaying a recorded cassette. No API key, no network. The trace 
 OpenTelemetry GenAI export rather than a specdeck-shaped file, because an agent already
 emitting OTel needs no adapter.
 
+Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start.
+
+### A card's first run
+
+A new card is unpinned and unrecorded, and specdeck refuses both rather than guessing.
+Once, with a key in the environment:
+
+```console
+$ specdeck run cards/your-card.md --trace run.otlp.json --runs 1 --pass-threshold 1 \
+    --relock --live
+```
+
+`--relock` writes `spec.lock.toml` beside the card, pinning the judge model and hashing
+the rubric and simulator prompt. `--live` calls the judge once and records the reply into
+`cassettes/` beside the card. Every run after that needs neither flag and makes no network
+call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
+
 Not yet: running the agent itself, the provider matrix, lint, and every pattern in the
 wire palette beyond `never`, `at_most`, and bounds.
 

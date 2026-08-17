@@ -5,8 +5,8 @@ semconv = "semantic-conventions-genai@1.38.0"
 model = "claude-sonnet-5"
 
 [simulator]
-model = "claude-sonnet-5"
+model = ""
 
 [cards."basic-economy-return-change.md"]
-rubric_hash = "sha256:371f7998cb5868122bbda322f615de5b4179a5155ab484084a1b54106a33ae4e"
+rubric_hash = "sha256:4307fecabca4d91a36ea59a5024b60ac9130362ccbb36329031e5d8ef0e8691a"
 simulator_hash = "sha256:238516e23646d1566f73c86bb415a1fd7961d18c73c65378ab042fe901892352"

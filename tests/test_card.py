@@ -74,33 +74,33 @@ class TestProseOnly:
 
 class TestErrors:
     def test_a_card_without_a_heading_is_rejected(self) -> None:
-        with pytest.raises(CardError, match="heading"):
+        with pytest.raises(CardError, match=r"heading"):
             parse_text("context:\n  policy: p.md\n")
 
     def test_a_repeated_block_is_rejected(self) -> None:
-        with pytest.raises(CardError, match="wire"):
+        with pytest.raises(CardError, match=r"wire"):
             parse_text("# Scenario: x\nprose\nwire:\n  - a: never\nwire:\n  - b: never\n")
 
     def test_a_credit_entry_without_a_weight_is_rejected(self) -> None:
-        with pytest.raises(CardError, match="weight"):
+        with pytest.raises(CardError, match=r"weight"):
             parse_text('# Scenario: x\nprose\ncredit:\n  - "tone is warm"\n')
 
     def test_a_non_integer_weight_is_rejected(self) -> None:
-        with pytest.raises(CardError, match="weight"):
+        with pytest.raises(CardError, match=r"weight"):
             parse_text('# Scenario: x\nprose\ncredit:\n  - "tone is warm": high\n')
 
     def test_a_zero_weight_is_rejected(self) -> None:
-        with pytest.raises(CardError, match="weight"):
+        with pytest.raises(CardError, match=r"weight"):
             parse_text('# Scenario: x\nprose\ncredit:\n  - "tone is warm": 0\n')
 
     def test_an_unknown_context_key_names_itself(self) -> None:
-        with pytest.raises(CardError, match="dataset"):
+        with pytest.raises(CardError, match=r"dataset"):
             parse_text("# Scenario: x\ncontext:\n  dataset: d.json\n\nprose\n")
 
     def test_the_error_carries_the_card_path(self, tmp_path: Path) -> None:
         card = tmp_path / "broken.md"
         card.write_text("no heading here\n")
-        with pytest.raises(CardError, match="broken.md"):
+        with pytest.raises(CardError, match=r"broken.md"):
             parse(card)
 
 
@@ -118,3 +118,49 @@ class TestFile:
 
     def test_a_card_with_no_policy_has_no_policy_path(self) -> None:
         assert parse_text(PROSE_ONLY).policy_path is None
+
+
+class TestBlockIndentation:
+    def test_a_flush_left_wire_entry_is_rejected_not_read_as_prose(self) -> None:
+        # Silently reclassifying it unenforces every gate wire on the card.
+        with pytest.raises(CardError, match=r"column zero"):
+            parse_text("# Scenario: x\nprose\nwire:\n- update_reservation: never\n")
+
+    def test_the_error_names_the_block_and_the_entry(self) -> None:
+        with pytest.raises(CardError, match=r"wire.*update_reservation"):
+            parse_text("# Scenario: x\nprose\nwire:\n- update_reservation: never\n")
+
+    def test_a_flush_left_credit_entry_is_rejected_too(self) -> None:
+        with pytest.raises(CardError, match=r"column zero"):
+            parse_text('# Scenario: x\nprose\ncredit:\n- "tone is warm": 2\n')
+
+    def test_a_markdown_list_inside_prose_is_still_prose(self) -> None:
+        card = parse_text("# Scenario: x\nThe agent:\n- answers\n- stops\n")
+        assert "- answers" in card.prose and card.wires == []
+
+
+class TestPathContainment:
+    def test_a_policy_escaping_the_card_directory_is_rejected(self, tmp_path: Path) -> None:
+        card = tmp_path / "evil.md"
+        card.write_text("# Scenario: x\ncontext:\n  policy: ../../../etc/passwd\n\nprose\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).policy_path
+
+    def test_an_absolute_policy_is_rejected(self, tmp_path: Path) -> None:
+        card = tmp_path / "evil.md"
+        card.write_text("# Scenario: x\ncontext:\n  policy: /etc/passwd\n\nprose\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).policy_path
+
+    def test_a_fixture_escaping_the_card_directory_is_rejected(self, tmp_path: Path) -> None:
+        card = tmp_path / "evil.md"
+        card.write_text("# Scenario: x\ncontext:\n  fixture: ../secrets.json\n\nprose\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).fixture_path
+
+    def test_a_subdirectory_policy_is_allowed(self, tmp_path: Path) -> None:
+        (tmp_path / "policy").mkdir()
+        (tmp_path / "policy" / "airline.md").write_text("text")
+        card = tmp_path / "ok.md"
+        card.write_text("# Scenario: x\ncontext:\n  policy: policy/airline.md\n\nprose\n")
+        assert parse(card).policy_path == tmp_path / "policy" / "airline.md"

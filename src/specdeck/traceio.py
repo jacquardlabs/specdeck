@@ -68,6 +68,9 @@ def _from_otlp(payload: dict[str, Any], semconv: str | None) -> Trace:
 
 
 def _span(raw: dict[str, Any]) -> Span:
+    for required in ("spanId", "startTimeUnixNano", "endTimeUnixNano"):
+        if required not in raw:
+            raise TraceError(f"OTLP span {raw.get('spanId', '<unnamed>')!r} is missing {required}")
     return Span(
         span_id=raw["spanId"],
         # OTLP writes the absent parent as an empty string, not as null
@@ -88,6 +91,9 @@ def _timestamp(nanos: str | int) -> datetime:
 
 
 def _attributes(raw: list[dict[str, Any]] | None) -> dict[str, Any]:
+    for entry in raw or []:
+        if "key" not in entry or "value" not in entry:
+            raise TraceError(f"OTLP attribute entry is missing key or value: {entry!r}")
     return {entry["key"]: _value(entry["value"]) for entry in raw or []}
 
 

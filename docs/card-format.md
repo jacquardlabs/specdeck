@@ -3,7 +3,10 @@
 The card is the product. This document is the spec everything else anchors to: the file
 layout, the wire language under it, and the lint rules that check both.
 
-Target surface — none of this is implemented yet. See [DECISIONS.md](../DECISIONS.md).
+**Status.** The four blocks, tiers, binary judge verdicts, and the lockfile ship. The wire
+palette ships `never`, `at_most`, and bounds; `eventually`, after-K-then-Y, and precedence
+do not, and a card using one fails with the issue it waits on named. Lint ships nothing
+yet. See [DECISIONS.md](../DECISIONS.md).
 
 ## The file
 
@@ -96,7 +99,12 @@ That separation is what lets the same property serve three deployment modes with
 card format changing.
 
 - **Patterns** are the Dwyer set: `never`, `at_most`, `eventually`, after-K-then-Y,
-  precedence.
+  precedence — plus **bounds**, which compare a trace-level measure against a limit.
+  `latency: under 120s` and `response_tokens under 400` are bounds, and no Dwyer pattern
+  expresses them: `response_tokens` is a sum across `chat` spans, so no event selector
+  reaches it. Whether bounds are properly part of the palette is
+  [#53](https://github.com/jacquardlabs/specdeck/issues/53); the runner implements them
+  either way, because the example card above needs them.
 - **Scopes** are `globally`, between two events, and after K occurrences.
 - **Event selectors** use OTel GenAI vocabulary — `invoke_agent`, `execute_tool`,
   `retrieval`, and tool names.

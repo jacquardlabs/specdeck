@@ -4,6 +4,13 @@ Two numbers, never blended. Gate pass rate is the fraction of runs where every g
 credit score is weighted binary credit over the passing runs only. A cell that scores 9/10
 on credit and fails one gate is a failing cell, and the layout has to make that obvious
 rather than leaving it to be read out of two numbers side by side.
+
+The detail shown is the first *failing* run, not the first run: a cell that fails 4 of 5
+and prints run one's all-green checks tells the reader nothing they can act on.
+
+Model-authored text — a judge's reason — is printed as `Text`, never as markup. A reason
+containing `[/tmp]` would otherwise raise MarkupError and discard the whole report after
+every wire and judge call has already been paid for.
 """
 
 from __future__ import annotations
@@ -11,7 +18,7 @@ from __future__ import annotations
 from rich.console import Console
 from rich.text import Text
 
-from .cell import Cell
+from .cell import Cell, Run
 from .ir import Tier
 
 PASS = "[green]PASS[/green]"
@@ -38,31 +45,63 @@ def render(cell: Cell, console: Console) -> None:
             f"   [dim](over {cell.passes} passing run{'' if cell.passes == 1 else 's'})[/dim]"
         )
 
-    first = cell.results[0]
-    if first.wires:
-        console.print("\n  [dim]wires, first run[/dim]")
-        for wire in first.wires:
-            console.print(f"    {_mark(wire.passed)} {wire.id:<34} [dim]{wire.detail}[/dim]")
-    if first.judged:
-        console.print("\n  [dim]criteria, first run[/dim]")
-        for criterion in first.judged.verdicts:
-            weight = (
-                f" [dim](credit {criterion.weight})[/dim]" if criterion.tier is Tier.CREDIT else ""
-            )
-            console.print(f"    {_mark(criterion.passed)} {criterion.id}{weight}")
+    shown, index = _detail_run(cell)
+    label = f"run {index + 1} of {cell.runs}"
+    if shown.wires:
+        console.print(f"\n  [dim]wires, {label}[/dim]")
+        for wire in shown.wires:
+            line = _verdict_line(wire.passed)
+            line.append(f"{wire.id:<34}")
+            line.append(wire.detail, style="dim")
+            console.print(line)
+    if shown.judged:
+        console.print(f"\n  [dim]criteria, {label}[/dim]")
+        for criterion in shown.judged.verdicts:
+            line = _verdict_line(criterion.passed)
+            # The SME's own sentence, not the slug: the primary persona has to recognise
+            # their own words in the report for their own card.
+            line.append(_headline(criterion.text))
+            if criterion.tier is Tier.CREDIT:
+                line.append(f"  (credit {criterion.weight})", style="dim")
+            console.print(line)
             if criterion.reason:
-                # The reason wraps; giving it its own line keeps the verdict column readable.
-                console.print(f"         [dim]{criterion.reason}[/dim]")
+                console.print(Text(f"         {criterion.reason}", style="dim"))
+    elif not shown.passed:
+        console.print("\n  [dim]criteria not reached — a gate wire failed first[/dim]")
 
-    replayed = all(r.judged.replayed for r in cell.results if r.judged)
-    source = "replayed" if replayed else "live"
+    judged = [r.judged for r in cell.results if r.judged]
     console.print(
-        f"\n  [dim]judge {cell.judge_model} ({source}), "
+        f"\n  [dim]judge {cell.judge_model} ({_source(judged)}), "
         f"{cell.judge_calls} call{'' if cell.judge_calls == 1 else 's'} "
         f"over {cell.runs} run{'' if cell.runs == 1 else 's'}[/dim]"
     )
     console.print()
 
 
-def _mark(passed: bool) -> str:
-    return "[green]ok  [/green]" if passed else "[red]FAIL[/red]"
+def _verdict_line(passed: bool) -> Text:
+    """An indented `ok`/`FAIL` mark, built as Text so what follows is never markup."""
+    line = Text("    ")
+    line.append("ok   " if passed else "FAIL ", style="green" if passed else "red")
+    return line
+
+
+def _detail_run(cell: Cell) -> tuple[Run, int]:
+    """The run worth reading: the first failing one, else the first."""
+    for index, run in enumerate(cell.results):
+        if not run.passed:
+            return run, index
+    return cell.results[0], 0
+
+
+def _headline(text: str) -> str:
+    """One line of the criterion, so a multi-paragraph prose block stays readable."""
+    first = text.strip().splitlines()[0] if text.strip() else "(empty)"
+    return first if len(first) <= 72 else f"{first[:71]}…"
+
+
+def _source(judged: list) -> str:
+    if not judged:
+        return "not called"
+    if all(j.replayed for j in judged):
+        return "replayed"
+    return "live" if not any(j.replayed for j in judged) else "mixed replay and live"
