@@ -4,8 +4,10 @@ Card-based eval runner for LLM systems. Read [PRODUCT.md](PRODUCT.md) and the
 [open milestones](https://github.com/jacquardlabs/specdeck/milestones) before proposing
 anything; read [DECISIONS.md](DECISIONS.md) before proposing anything that contradicts it.
 
-**Repo state: pre-Phase-1.** No source code yet. The current artifacts are the product
-definition, the card format spec, and the decision log.
+**Repo state: Phase 1, walking skeleton.** `src/specdeck/` runs one card against a
+recorded trace: trace schema, property IR, lockfile, card parser, wires engine, trace
+input, judge step, cell runner, report, CLI. Not yet built: running the agent, the
+provider matrix, and lint.
 
 ## Non-negotiables
 
@@ -25,7 +27,8 @@ definition, the card format spec, and the decision log.
 TDD the three shared artifacts first, because everything else reads them:
 
 1. **Trace schema** — the OTel GenAI event log.
-2. **Property IR** — pattern × scope × event selector.
+2. **Property IR** — the intermediate representation wires compile to:
+   pattern × scope × event selector. Defined in [docs/card-format.md](docs/card-format.md).
 3. **Lockfile** — `spec.lock.toml`.
 
 Then: card parser → wires engine → judge step → single-cell report → lint.

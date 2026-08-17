@@ -4,12 +4,47 @@ Executable behavioral specs for LLM systems. A domain expert writes a prose crit
 A developer wires deterministic constraints under it. The runner executes the resulting
 cards against a provider × prompt matrix and reports pass rate, cost, and judge drift.
 
-> **Status: pre-Phase-1.** Nothing here runs yet. This repo currently holds the product
-> definition, the card format spec, and the decision log. Every command and card shown
-> below describes the target surface, not shipped behavior. Progress is tracked in
+> **Status: Phase 1, walking skeleton.** One card runs end to end against a recorded
+> trace. Everything else below — the provider matrix, coverage, calibration, drafting —
+> describes the target surface, not shipped behavior. Progress is tracked in
 > [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
 > product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
 > [DECISIONS.md](DECISIONS.md).
+
+## What runs today
+
+```console
+$ uv run specdeck run cards/basic-economy-return-change.md \
+    --trace cards/traces/run-01.otlp.json --runs 1 --pass-threshold 1
+
+  gate     PASS   1/1 runs   (passes at 1)
+  credit   4/4   (over 1 passing run)
+```
+
+A τ-bench airline card, its wires evaluated against a raw OTLP export, its prose graded by
+a pinned judge replaying a recorded cassette. No API key, no network. The trace is a real
+OpenTelemetry GenAI export rather than a specdeck-shaped file, because an agent already
+emitting OTel needs no adapter.
+
+Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start.
+
+### A card's first run
+
+A new card is unpinned and unrecorded, and specdeck refuses both rather than guessing.
+Once, with a key in the environment:
+
+```console
+$ specdeck run cards/your-card.md --trace run.otlp.json --runs 1 --pass-threshold 1 \
+    --relock --live
+```
+
+`--relock` writes `spec.lock.toml` beside the card, pinning the judge model and hashing
+the rubric and simulator prompt. `--live` calls the judge once and records the reply into
+`cassettes/` beside the card. Every run after that needs neither flag and makes no network
+call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
+
+Not yet: running the agent itself, the provider matrix, lint, and every pattern in the
+wire palette beyond `never`, `at_most`, and bounds.
 
 ## Why
 

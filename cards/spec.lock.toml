@@ -1,0 +1,12 @@
+# Written by specdeck. Refresh with --relock; do not hand-edit.
+semconv = "semantic-conventions-genai@1.38.0"
+
+[judge]
+model = "claude-sonnet-5"
+
+[simulator]
+model = ""
+
+[cards."basic-economy-return-change.md"]
+rubric_hash = "sha256:347e200141feae74a00c61da5cd5a0146d9c14f6beccfbea76903aa6301daf99"
+simulator_hash = "sha256:238516e23646d1566f73c86bb415a1fd7961d18c73c65378ab042fe901892352"

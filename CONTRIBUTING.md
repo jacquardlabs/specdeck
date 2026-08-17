@@ -14,17 +14,24 @@ Matched to the sibling repos (cctx, gauntlet, talk-radio, serverless-rag).
 | Pull request required | yes, 0 approvals | A solo repo still gets the PR surface — diff, discussion, CI — without a second person to wait for. |
 | Wiki | off | Docs live in the repo. |
 | Issues | on | |
+| Required status checks | `lint`, `test (3.11)`, `test (3.12)` | Bound to GitHub Actions by integration id, so nothing else can report a context under those names. |
+| Up-to-date branch required | no | Requiring it forces a rebase every time `main` moves, which is friction a solo repo with linear history does not need. |
 
 Enforced by the `main-branch-protection` ruleset, not classic branch protection.
 
-**Status checks are not required yet, deliberately.** There is no CI, because there is no
-code. When Phase 1 lands the parser and the linter, CI and required contexts land in the
-same change. Two things to get right then:
+**Changing a CI job name is a two-file change.** The required context strings must match
+the job names exactly; renaming a job without updating the ruleset leaves a context that
+never reports and wedges every PR, with no error to read. A Python matrix leg is one
+context each, so adding a version means adding a context in the same change.
 
-- The required context strings must match the CI job names exactly. Renaming a job without
-  updating the ruleset leaves a context that never reports and wedges every PR.
-- A Python matrix leg is one required context each. Adding a version to the matrix means
-  adding a context to the ruleset in the same change.
+Verify a ruleset edit against a real PR rather than by reading it back: a wrong context
+string still saves cleanly, and only shows up as `mergeStateStatus: BLOCKED` on a PR whose
+checks have all passed.
+
+```console
+$ gh pr view <n> --json mergeable,mergeStateStatus
+{"mergeable":"MERGEABLE","mergeStateStatus":"CLEAN"}
+```
 
 ## Issues and milestones
 

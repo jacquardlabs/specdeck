@@ -3,7 +3,10 @@
 What a run reports, how much of the system the suite actually touches, and how we know the
 judge still means what the SME meant.
 
-Target surface — none of this is implemented yet. See [DECISIONS.md](../DECISIONS.md).
+**Status.** The single cell ships: gate pass rate over N runs, ≥k-of-N, and credit score
+conditional on pass. Variance, latency percentiles, and the cost estimate do not
+([#52](https://github.com/jacquardlabs/specdeck/issues/52)), and neither does coverage,
+mutation scoring, or the calibration ledger. See [DECISIONS.md](../DECISIONS.md).
 
 ## The cell
 

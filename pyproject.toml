@@ -1,12 +1,48 @@
-# Tool config only. There is no [project] or [build-system] table yet, because there
-# is no package to build — the two together without a source tree make `pip install -e .`
-# fail on a build backend rather than cleanly do nothing. Packaging metadata, the CLI
-# entry point, and semantic-release config land with Phase 1, alongside CI.
+# Dependencies stay limited to httpx, pydantic, typer, and rich — anything beyond those
+# needs an explicit ask. inspect-ai is not among them: the backend spike closed against it
+# (see DECISIONS.md, 2026-08-16).
 #
-# Language decisions until then: Python 3.11 floor, 3.12 dev pin (.python-version),
-# uv for all tooling. Dependencies stay limited to httpx, pydantic, typer, and rich —
-# anything beyond those needs an explicit ask. inspect-ai is not among them: the backend
-# spike closed against it (see DECISIONS.md, 2026-08-16).
+# Release automation is deliberately absent: nothing is published yet, and the flags that
+# make a 0.x release behave land with it. See #14.
+
+[project]
+name = "specdeck"
+version = "0.0.0"
+description = "Card-based eval runner for LLM systems"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [{ name = "Jacquard Labs" }]
+dependencies = [
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "rich>=13.7",
+    "typer>=0.12",
+]
+
+[project.urls]
+Homepage = "https://github.com/jacquardlabs/specdeck"
+Issues = "https://github.com/jacquardlabs/specdeck/issues"
+
+[project.scripts]
+specdeck = "specdeck.cli:app"
+
+[build-system]
+# Pinned like every other build input: the backend executes on every install,
+# and PEP 639 `license = "MIT"` above needs >=1.27 to be emitted at all.
+requires = ["hatchling>=1.27,<2"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/specdeck"]
+
+[dependency-groups]
+# ruff is pinned exactly, for the same reason the rule set below is selected explicitly:
+# a linter that drifts between runs is not a check, it is a surprise.
+dev = ["pytest>=8.2", "ruff==0.16.3"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
 
 [tool.ruff]
 line-length = 100
@@ -23,6 +59,7 @@ select = [
     "UP",  # pyupgrade
     "B",   # bugbear
     "SIM", # simplify
+    "RUF", # ruff-specific, including RUF100 for stale noqa directives
 ]
 
 [tool.ruff.format]
