@@ -14,7 +14,7 @@ from specdeck import __version__
 from specdeck.card import Card, CardError, parse
 from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
-from specdeck.lint import Result, Severity, lint_paths
+from specdeck.lint import Result, Severity, Vocabulary, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock
 from specdeck.report import render
 from specdeck.trace import Trace
@@ -172,7 +172,7 @@ def lint(
     vocabulary_path: Path | None = typer.Option(  # noqa: B008
         None,
         "--vocabulary",
-        help="A file of known tool names, one per line. Without it, unknown-tool is skipped.",
+        help="Known tool and marker names. Without it, those rules report themselves skipped.",
     ),
 ) -> None:
     """Check cards. Zero tokens, no network."""
@@ -191,14 +191,27 @@ def lint(
     raise typer.Exit(0 if result.ok else 1)
 
 
-def _vocabulary(path: Path | None) -> set[str] | None:
+def _vocabulary(path: Path | None) -> Vocabulary | None:
+    """Read the declared vocabulary: `[tools]` and `[markers]` sections, one name a line.
+
+    Deliberately not TOML or JSON. This file is a placeholder for introspection, and a
+    format with no nesting is one nobody has to migrate when introspection replaces it.
+    """
     if path is None:
         return None
-    return {
-        line.strip()
-        for line in path.read_text().splitlines()
-        if line.strip() and not line.startswith("#")
-    }
+    section = "tools"
+    found: dict[str, set[str]] = {"tools": set(), "markers": set()}
+    for raw in path.read_text().splitlines():
+        line = raw.strip()
+        if not line or line.startswith("#"):
+            continue
+        if line.startswith("[") and line.endswith("]"):
+            section = line[1:-1]
+            if section not in found:
+                raise CardError(f"{path}: unknown vocabulary section [{section}]")
+            continue
+        found[section].add(line)
+    return Vocabulary(tools=found["tools"], markers=found["markers"])
 
 
 #: Skipped is dim rather than absent: a rule that could not run is not a rule that passed.

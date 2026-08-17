@@ -14,16 +14,31 @@ from __future__ import annotations
 import re
 
 from .card import Card
-from .ir import AtMost, Bound, Measure, Never, Operation, Property, Selector, Tier, Verdict
+from .ir import (
+    AfterKThen,
+    AtMost,
+    Bound,
+    Measure,
+    Never,
+    Operation,
+    Property,
+    Selector,
+    Tier,
+    Verdict,
+)
 
 TRUNCATED_FINISH_REASON = "max_tokens"
 
+#: Patterns the palette names but the runner does not implement yet. Each raises with the
+#: form named, rather than compiling to something approximate — a deferred pattern that
+#: silently became a passing wire is the worst available outcome for a gate.
 _DEFERRED = {
-    r"\bafter\b": "after-K-then-Y is not in the tracer: its trigger is a domain event the "
-    "semconv does not define, which is #47",
-    r"\beventually\b": "`eventually` is not in the tracer's pattern cut (#48)",
-    r"\bbefore\b": "precedence is not in the tracer's pattern cut (#48)",
+    r"\beventually\b": "`eventually` is named by the palette but not implemented yet",
+    r"\bbefore\b": "precedence is named by the palette but not implemented yet",
 }
+
+#: `<subject>: after <k> <marker>` — the escalation shape the card format's example uses.
+_AFTER = re.compile(r"after\s+(\d+)\s+([a-z0-9_]+)$")
 
 
 class WireError(Exception):
@@ -57,6 +72,18 @@ def compile_wire(text: str, *, tier: Tier = Tier.GATE, weight: int = 0) -> Prope
     tool = Selector(operation=Operation.EXECUTE_TOOL, tool=subject)
     if rule == "never":
         return Property(id=f"never:{subject}", tier=tier, weight=weight, rule=Never(selector=tool))
+    if match := _AFTER.match(rule):
+        k, marker = match.groups()
+        return Property(
+            id=f"after_{k}_{marker}:{subject}",
+            tier=tier,
+            weight=weight,
+            rule=AfterKThen(
+                k=int(k),
+                trigger=Selector(marker=marker),
+                then=Selector(operation=Operation.EXECUTE_TOOL, tool=subject),
+            ),
+        )
     if rule.startswith("at_most"):
         return Property(
             id=f"at_most:{subject}",

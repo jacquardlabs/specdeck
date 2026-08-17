@@ -1,7 +1,7 @@
 import pytest
 
 from specdeck.card import parse_text
-from specdeck.ir import AtMost, Bound, Measure, Never, Operation, Tier
+from specdeck.ir import AfterKThen, AtMost, Bound, Measure, Never, Operation, Tier
 from specdeck.wires import WireError, compile_wire, compile_wires, gates_pass
 
 CARD = """\
@@ -64,20 +64,26 @@ class TestStopReason:
         assert rule.rule.selector.operation is Operation.CHAT
 
 
-class TestDeferred:
-    @pytest.mark.parametrize(
-        "text",
-        [
-            "writer<->reviewer: escalate_to_hitl after 5 non_agreement",
-            "transfer_to_human_agents: after 3 non_agreement",
-        ],
-    )
-    def test_after_k_then_y_names_the_issue_it_waits_on(self, text: str) -> None:
-        with pytest.raises(WireError, match=r"#47"):
-            compile_wire(text)
+class TestAfterKThenY:
+    def test_compiles_to_a_marker_trigger_and_a_tool_follow_up(self) -> None:
+        prop = compile_wire("transfer_to_human_agents: after 3 non_agreement")
+        assert isinstance(prop.rule, AfterKThen)
+        assert prop.rule.k == 3
+        assert prop.rule.trigger.marker == "non_agreement"
+        assert prop.rule.then.tool == "transfer_to_human_agents"
 
-    def test_eventually_says_it_is_deferred(self) -> None:
-        with pytest.raises(WireError, match=r"not in the tracer"):
+    def test_the_id_names_k_the_marker_and_the_subject(self) -> None:
+        prop = compile_wire("transfer_to_human_agents: after 3 non_agreement")
+        assert prop.id == "after_3_non_agreement:transfer_to_human_agents"
+
+    def test_k_must_be_at_least_one(self) -> None:
+        with pytest.raises(ValueError, match=r"at least 1"):
+            compile_wire("escalate: after 0 non_agreement")
+
+
+class TestDeferred:
+    def test_eventually_says_it_is_not_implemented(self) -> None:
+        with pytest.raises(WireError, match=r"not implemented"):
             compile_wire("send_confirmation: eventually")
 
     def test_an_unrecognised_rule_names_the_wire(self) -> None:
