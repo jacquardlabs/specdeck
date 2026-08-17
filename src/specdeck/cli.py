@@ -12,7 +12,7 @@ from rich.text import Text
 
 from specdeck import __version__
 from specdeck.card import Card, CardError, parse
-from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, run_cell
+from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.lint import Result, Severity, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock
@@ -68,6 +68,9 @@ def run(
     ),
     relock: bool = typer.Option(False, "--relock", help="Record the current state and continue."),
     live: bool = typer.Option(False, "--live", help="Call the judge for real and record it."),
+    concurrency: int = typer.Option(
+        DEFAULT_CONCURRENCY, "--concurrency", help="Runs of the cell in flight at once."
+    ),
     judge_model: str | None = typer.Option(
         None,
         "--judge-model",
@@ -90,6 +93,7 @@ def run(
             k=threshold,
             judge_model=lock.judge_model,
             live=live,
+            concurrency=concurrency,
         )
     except USER_ERRORS as error:
         console.print(f"[red]error[/red] {error}")

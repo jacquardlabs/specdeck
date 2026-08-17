@@ -1,3 +1,4 @@
+import asyncio
 import json
 from pathlib import Path
 
@@ -64,6 +65,11 @@ def conversation():
 @pytest.fixture
 def criteria():
     return criteria_of(parse_text(CARD))
+
+
+def graded(*args, **kwargs):
+    """The judge is async; these tests own the loop rather than pulling in a plugin."""
+    return asyncio.run(judge(*args, **kwargs))
 
 
 def record(tmp_path: Path, criteria, conversation, verdicts: dict, reasons: dict | None = None):
@@ -140,7 +146,7 @@ class TestParseResponse:
 class TestReplay:
     def test_replays_a_recorded_cassette(self, tmp_path: Path, criteria, conversation) -> None:
         record(tmp_path, criteria, conversation, {"prose": True, "tone_remains_professional": True})
-        result = judge(criteria, conversation, policy="airline policy", cassettes=tmp_path)
+        result = graded(criteria, conversation, policy="airline policy", cassettes=tmp_path)
         assert result.replayed is True
         assert {v.id: v.passed for v in result.verdicts} == {
             "prose": True,
@@ -151,7 +157,7 @@ class TestReplay:
         self, tmp_path: Path, criteria, conversation
     ) -> None:
         record(tmp_path, criteria, conversation, {"prose": True, "tone_remains_professional": True})
-        result = judge(criteria, conversation, policy="airline policy", cassettes=tmp_path)
+        result = graded(criteria, conversation, policy="airline policy", cassettes=tmp_path)
         credit = [v for v in result.verdicts if v.tier is Tier.CREDIT]
         assert [(v.id, v.weight) for v in credit] == [("tone_remains_professional", 2)]
 
@@ -159,7 +165,7 @@ class TestReplay:
         self, tmp_path: Path, criteria, conversation
     ) -> None:
         with pytest.raises(JudgeError, match=r"--live"):
-            judge(criteria, conversation, policy="airline policy", cassettes=tmp_path)
+            graded(criteria, conversation, policy="airline policy", cassettes=tmp_path)
 
     def test_editing_the_prose_invalidates_the_cassette(
         self, tmp_path: Path, criteria, conversation
@@ -167,7 +173,7 @@ class TestReplay:
         record(tmp_path, criteria, conversation, {"prose": True})
         edited = criteria_of(parse_text(CARD.replace("refuses", "declines")))
         with pytest.raises(JudgeError, match=r"--live"):
-            judge(edited, conversation, policy="airline policy", cassettes=tmp_path)
+            graded(edited, conversation, policy="airline policy", cassettes=tmp_path)
 
     def test_an_ungraded_criterion_is_an_error_not_a_silent_false(
         self, tmp_path: Path, criteria, conversation
@@ -175,19 +181,26 @@ class TestReplay:
         # Failing closed with no reason is indistinguishable from a real rejection.
         record(tmp_path, criteria, conversation, {"prose": True})
         with pytest.raises(JudgeError, match=r"tone_remains_professional"):
-            judge(criteria, conversation, policy="airline policy", cassettes=tmp_path)
+            graded(criteria, conversation, policy="airline policy", cassettes=tmp_path)
 
     def test_the_result_reports_what_it_was_pinned_to(
         self, tmp_path: Path, criteria, conversation
     ) -> None:
         record(tmp_path, criteria, conversation, ALL_TRUE)
-        result = judge(criteria, conversation, policy="airline policy", cassettes=tmp_path)
+        result = graded(criteria, conversation, policy="airline policy", cassettes=tmp_path)
         assert result.model == "claude-sonnet-5"
         assert result.rubric_hash.startswith("sha256:")
 
 
+def _patch_post(monkeypatch, response) -> None:
+    async def post(self, *args, **kwargs):
+        return response
+
+    monkeypatch.setattr("httpx.AsyncClient.post", post)
+
+
 class TestLiveCall:
-    """The --live path. Never touches the network: httpx.post is replaced."""
+    """The --live path. Never touches the network: the async client's post is replaced."""
 
     def _reply(self, blocks: list[dict], status: int = 200):
         class Response:
@@ -206,8 +219,8 @@ class TestLiveCall:
         body = json.dumps({"verdicts": ALL_TRUE})
         blocks = [{"type": "thinking", "thinking": "hmm"}, {"type": "text", "text": body}]
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        monkeypatch.setattr("httpx.post", lambda *a, **k: self._reply(blocks))
-        result = judge(criteria, conversation, cassettes=tmp_path, live=True)
+        _patch_post(monkeypatch, self._reply(blocks))
+        result = graded(criteria, conversation, cassettes=tmp_path, live=True)
         assert result.replayed is False
         assert all(v.passed for v in result.verdicts)
 
@@ -216,15 +229,15 @@ class TestLiveCall:
     ) -> None:
         monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
         with pytest.raises(JudgeError, match=r"ANTHROPIC_API_KEY"):
-            judge(criteria, conversation, cassettes=tmp_path, live=True)
+            graded(criteria, conversation, cassettes=tmp_path, live=True)
 
     def test_a_non_200_reply_carries_the_status(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
     ) -> None:
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
-        monkeypatch.setattr("httpx.post", lambda *a, **k: self._reply([], status=429))
+        _patch_post(monkeypatch, self._reply([], status=429))
         with pytest.raises(JudgeError, match=r"429"):
-            judge(criteria, conversation, cassettes=tmp_path, live=True)
+            graded(criteria, conversation, cassettes=tmp_path, live=True)
 
     def test_an_unparseable_reply_is_not_recorded(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
@@ -232,9 +245,9 @@ class TestLiveCall:
         # A cassette written from a bad reply replays forever, and --live never re-calls.
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         blocks = [{"type": "text", "text": "I would rather not say."}]
-        monkeypatch.setattr("httpx.post", lambda *a, **k: self._reply(blocks))
+        _patch_post(monkeypatch, self._reply(blocks))
         with pytest.raises(JudgeError):
-            judge(criteria, conversation, cassettes=tmp_path, live=True)
+            graded(criteria, conversation, cassettes=tmp_path, live=True)
         assert list(tmp_path.glob("judge-*.json")) == []
 
     def test_a_recorded_cassette_carries_what_was_asked(
@@ -243,8 +256,8 @@ class TestLiveCall:
         # An orphaned recording has to be re-keyable, not only re-recordable.
         monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
         blocks = [{"type": "text", "text": json.dumps({"verdicts": ALL_TRUE})}]
-        monkeypatch.setattr("httpx.post", lambda *a, **k: self._reply(blocks))
-        judge(criteria, conversation, cassettes=tmp_path, live=True)
+        _patch_post(monkeypatch, self._reply(blocks))
+        graded(criteria, conversation, cassettes=tmp_path, live=True)
         written = json.loads(next(tmp_path.glob("judge-*.json")).read_text())
         assert written["criteria"] == [c.id for c in criteria]
         assert "Transcript" in written["prompt"] or "TRANSCRIPT" in written["prompt"]

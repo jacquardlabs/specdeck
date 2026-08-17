@@ -29,6 +29,7 @@ DEFAULT_JUDGE_MODEL = "claude-sonnet-5"
 API_URL = "https://api.anthropic.com/v1/messages"
 API_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
+TIMEOUT_S = 180
 
 #: Everything between these markers is evidence to grade. It contains agent output,
 #: simulated-user turns, and raw tool results, any of which may be attacker-controlled —
@@ -241,7 +242,7 @@ class Cassette:
         )
 
 
-def judge(
+async def judge(
     criteria: list[Criterion],
     trace: Trace,
     *,
@@ -259,7 +260,7 @@ def judge(
             f"no cassette for this prompt at {cassette.path(prompt, model)} — "
             "run with --live once to record it"
         )
-    response = recorded if recorded is not None else _call(prompt, model)
+    response = recorded if recorded is not None else await _call(prompt, model)
     # Parse before recording: a cassette written from an unparseable reply is replayed
     # forever, and --live never re-calls because the file now exists.
     verdicts, reasons = parse_response(response, [c.id for c in criteria])
@@ -284,26 +285,26 @@ def judge(
     )
 
 
-def _call(prompt: str, model: str) -> str:
+async def _call(prompt: str, model: str) -> str:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise JudgeError("ANTHROPIC_API_KEY is not set, and --live needs it")
-    response = httpx.post(
-        API_URL,
-        headers={
-            "x-api-key": key,
-            "anthropic-version": API_VERSION,
-            "content-type": "application/json",
-        },
-        # No temperature: current models reject it, so a pinned judge pins the model and
-        # the rubric text rather than a sampling setting.
-        json={
-            "model": model,
-            "max_tokens": MAX_TOKENS,
-            "messages": [{"role": "user", "content": prompt}],
-        },
-        timeout=180,
-    )
+    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
+        response = await client.post(
+            API_URL,
+            headers={
+                "x-api-key": key,
+                "anthropic-version": API_VERSION,
+                "content-type": "application/json",
+            },
+            # No temperature: current models reject it, so a pinned judge pins the model
+            # and the rubric text rather than a sampling setting.
+            json={
+                "model": model,
+                "max_tokens": MAX_TOKENS,
+                "messages": [{"role": "user", "content": prompt}],
+            },
+        )
     if response.status_code != httpx.codes.OK:
         raise JudgeError(f"judge call failed: {response.status_code} {response.text[:200]}")
     blocks = response.json()["content"]
