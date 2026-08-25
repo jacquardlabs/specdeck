@@ -2,6 +2,56 @@
 
 <!-- version list -->
 
+## v0.4.0 (2026-08-25)
+
+### Bug Fixes
+
+- --agent calls a callable-object factory again
+  ([`749eb5f`](https://github.com/jacquardlabs/specdeck/commit/749eb5fe423db363a92bf341c1ab307f2cd2e61c))
+
+- A cycle is bounded by a tool it can call, not by a node name
+  ([`57d6c7d`](https://github.com/jacquardlabs/specdeck/commit/57d6c7dc00ec14efa712c78403e3b491808753ae))
+
+- A describe() that raises is a depth to report, not exit 3
+  ([`8938aef`](https://github.com/jacquardlabs/specdeck/commit/8938aefafa861aa76b942f867983813484639fe5))
+
+- Compute path coverage inside the error funnel, never past it
+  ([`377ac7b`](https://github.com/jacquardlabs/specdeck/commit/377ac7b27ab78e3cf6262765e375e9b3ae5b58c7))
+
+- Soft-wrap the paths in the coverage report
+  ([`97fa242`](https://github.com/jacquardlabs/specdeck/commit/97fa242234703099306a94376c80421e18326a62))
+
+- The unnamed-policy signal is reachable, and a stray .md no longer aborts coverage
+  ([`7072c95`](https://github.com/jacquardlabs/specdeck/commit/7072c95a36f3743f07449705ad1b32d2616872ac))
+
+### Documentation
+
+- Name the unparseable-card cost in the unnamed-policy rule
+  ([`f5da012`](https://github.com/jacquardlabs/specdeck/commit/f5da012a756a507347c17f087e08cf80faf78eb6))
+
+- README states the cycle rule as shipped, and the unreadable-file line
+  ([`11b6e98`](https://github.com/jacquardlabs/specdeck/commit/11b6e98ab20286b8d36584fd5cffe1091046886a))
+
+- Record the superseding cycle rule and the unnamed-policy candidate rule
+  ([`4d44215`](https://github.com/jacquardlabs/specdeck/commit/4d44215f2f77d862ca684520f5f5157ceceb296c))
+
+### Features
+
+- Path coverage — declared graph edges no run traversed
+  ([`6003521`](https://github.com/jacquardlabs/specdeck/commit/6003521c2845bd63862427cea3252f986320b539))
+
+- Specdeck coverage — the policy clause inventory and the vocabulary table
+  ([`0528476`](https://github.com/jacquardlabs/specdeck/commit/0528476103d0b6c834fa5838d766b511ccbec8a6))
+
+- Specdeck lint --agent-def, and an introspection depth every report states
+  ([`fc047c9`](https://github.com/jacquardlabs/specdeck/commit/fc047c9f72ea31a80e50aaeb2451d709373f605f))
+
+### Refactoring
+
+- One card-discovery rule, one wire-name derivation, one reference resolver
+  ([`0070656`](https://github.com/jacquardlabs/specdeck/commit/0070656e36cb8ed3838bfbd9370b524ff053a7b0))
+
+
 ## v0.3.0 (2026-08-25)
 
 ### Bug Fixes
