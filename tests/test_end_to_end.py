@@ -813,13 +813,48 @@ class TestTheWholeDeck:
         assert result.exit_code == 2
         assert "no cards under" in result.stdout
 
-    def test_the_lockfile_resolves_from_the_deck_root(self, tmp_path: Path) -> None:
-        # A card in a subdirectory verifies under the `sub/x.md` key `lock_key` writes.
+    def _nested(self, tmp_path: Path) -> Path:
+        """The deck with one card moved into a subdirectory, everything it needs beside it.
+
+        The lockfile stays at the deck root, and its entry is re-keyed the way `lock_key`
+        writes one for a card in a subdirectory (#61).
+        """
         cards = _copy_cards(tmp_path)
         nested = cards / "sub"
-        nested.mkdir()
+        (nested / "traces").mkdir(parents=True)
+        (nested / "policy").mkdir()
+        (nested / "fixtures").mkdir()
         (cards / CARD.name).rename(nested / CARD.name)
-        result = invoke(str(cards))
+        for source, name in (
+            (cards / "traces", TRACE.name),
+            (cards / "policy", "airline.md"),
+            (cards / "fixtures", "airline_seed.json"),
+        ):
+            shutil.copy(source / name, nested / source.name / name)
+        lock = cards / "spec.lock.toml"
+        lock.write_text(
+            lock.read_text().replace(f'[cards."{CARD.name}"]', f'[cards."sub/{CARD.name}"]')
+        )
+        return cards
+
+    def test_the_lockfile_resolves_from_the_deck_root(self, tmp_path: Path) -> None:
+        # Green only if the nested card verified against the ROOT lockfile under its
+        # `sub/<card>.md` key. Resolved from the card's own parent instead, there is no
+        # lockfile beside it and the deck exits 2.
+        cards = self._nested(tmp_path)
+        result = invoke(str(cards), "--cassettes", str(cards / "cassettes"))
+        assert result.exit_code == 0, result.stdout
+        assert "5 cards, 5 passed" in " ".join(result.stdout.split())
+
+    def test_a_nested_card_keyed_under_its_bare_name_is_stale(self, tmp_path: Path) -> None:
+        # The other side of the same key: the bare name is not what the runner writes for
+        # a card in a subdirectory, so the deck must not accept it.
+        cards = self._nested(tmp_path)
+        lock = cards / "spec.lock.toml"
+        lock.write_text(
+            lock.read_text().replace(f'[cards."sub/{CARD.name}"]', f'[cards."{CARD.name}"]')
+        )
+        result = invoke(str(cards), "--cassettes", str(cards / "cassettes"))
         assert result.exit_code == 2, result.stdout
         assert f"sub/{CARD.name}" in " ".join(result.stdout.split())
 
@@ -841,6 +876,24 @@ class TestTheWholeDeck:
         # The reason, not a bare refusal: every one of these has an obvious next question,
         # and a caller who reads why knows whether to loop over the cards themselves.
         assert f"{flag} takes one card, not a directory —" in unwrapped
+
+    def test_a_latency_budget_nothing_could_meet_is_a_user_error_not_a_crash(self) -> None:
+        # `BuiltinConfig` validates the number, and a `ValidationError` is not a
+        # USER_ERROR — unchecked here, a flag the user typed scores as specdeck breaking,
+        # after the whole deck has already been read.
+        result = invoke(str(CARDS), "--latency-budget", "0")
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+        assert "--latency-budget takes a positive number" in " ".join(result.stdout.split())
+
+    def test_a_named_rate_table_that_does_not_exist_is_refused_before_anything_runs(
+        self, tmp_path: Path
+    ) -> None:
+        # A deck under --live would otherwise make every judge call and then exit 2 on a
+        # mistyped path. Checked here rather than timed: no card's verdict is printed.
+        result = invoke(str(CARDS), "--rates", str(tmp_path / "absent.toml"))
+        assert result.exit_code == 2, result.stdout
+        assert "PASS" not in result.stdout and "FAIL" not in result.stdout
 
     def test_a_cap_with_no_matrix_to_cap_is_refused_over_a_deck_too(self) -> None:
         # `--matrix` is refused with a directory, so a cap here can never cap anything.

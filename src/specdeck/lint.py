@@ -230,21 +230,31 @@ def _dead_paths(card: Card, name: str) -> list[Finding]:
                     message=f"{key} {value!r} does not exist (looked in {resolved.parent})",
                 )
             )
-    if card.context.traces and not card.trace_paths:
-        # ERROR, not a warning: a card whose glob resolves to nothing runs zero traces,
-        # and a suite reporting green over a card that never ran is exactly the drift the
-        # deck exists to catch. Machine-verifiable, so the severity rule settles it too.
-        findings.append(
-            Finding(
-                rule="dead-path",
-                severity=Severity.ERROR,
-                card=name,
-                message=(
+    if card.context.traces:
+        # Caught rather than allowed to propagate: `trace_paths` raises for a glob that
+        # escapes the card's directory or names an absolute path, and one such card in a
+        # deck would otherwise abort the whole lint run with zero findings for its four
+        # neighbours. A rule that cannot read one card is a finding about that card.
+        try:
+            resolved = card.trace_paths
+            reason = (
+                ""
+                if resolved
+                else (
                     f"traces {card.context.traces!r} matches no file (looked under "
                     f"{Path(card.path).parent}); a card evaluating zero traces reports green"
-                ),
+                )
             )
-        )
+        except CardError as error:
+            reason = str(error)
+        if reason:
+            # ERROR, not a warning: a card whose glob resolves to nothing runs zero
+            # traces, and a suite reporting green over a card that never ran is exactly
+            # the drift the deck exists to catch. Machine-verifiable, so the severity rule
+            # settles it too.
+            findings.append(
+                Finding(rule="dead-path", severity=Severity.ERROR, card=name, message=reason)
+            )
     return findings
 
 

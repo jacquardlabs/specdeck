@@ -123,6 +123,30 @@ class TestDeclaredTraces:
         card.write_text("# Scenario: x\n\nThe agent answers.\n")
         assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
 
+    def test_a_glob_that_escapes_is_a_finding_not_the_end_of_the_lint_run(
+        self, tmp_path: Path
+    ) -> None:
+        # `trace_paths` raises for a glob outside the card's directory. Propagated, one
+        # such card aborts the whole deck's lint with zero findings for its neighbours.
+        (tmp_path / "outside.json").write_text("{}")
+        deck = tmp_path / "deck"
+        deck.mkdir()
+        (deck / "a.md").write_text(
+            "# Scenario: a\ncontext:\n  traces: ../*.json\n\nThe agent answers.\n"
+        )
+        (deck / "b.md").write_text("# Scenario: b\n\nThe agent answers.\n")
+        findings = lint_paths([deck]).findings
+        escaping = [f for f in findings if f.rule == "dead-path"]
+        assert [f.severity for f in escaping] == [Severity.ERROR]
+        assert "outside the card's directory" in escaping[0].message
+        # The neighbour was still linted, which is the whole point.
+        assert any(f.card.endswith("b.md") for f in findings)
+
+    def test_an_absolute_glob_is_a_finding_too(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: /etc/*\n\nThe agent answers.\n")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
     def test_a_trace_is_never_mistaken_for_a_card(self, tmp_path: Path) -> None:
         # `cards_under` walks `*.md` and traces are `.json`, so they were never
         # candidates — the reason `_referenced` needed no change for `traces:`.

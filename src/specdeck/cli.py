@@ -447,6 +447,18 @@ def _run_deck(
             # single-card path's own words, because it is the same fact: a cap with
             # nothing to cap is dead surface that reads as protection.
             raise CardError("--budget-usd applies to --matrix, which was not given")
+        if latency_budget <= 0:
+            # The single-card path's check, on the invocation and before any card runs.
+            # `BuiltinConfig` validates the number, and a `ValidationError` is not a
+            # `USER_ERROR` — left to `_deck_cell`, a flag the user typed would be scored
+            # as specdeck breaking, once, after the whole deck had already been read.
+            raise CardError(
+                f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
+            )
+        # Resolved before anything runs, purely to fail fast — `_matrix`'s rule. A deck
+        # under `--live` would otherwise make every judge call and then exit 2 on a
+        # mistyped `--rates` path.
+        rates = _rates(rates_path, root, console)
         suite = _deck(
             root,
             lock_path=lock_path,
@@ -459,7 +471,6 @@ def _run_deck(
             concurrency=concurrency,
             judge_model=judge_model,
         )
-        rates = _rates(rates_path, root, console)
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
