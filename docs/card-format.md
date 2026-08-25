@@ -4,8 +4,9 @@ The card is the product. This document is the spec everything else anchors to: t
 layout, the wire language under it, and the lint rules that check both.
 
 **Status.** The four blocks, tiers, binary judge verdicts, the lockfile, and the three
-built-in wires ship. The wire palette ships `never`, `at_most`, bounds, and after-K-then-Y;
-`eventually` and precedence do not, and a card using one fails saying so. Lint ships its
+built-in wires ship. The wire palette ships `never_executed` (spelled `never` for short),
+`never_requested`, `at_most`, bounds, and after-K-then-Y; `eventually` and precedence do
+not, and a card using one fails saying so. Lint ships its
 static and vocabulary-fed rules, and the definition-fed group behind `--agent-def` with the
 LangGraph introspector only — the OpenAI SDK, MCP and subagent probes do not ship. The
 wireable-prose and ledger-fed groups do not. See [DECISIONS.md](../DECISIONS.md).
@@ -116,6 +117,50 @@ card format changing.
   one property serve the runtime monitor as well. Legal marker names are declared
   alongside the tool vocabulary, so an unknown one is a lint error rather than a wire
   that never fires.
+
+### Requested versus executed
+
+A tool call has two moments a card may care about: the model asked for it, and the runtime
+ran it. A hardened runtime denies at dispatch — the model requested `cancel_reservation`,
+the policy layer refused, nothing ran — and a card that forbids only execution cannot tell
+that run apart from one where the model never considered the tool at all.
+
+The palette names both.
+
+- `<tool>: never_executed` — no `execute_tool` span for that tool. `<tool>: never` is the
+  same wire spelled short, and compiles to the same property.
+- `<tool>: never_requested` — the tool was neither executed nor asked for. It matches an
+  `execute_tool` span for the tool, a tool call for it in a `chat` span's output messages,
+  and a denial span naming it as the tool that was refused.
+
+`never_requested` is the stronger claim: everything it forbids includes everything
+`never_executed` forbids, so a card stating both states one of them twice. Prompt-injection
+and privilege cards want the stronger one — "the injected instruction never even got the
+model to ask" is the assertion, and an agent that asked and was saved by its runtime has
+still failed that card.
+
+A wire asserts what the trace shows and no more. An agent that requests a tool its runtime
+drops silently — no tool call in the output messages, no denial span — leaves nothing for
+`never_requested` to match, and neither the wire nor lint can tell.
+
+**Denials.** A runtime that refuses a tool at dispatch emits an `execute_tool` span
+carrying `specdeck.denied_tool`, the name of the tool that was requested and refused, with
+the refusal text in `gen_ai.tool.call.result`. The span's own `gen_ai.tool.name` is the
+component that refused — `runtime_policy` by convention — not the denied tool. The
+attribute, not the name, is what makes a span a denial, so an emitter that calls its policy
+layer something else still traces one legibly, and an emitter that puts the denied tool in
+both places still traces a denial rather than an execution.
+
+A denial is never an execution. `never_executed` ignores it, `at_most` does not count it,
+`never_requested` matches it, and the judge transcript renders it as
+`[denied] <tool>(<arguments>) -> <refusal>` rather than as a request with no result —
+which is the case the judge could not grade before. `specdeck.denied_tool` is in the
+reserved `specdeck.*` namespace for the same reason markers are: the semconv has no
+attribute meaning "this call was refused before it ran".
+
+A `chat` span requests a tool when one of its output messages carries a `tool_call` part —
+the semconv message shape — or a `tool_calls` list, the shape most SDKs emit. Both are
+normalised where the trace is read, not at each call site.
 
 This is a fixed palette, not a general logic. Anything the palette cannot express is a
 gap to discuss, not a reason to widen the language.

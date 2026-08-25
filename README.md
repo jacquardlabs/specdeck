@@ -245,8 +245,9 @@ is the one lint input that imports a module of yours; zero tokens and no network
 Runs in pre-commit and in CI, from the same command.
 
 Not yet: the prose-aware lint group, the OpenAI SDK, MCP and subagent introspectors behind
-`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
-and after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
+`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never_executed`
+(spelled `never` for short), `never_requested`, `at_most`, bounds, and
+after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
 only; they sit behind one `complete()` seam, and a second provider is
 [#60](https://github.com/jacquardlabs/specdeck/issues/60).
 

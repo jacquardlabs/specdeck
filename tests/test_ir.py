@@ -6,6 +6,7 @@ from specdeck.ir import (
     Bound,
     Measure,
     Never,
+    NeverRequested,
     Property,
     Scope,
     Selector,
@@ -13,7 +14,7 @@ from specdeck.ir import (
     evaluate,
     evaluate_all,
 )
-from specdeck.trace import GenAI, Operation
+from specdeck.trace import GenAI, Operation, SpanEvent, Specdeck
 
 from .test_trace import span, trace
 
@@ -218,3 +219,114 @@ class TestAfterKThen:
     def test_it_round_trips_through_serialisation(self) -> None:
         prop = gate(self._rule())
         assert Property.model_validate(prop.model_dump()) == prop
+
+
+class TestNeverRequested:
+    """The stronger claim: the tool was not even asked for."""
+
+    def _denied_trace(self):
+        chat = span("chat-0", Operation.CHAT)
+        chat.events.append(
+            SpanEvent(
+                name="gen_ai.client.inference.operation.details",
+                attributes={
+                    GenAI.OUTPUT_MESSAGES: [
+                        {
+                            "role": "assistant",
+                            "parts": [{"type": "tool_call", "name": "cancel_reservation"}],
+                        }
+                    ]
+                },
+            )
+        )
+        return trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=5.0),
+            chat,
+            span(
+                "tool-0",
+                Operation.EXECUTE_TOOL,
+                offset=1.0,
+                **{
+                    Specdeck.DENIED_TOOL: "cancel_reservation",
+                    GenAI.TOOL_NAME: "runtime_policy",
+                    GenAI.TOOL_CALL_RESULT: "refused by policy",
+                },
+            ),
+        )
+
+    def _executed_trace(self):
+        return trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=5.0),
+            span(
+                "tool-0",
+                Operation.EXECUTE_TOOL,
+                offset=1.0,
+                **{GenAI.TOOL_NAME: "cancel_reservation"},
+            ),
+        )
+
+    def test_a_request_the_runtime_refused_still_fails_it(self) -> None:
+        rule = NeverRequested(selector=Selector(tool="cancel_reservation"))
+        assert not evaluate(gate(rule), self._denied_trace()).passed
+
+    def test_an_execution_fails_it_too(self) -> None:
+        # The stronger claim covers the weaker: everything `never` forbids, this forbids.
+        rule = NeverRequested(selector=Selector(tool="cancel_reservation"))
+        assert not evaluate(gate(rule), self._executed_trace()).passed
+
+    def test_a_run_that_never_considered_the_tool_passes(self, refusal_trace) -> None:
+        rule = NeverRequested(selector=Selector(tool="cancel_reservation"))
+        assert evaluate(gate(rule), refusal_trace).passed
+
+    def test_the_detail_counts_spans_and_says_so(self) -> None:
+        rule = NeverRequested(selector=Selector(tool="cancel_reservation"))
+        assert "requesting span" in evaluate(gate(rule), self._denied_trace()).detail
+
+    def test_a_denial_is_not_an_execution(self) -> None:
+        # The load-bearing back-compat case. Every committed `never:` wire keeps meaning
+        # what it meant: no execute_tool span for that tool. A refusal ran nothing.
+        rule = Never(selector=Selector(operation=Operation.EXECUTE_TOOL, tool="cancel_reservation"))
+        assert evaluate(gate(rule), self._denied_trace()).passed
+
+    def test_a_real_execution_still_fails_never(self) -> None:
+        rule = Never(selector=Selector(operation=Operation.EXECUTE_TOOL, tool="cancel_reservation"))
+        assert not evaluate(gate(rule), self._executed_trace()).passed
+
+    def test_a_denial_does_not_count_toward_a_budget(self) -> None:
+        rule = AtMost(
+            n=0, selector=Selector(operation=Operation.EXECUTE_TOOL, tool="cancel_reservation")
+        )
+        assert evaluate(gate(rule), self._denied_trace()).passed
+
+    def test_it_round_trips_discriminated_on_its_pattern(self) -> None:
+        prop = gate(NeverRequested(selector=Selector(tool="cancel_reservation")))
+        restored = Property.model_validate(prop.model_dump(mode="json"))
+        assert isinstance(restored.rule, NeverRequested)
+        assert restored == prop
+
+
+def test_the_serialised_shape_of_never_did_not_move() -> None:
+    """The assertion that pins why no committed `wires_hash` moved.
+
+    `wires_text` hashes `model_dump(mode="json")`, so a field added to `Selector` or a
+    default changed on `Never` re-keys every lockfile in every repo. The literal is
+    written out rather than derived, because a derivation would move with the code.
+    """
+    prop = Property(
+        id="x", rule=Never(selector=Selector(operation=Operation.EXECUTE_TOOL, tool="t"))
+    )
+    assert prop.model_dump(mode="json") == {
+        "id": "x",
+        "tier": "gate",
+        "weight": 0,
+        "scope": {"kind": "globally"},
+        "rule": {
+            "pattern": "never",
+            "selector": {
+                "operation": "execute_tool",
+                "tool": "t",
+                "finish_reason": None,
+                "marker": None,
+            },
+        },
+    }

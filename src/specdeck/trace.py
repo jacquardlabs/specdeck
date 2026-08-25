@@ -79,9 +79,16 @@ class Specdeck:
     production the agent's own instrumentation does, which is what lets one property serve
     the runtime monitor as well as the eval. Legal names are declared alongside the tool
     vocabulary, so an unknown marker is a lint error rather than a wire that never fires.
+
+    `DENIED_TOOL` names the tool a runtime refused at dispatch. Its presence on an
+    `execute_tool` span is the whole of what makes that span a denial — never the span's
+    own `gen_ai.tool.name`, which is the policy component that refused. Keyed on the
+    attribute so an emitter that calls its policy layer something other than the
+    conventional `runtime_policy` still traces a denial legibly.
     """
 
     MARKER = "specdeck.marker"
+    DENIED_TOOL = "specdeck.denied_tool"
 
 
 #: Required attributes per operation. The semconv marks more as Recommended; only the ones
@@ -144,6 +151,40 @@ class Span(BaseModel):
         return str(value) if value is not None else None
 
     @property
+    def denied_tool(self) -> str | None:
+        """The tool a runtime refused at dispatch, when this span records a refusal."""
+        value = self.attributes.get(Specdeck.DENIED_TOOL)
+        return str(value) if value is not None else None
+
+    @property
+    def executed_tool(self) -> str | None:
+        """The tool this span actually ran, or None when it ran none.
+
+        A denial is not an execution: nothing ran, so a card forbidding execution has not
+        been violated by one. Read here rather than at each wire, because `gen_ai.tool.name`
+        on a denial span is the policy component that refused — reading it as the tool that
+        ran is the misreading the reserved attribute exists to prevent.
+        """
+        if self.operation is not Operation.EXECUTE_TOOL or self.denied_tool is not None:
+            return None
+        name = self.attributes.get(GenAI.TOOL_NAME)
+        return str(name) if name is not None else None
+
+    @property
+    def requested_tools(self) -> list[str]:
+        """Every tool this span shows the model asking for, executed or not.
+
+        Three shapes, one boundary: a denial names the tool it refused, an execution
+        implies the request that produced it, and a `chat` span carries the requests that
+        never reached a runtime at all.
+        """
+        if self.operation is Operation.EXECUTE_TOOL:
+            return [name for name in (self.denied_tool or self.executed_tool,) if name]
+        if self.operation is Operation.CHAT:
+            return [name for message in self.output_messages for name in _requested_in(message)]
+        return []
+
+    @property
     def input_messages(self) -> list[Message]:
         return self._content(GenAI.INPUT_MESSAGES)
 
@@ -156,6 +197,32 @@ class Span(BaseModel):
             if key in event.attributes:
                 return list(event.attributes[key])
         return []
+
+
+#: Tool-call part types the semconv message shape uses. Both spellings are in the wild.
+_TOOL_CALL_PARTS = ("tool_call", "tool_use")
+
+
+def _requested_in(message: Message) -> list[str]:
+    """The tools one assistant message asks for, in either shape emitters produce.
+
+    The semconv puts tool calls in `parts`; most SDKs put them in a top-level `tool_calls`
+    list, with the name either flat or under `function`. Normalised here, at the boundary,
+    rather than at every reader — a transform applied at each call site is one the next
+    call site will miss.
+    """
+    names: list[str] = []
+    for part in message.get("parts") or []:
+        if isinstance(part, dict) and part.get("type") in _TOOL_CALL_PARTS and part.get("name"):
+            names.append(str(part["name"]))
+    for call in message.get("tool_calls") or []:
+        if not isinstance(call, dict):
+            continue
+        function = call.get("function")
+        name = call.get("name") or (function.get("name") if isinstance(function, dict) else None)
+        if name:
+            names.append(str(name))
+    return names
 
 
 class Trace(BaseModel):

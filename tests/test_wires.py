@@ -1,7 +1,16 @@
 import pytest
 
 from specdeck.card import parse_text
-from specdeck.ir import AfterKThen, AtMost, Bound, Measure, Never, Operation, Tier
+from specdeck.ir import (
+    AfterKThen,
+    AtMost,
+    Bound,
+    Measure,
+    Never,
+    NeverRequested,
+    Operation,
+    Tier,
+)
 from specdeck.wires import WireError, compile_wire, compile_wires, gates_pass
 
 CARD = """\
@@ -39,6 +48,41 @@ class TestToolWires:
     def test_ids_are_stable_and_name_the_subject(self) -> None:
         assert compile_wire("modify_reservation: never").id == "never:modify_reservation"
         assert compile_wire("web_search: at_most 2").id == "at_most:web_search"
+
+    def test_never_executed_is_the_same_property_as_never_not_merely_an_equivalent_one(
+        self,
+    ) -> None:
+        # Identity, not equivalence: `wires_text` hashes the dump, so anything less would
+        # move a committed `wires_hash` the moment a card adopted the long spelling.
+        short = compile_wire("modify_reservation: never")
+        long = compile_wire("modify_reservation: never_executed")
+        assert short.model_dump(mode="json") == long.model_dump(mode="json")
+
+    def test_never_requested_is_its_own_pattern_and_its_own_id(self) -> None:
+        prop = compile_wire("cancel_reservation: never_requested")
+        assert prop.id == "never_requested:cancel_reservation"
+        assert isinstance(prop.rule, NeverRequested)
+        assert prop.rule.selector.tool == "cancel_reservation"
+
+    def test_never_requested_selects_no_operation(self) -> None:
+        # A request shows on a `chat` span as readily as on an `execute_tool` one, so
+        # pinning the operation would make the wire blind to the case it exists for.
+        assert compile_wire("cancel_reservation: never_requested").rule.selector.operation is None
+
+    def test_the_new_spellings_did_not_widen_the_grammar(self) -> None:
+        with pytest.raises(WireError, match=r"never_asked"):
+            compile_wire("cancel_reservation: never_asked")
+
+    def test_a_card_may_state_both_and_gets_two_distinct_properties(self) -> None:
+        card = parse_text(
+            "# Both\n\nThe agent refuses.\n\nwire:\n"
+            "  - cancel_reservation: never_executed\n"
+            "  - send_certificate: never_requested\n"
+        )
+        assert [p.id for p in compile_wires(card)] == [
+            "never:cancel_reservation",
+            "never_requested:send_certificate",
+        ]
 
 
 class TestBounds:

@@ -134,6 +134,47 @@ class TestWires:
         assert "redundant-wires" in rules(lint_card(card), Severity.WARNING)
 
 
+class TestRequestedVersusExecuted:
+    def _card(self, tmp_path: Path, *wires: str) -> Path:
+        card = tmp_path / "x.md"
+        lines = "".join(f"  - {wire}\n" for wire in wires)
+        card.write_text(f"# Scenario: x\nThe agent answers.\nwire:\n{lines}")
+        return card
+
+    def test_never_requested_with_a_budget_above_zero_contradicts(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "search: never_requested", "search: at_most 1")
+        findings = lint_card(card)
+        assert "contradictory-wires" in rules(findings, Severity.ERROR)
+        assert any("never_requested" in f.message for f in findings)
+
+    def test_never_requested_beside_never_is_redundant_not_contradictory(
+        self, tmp_path: Path
+    ) -> None:
+        card = self._card(tmp_path, "search: never_requested", "search: never")
+        findings = lint_card(card)
+        assert rules(findings, Severity.ERROR) == []
+        assert "redundant-wires" in rules(findings, Severity.WARNING)
+
+    def test_never_requested_alone_reports_nothing(self, tmp_path: Path) -> None:
+        findings = lint_card(self._card(tmp_path, "search: never_requested"))
+        assert rules(findings, Severity.ERROR) == []
+        assert rules(findings, Severity.WARNING) == []
+
+    def test_both_spellings_of_never_on_one_tool_is_redundant(self, tmp_path: Path) -> None:
+        # They compile to one id, so nothing downstream would ever say it twice.
+        card = self._card(tmp_path, "search: never", "search: never_executed")
+        assert "redundant-wires" in rules(lint_card(card), Severity.WARNING)
+
+    def test_a_misspelled_tool_on_a_never_requested_wire_is_still_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        # Without this the typo compiles to a wire that can never fire and lint says
+        # nothing — the exact failure `unknown-tool` exists to catch.
+        card = self._card(tmp_path, "cancel_reservtion: never_requested")
+        findings = lint_card(card, vocabulary=Vocabulary(tools={"cancel_reservation"}))
+        assert "unknown-tool" in rules(findings, Severity.ERROR)
+
+
 class TestVocabulary:
     def test_an_unknown_tool_is_an_error_when_a_vocabulary_is_supplied(
         self, card_dir: Path

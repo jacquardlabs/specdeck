@@ -36,7 +36,7 @@ from pydantic import BaseModel
 
 from .card import Card, CardError, parse
 from .introspect import STRUCTURAL, Depth, Introspection, bounding_tools
-from .ir import AtMost, Bound, Measure, Never, Property
+from .ir import AtMost, Bound, Measure, Never, NeverRequested, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
 from .wires import WireError, compile_wires, named_markers, named_tools, wires_text
@@ -250,7 +250,7 @@ def _consistency(properties: list[Property], name: str) -> list[Finding]:
     by_measure: dict[str, list[Property]] = {}
     for prop in properties:
         rule = prop.rule
-        if isinstance(rule, Never | AtMost) and rule.selector.tool:
+        if isinstance(rule, Never | NeverRequested | AtMost) and rule.selector.tool:
             by_tool.setdefault(rule.selector.tool, []).append(prop)
         elif isinstance(rule, Bound):
             by_measure.setdefault(rule.measure.value, []).append(prop)
@@ -258,6 +258,45 @@ def _consistency(properties: list[Property], name: str) -> list[Finding]:
     for tool, props in by_tool.items():
         nevers = [p for p in props if isinstance(p.rule, Never)]
         budgets = [p for p in props if isinstance(p.rule, AtMost)]
+        requested = [p for p in props if isinstance(p.rule, NeverRequested)]
+        if requested and any(p.rule.n > 0 for p in budgets):
+            findings.append(
+                Finding(
+                    rule="contradictory-wires",
+                    severity=Severity.ERROR,
+                    card=name,
+                    message=(
+                        f"{tool}: `never_requested` and `at_most` with a budget above zero "
+                        "cannot both hold"
+                    ),
+                )
+            )
+        if requested and nevers:
+            findings.append(
+                Finding(
+                    rule="redundant-wires",
+                    severity=Severity.WARNING,
+                    card=name,
+                    message=(
+                        f"{tool}: `never_requested` already forbids executing it, which is "
+                        "all `never` says"
+                    ),
+                )
+            )
+        if len(nevers) > 1:
+            # Two spellings of one wire compile to one id, so the merge and the report show
+            # a single property and nothing else would ever say the card states it twice.
+            findings.append(
+                Finding(
+                    rule="redundant-wires",
+                    severity=Severity.WARNING,
+                    card=name,
+                    message=(
+                        f"{tool}: `never` and `never_executed` are the same wire, stated "
+                        f"{len(nevers)} times"
+                    ),
+                )
+            )
         if nevers and any(p.rule.n > 0 for p in budgets):
             findings.append(
                 Finding(

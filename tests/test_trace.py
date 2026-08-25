@@ -3,7 +3,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from pydantic import ValidationError
 
-from specdeck.trace import GenAI, Operation, Span, SpanEvent, Trace
+from specdeck.trace import GenAI, Operation, Span, SpanEvent, Specdeck, Trace
 
 T0 = datetime(2026, 8, 16, 12, 0, 0, tzinfo=UTC)
 
@@ -181,3 +181,107 @@ class TestContent:
             )
         t = trace(span("root", Operation.INVOKE_AGENT, parent=None), late, early)
         assert t.final_response == "I cannot change it"
+
+
+class TestDenialsAndRequests:
+    """A denial is an `execute_tool` span carrying `specdeck.denied_tool`.
+
+    The attribute and never the span's own tool name: `gen_ai.tool.name` on a denial is
+    the policy component that refused, so reading it as the tool that ran is exactly the
+    misreading the reserved attribute exists to prevent.
+    """
+
+    def _denial(self, tool: str = "cancel_reservation"):
+        return span(
+            "tool-0",
+            Operation.EXECUTE_TOOL,
+            **{
+                Specdeck.DENIED_TOOL: tool,
+                GenAI.TOOL_NAME: "runtime_policy",
+                GenAI.TOOL_CALL_RESULT: "refused by policy",
+            },
+        )
+
+    def _chat_requesting(self, message: dict):
+        chat = span("chat-0", Operation.CHAT)
+        chat.events.append(
+            SpanEvent(
+                name="gen_ai.client.inference.operation.details",
+                attributes={GenAI.OUTPUT_MESSAGES: [message]},
+            )
+        )
+        return chat
+
+    def test_a_denial_executed_nothing(self) -> None:
+        assert self._denial().executed_tool is None
+
+    def test_a_denial_names_the_tool_it_refused(self) -> None:
+        assert self._denial().requested_tools == ["cancel_reservation"]
+
+    def test_a_denial_that_also_names_the_denied_tool_is_still_a_denial(self) -> None:
+        # Some emitter will reasonably put the denied tool in both places. The attribute
+        # decides, so the span reads as a refusal rather than as an execution.
+        both = span(
+            "tool-0",
+            Operation.EXECUTE_TOOL,
+            **{Specdeck.DENIED_TOOL: "cancel_reservation", GenAI.TOOL_NAME: "cancel_reservation"},
+        )
+        assert both.executed_tool is None
+        assert both.requested_tools == ["cancel_reservation"]
+
+    def test_an_ordinary_tool_span_executed_what_it_names(self) -> None:
+        ordinary = span("tool-0", Operation.EXECUTE_TOOL)
+        assert ordinary.executed_tool == "get_reservation_details"
+
+    def test_executing_a_tool_implies_having_requested_it(self) -> None:
+        assert span("tool-0", Operation.EXECUTE_TOOL).requested_tools == ["get_reservation_details"]
+
+    def test_a_chat_span_requests_through_a_semconv_tool_call_part(self) -> None:
+        chat = self._chat_requesting(
+            {
+                "role": "assistant",
+                "parts": [
+                    {"type": "tool_call", "name": "cancel_reservation", "arguments": {}},
+                ],
+            }
+        )
+        assert chat.requested_tools == ["cancel_reservation"]
+
+    def test_the_tool_use_spelling_of_that_part_reads_the_same(self) -> None:
+        chat = self._chat_requesting(
+            {"role": "assistant", "parts": [{"type": "tool_use", "name": "cancel_reservation"}]}
+        )
+        assert chat.requested_tools == ["cancel_reservation"]
+
+    def test_a_chat_span_requests_through_a_top_level_tool_calls_list(self) -> None:
+        # The shape most SDKs emit. One boundary reads both, so no wire has two cases.
+        chat = self._chat_requesting(
+            {"role": "assistant", "tool_calls": [{"function": {"name": "cancel_reservation"}}]}
+        )
+        assert chat.requested_tools == ["cancel_reservation"]
+
+    def test_a_flat_name_in_that_list_reads_the_same(self) -> None:
+        chat = self._chat_requesting(
+            {"role": "assistant", "tool_calls": [{"name": "cancel_reservation"}]}
+        )
+        assert chat.requested_tools == ["cancel_reservation"]
+
+    def test_a_content_only_chat_span_requests_nothing(self) -> None:
+        chat = self._chat_requesting({"role": "assistant", "content": "I cannot do that"})
+        assert chat.requested_tools == []
+
+    def test_an_invoke_agent_span_requests_nothing(self) -> None:
+        assert span("root", Operation.INVOKE_AGENT, parent=None).requested_tools == []
+
+    def test_an_unnamed_tool_call_is_skipped_rather_than_raising(self) -> None:
+        chat = self._chat_requesting(
+            {
+                "role": "assistant",
+                "parts": [{"type": "tool_call", "arguments": {}}],
+                "tool_calls": [{"function": {}}, "not a dict"],
+            }
+        )
+        assert chat.requested_tools == []
+
+    def test_a_span_with_no_denial_attribute_denies_nothing(self) -> None:
+        assert span("tool-0", Operation.EXECUTE_TOOL).denied_tool is None
