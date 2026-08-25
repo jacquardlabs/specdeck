@@ -6,8 +6,10 @@ judge still means what the SME meant.
 **Status.** The single cell ships: gate pass rate over N runs, ≥k-of-N, credit score
 conditional on pass, and beneath them variance, latency p50/p95 and a dollar estimate
 ([#52](https://github.com/jacquardlabs/specdeck/issues/52)), with the two ported waste
-classifiers ([#23](https://github.com/jacquardlabs/specdeck/issues/23)). Coverage, mutation
-scoring, and the calibration ledger do not. See [DECISIONS.md](../DECISIONS.md).
+classifiers ([#23](https://github.com/jacquardlabs/specdeck/issues/23)). So do the token
+baseline and the JUnit report ([#17](https://github.com/jacquardlabs/specdeck/issues/17),
+[#18](https://github.com/jacquardlabs/specdeck/issues/18)). Coverage, mutation scoring, and
+the calibration ledger do not. See [DECISIONS.md](../DECISIONS.md).
 
 ## The cell
 
@@ -83,6 +85,60 @@ invented figure under an "estimate" label is still an invented figure. And there
 cache pricing: the semconv carries only `gen_ai.usage.input_tokens` and
 `gen_ai.usage.output_tokens`, so a prompt-cached run is over-estimated, its cache reads
 charged at the full input rate.
+
+## The token baseline
+
+`spec.baseline.toml`, beside `spec.lock.toml`, records what each card's cell cost in output
+tokens. The built-in `token_baseline` wire bounds a run at that figure plus 10%, so a card
+that starts costing materially more fails instead of passing quietly at four times the
+price. The full shape is in [card-format.md](card-format.md#the-token-baseline); what
+belongs here is what the number means.
+
+**It is a median, taken over the runs of the cell** — the lower of the two on an even
+count, so the recorded figure is a token count some run actually produced. A mean moves
+with one spike; a max ratchets upward on the worst run ever seen and never comes back down.
+
+**It is `total_output_tokens`, the same measure the bound reads.** Not the per-model
+`usage_by_model` table the cost estimate groups by: a baseline the bound never reads is a
+baseline that cannot fire, and a two-model cell must not have its models averaged into one
+figure by accident.
+
+**The tolerance is 10%, chosen and not derived.** There is no measurement behind it. A run
+that exceeds the baseline by exactly the tolerance has not exceeded it, and the allowance
+is floored to a whole token before the bound is set, because no run costs half a token.
+
+**No baseline recorded gates nothing.** A repo that has never run `--update-baseline` gets
+no regression wire at all — a first install runs green, and gating on a number nobody wrote
+down would mean inventing one. Once a baseline exists the bound fails closed: a trace that
+reports no `gen_ai.usage.output_tokens` reds the card naming the attribute, which is the
+same rule every other token figure follows. `--update-baseline` refuses to record from such
+a trace for that reason, so nothing can be recorded that immediately makes the gate useless.
+
+Recording and gating happen in the same run: `--update-baseline` writes the median and this
+run is then judged against it, exactly as `--relock` records a lock and verifies against
+what it just wrote. A run whose tokens exceed the fresh median by more than the tolerance
+therefore fails immediately after recording — which is the k-of-N statistic doing its job,
+not a contradiction.
+
+## The CI report
+
+`specdeck run --junit-xml PATH` writes a JUnit document, on pass and on fail alike. The
+mapping is deliberate and stated, because other tools parse it: `<testsuites>` is the
+invocation, `<testsuite>` is the cell, `<testcase>` is one run of it, and `<failure>` names
+the wires and criteria a run failed.
+
+One row per run rather than one per card, because a report a human can act on has to say
+*which* run broke and on what. The cost: a cell passes at k of N, so a tolerated failure is
+a red row beside exit 0. Every failure message carries the k-of-N it was judged against —
+"run 3 of 5 failed; the cell needs 4 of 5 and got 4" — and the suite's `system-out` repeats
+the cell's own verdict, so nothing has to be inferred from a count of red rows.
+
+Nothing is written when the run never produced a cell (exit 2 or 3). An empty green suite
+for a run that never started would be a lie, and some renderers read a missing file as
+"nothing to report" — the loud exit code is the signal in that case, not the file.
+
+A token regression is not a new exit code. It is a gate wire, so it exits 1 like any other
+failed gate.
 
 ## Coverage
 
@@ -171,6 +227,7 @@ them). Summing the two would give a figure in no unit at all. cctx kept them apa
 same reason, pricing each kind separately in its orchestrator rather than adding them.
 
 A card that passes at four times the token cost of its baseline is a finding, even though
-it passed. Nothing in the repo defines a card's baseline yet, so that ratio waits on
-[#17](https://github.com/jacquardlabs/specdeck/issues/17); today the report gives absolute
-token quantities and leaves the comparison to the reader.
+it passed. The baseline it would be compared against now exists — see **The token
+baseline** below — but the comparison is not folded into a waste finding: the built-in
+`token_baseline` wire already fails the run, and a finding that duplicated a gate would
+report the same fact twice at two severities. The waste block stays absolute quantities.

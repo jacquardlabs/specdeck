@@ -3,11 +3,11 @@
 The card is the product. This document is the spec everything else anchors to: the file
 layout, the wire language under it, and the lint rules that check both.
 
-**Status.** The four blocks, tiers, binary judge verdicts, and the lockfile ship. The wire
-palette ships `never`, `at_most`, bounds, and after-K-then-Y; `eventually` and precedence
-do not, and a card using one fails saying so. Lint ships its static and vocabulary-fed
-rules; the definition-fed, wireable-prose, and ledger-fed groups do not. See
-[DECISIONS.md](../DECISIONS.md).
+**Status.** The four blocks, tiers, binary judge verdicts, the lockfile, and the three
+built-in wires ship. The wire palette ships `never`, `at_most`, bounds, and after-K-then-Y;
+`eventually` and precedence do not, and a card using one fails saying so. Lint ships its
+static and vocabulary-fed rules; the definition-fed, wireable-prose, and ledger-fed groups
+do not. See [DECISIONS.md](../DECISIONS.md).
 
 ## The file
 
@@ -123,6 +123,55 @@ One property compiles to three deployment modes: an eval assertion, a CI gate, a
 — an AgentSpec-style runtime monitor. The first two ship. The IR is designed so the third
 needs no format change.
 
+## Built-in wires
+
+Three wires every card gets without authoring them. They compile to the same property IR a
+card's own wires do — one `never` and two bounds — so nothing about the report, the
+evaluator, or the lockfile has a second case to handle.
+
+| Wire | What it asserts | Where the limit comes from |
+|---|---|---|
+| `stop_reason` | no `chat` span finished on `max_tokens` | nothing to configure |
+| `latency` | the run finished inside a budget | `--latency-budget`, default 120 seconds |
+| `token_baseline` | the run did not cost much more than last recorded | `spec.baseline.toml` |
+
+All three are gate tier and carry no weight, so they change no card's credit denominator.
+
+**A card that authors the same subject takes its built-in back.** There is no opt-out
+syntax and none is planned: `- latency: under 300s` in the `wire` block simply replaces the
+default, because the merge drops any built-in whose property id an authored wire already
+carries. Tier is no part of that match, so a card writing `- wire: stop_reason: not
+truncated: 1` under `credit` moves the check off the gate entirely — the only way to
+disable one, and deliberately something that shows up in a PR diff.
+
+One gap, accepted rather than solved: `stop_reason: not truncated` is the only rule that
+subject takes, so a card that genuinely cannot avoid truncation can demote the wire to
+credit but cannot relax it.
+
+### The token baseline
+
+`spec.baseline.toml`, beside `spec.lock.toml` and keyed the same way, records what each
+card's cell cost in output tokens:
+
+```toml
+[cards."basic-economy-return-change.md"."default"]
+output_tokens = 95
+```
+
+`specdeck run --update-baseline` writes it — the median of the runs' `total_output_tokens`,
+taking the lower of the two on an even count so the figure is a number some run actually
+produced. It refuses, and writes nothing, when any run reported no
+`gen_ai.usage.output_tokens`: a recorded 0 would bound every later run at 0.
+
+The wire fails a run that exceeds the baseline by more than 10%. That tolerance is chosen,
+not derived. **A card with no baseline recorded gets no wire at all** — a first install
+runs green, and gating on a number nobody has written down would be inventing one. Once a
+baseline exists the bound fails closed, so an emitter that stops reporting usage reds the
+card, naming the attribute rather than a cost.
+
+It is not in `spec.lock.toml` on purpose. The lockfile refuses and exits 2 on any drift,
+and a measured token count moves on every real run.
+
 ## Lockfile
 
 `spec.lock.toml` pins the judge model, the rubric and wire hashes per card, the simulator
@@ -132,6 +181,11 @@ lock without `--relock`.
 Wires are pinned separately from the rubric so a stale-lock error names which half of the
 card moved — the prose the SME owns, or the wires the developer does. They hash from the
 compiled property IR, not the wire text, so reformatting is not drift and `at_most 20` is.
+
+The built-in wires above are **not** hashed. The hash pins what a human wrote; a default
+the runner owns moving in a specdeck release would otherwise read as drift on every card
+in every repo, with a `--relock` hint for a card nobody edited. An *authored* override is
+a wire like any other and is hashed.
 
 An unpinned judge is not a test.
 
