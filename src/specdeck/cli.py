@@ -198,9 +198,11 @@ def _drive(
 def _adapter(reference: str) -> AgentAdapter:
     """Resolve `module:attribute` to something that satisfies the protocol.
 
-    A callable is called with no arguments, so a factory and a class both work. The
-    protocol check happens here rather than at the first turn: `--agent` naming the wrong
-    thing should fail before a simulator call is paid for.
+    A class is instantiated and a factory is called, both with no arguments; an adapter
+    instance is taken as it stands. The class case is not a nicety — a class satisfies a
+    `runtime_checkable` protocol check on attribute presence alone, so passing one through
+    uninstantiated fails at the first turn with `run() missing 1 required positional
+    argument`, long after the guard said it was fine.
     """
     module_name, _, attribute = reference.partition(":")
     if not module_name or not attribute:
@@ -213,7 +215,7 @@ def _adapter(reference: str) -> AgentAdapter:
         found = getattr(module, attribute)
     except AttributeError:
         raise CardError(f"--agent {reference!r}: {module_name} has no {attribute!r}") from None
-    adapter = found() if callable(found) and not hasattr(found, "run") else found
+    adapter = found() if isinstance(found, type) or not isinstance(found, AgentAdapter) else found
     if not isinstance(adapter, AgentAdapter):
         raise CardError(f"--agent {reference!r} has no async run(messages, tools, config)")
     return adapter
