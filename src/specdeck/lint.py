@@ -28,10 +28,10 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card, CardError, parse
-from .ir import AfterKThen, AtMost, Bound, Measure, Never, Property
+from .ir import AtMost, Bound, Measure, Never, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
-from .wires import WireError, compile_wires, wires_text
+from .wires import WireError, compile_wires, named_markers, named_tools, wires_text
 
 CARD_GLOB = "*.md"
 
@@ -88,7 +88,7 @@ def lint_paths(
     lock_path: Path | None = None,
     vocabulary: Vocabulary | None = None,
 ) -> Result:
-    cards = _cards(paths)
+    cards = cards_under(paths)
     findings: list[Finding] = []
     for card_path in cards:
         findings += lint_card(card_path, lock=lock, lock_path=lock_path, vocabulary=vocabulary)
@@ -306,7 +306,7 @@ def _vocabulary(
             card=name,
             message=f"wire names tool {tool!r}, which is not in the vocabulary",
         )
-        for tool in _named_tools(properties)
+        for tool in named_tools(properties)
         if tool not in vocabulary.tools
     ]
     findings += [
@@ -316,31 +316,10 @@ def _vocabulary(
             card=name,
             message=f"wire triggers on marker {marker!r}, which is not in the vocabulary",
         )
-        for marker in _named_markers(properties)
+        for marker in named_markers(properties)
         if marker not in vocabulary.markers
     ]
     return findings
-
-
-def _named_tools(properties: list[Property]) -> list[str]:
-    tools: set[str] = set()
-    for prop in properties:
-        rule = prop.rule
-        if isinstance(rule, Never | AtMost) and rule.selector.tool:
-            tools.add(rule.selector.tool)
-        elif isinstance(rule, AfterKThen) and rule.then.tool:
-            tools.add(rule.then.tool)
-    return sorted(tools)
-
-
-def _named_markers(properties: list[Property]) -> list[str]:
-    return sorted(
-        {
-            p.rule.trigger.marker
-            for p in properties
-            if isinstance(p.rule, AfterKThen) and p.rule.trigger.marker
-        }
-    )
 
 
 def _measures(properties: list[Property], name: str) -> list[Finding]:
@@ -459,8 +438,13 @@ def _cassettes(cards: list[Path]) -> list[Finding]:
     return findings
 
 
-def _cards(paths: list[Path]) -> list[Path]:
-    """Cards under the given paths.
+def cards_under(paths: list[Path]) -> list[Path]:
+    """Cards under the given paths. **The one card-discovery rule in the project.**
+
+    Public because `specdeck lint`, `specdeck coverage` and every later command over a
+    deck have to agree about what a card is. Do not reimplement the walk: the rule below
+    is subtle, and two commands disagreeing about whether `policy/airline.md` is a card is
+    a discrepancy nobody would look for.
 
     A named path is always linted — if you point at a file, you meant it.
 

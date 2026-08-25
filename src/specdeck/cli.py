@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 from datetime import date
 from itertools import groupby
 from pathlib import Path
@@ -741,27 +742,38 @@ async def _drive_async(
     return traces
 
 
-def _adapter(reference: str) -> AgentAdapter:
-    """Resolve `module:attribute` to something that satisfies the protocol.
+def _resolve(reference: str, *, flag: str) -> object:
+    """Resolve `module:attribute` to the object the user meant.
 
-    A class is instantiated and a factory is called, both with no arguments; an adapter
-    instance is taken as it stands. The class case is not a nicety — a class satisfies a
+    A class is instantiated and a factory is called, both with no arguments; anything else
+    is taken as it stands. The class case is not a nicety — a class satisfies a
     `runtime_checkable` protocol check on attribute presence alone, so passing one through
     uninstantiated fails at the first turn with `run() missing 1 required positional
     argument`, long after the guard said it was fine.
+
+    "A class or a routine" is the discriminator, and it is deliberately not "anything that
+    is not already an adapter". `--agent-def` points at objects that satisfy no protocol
+    of ours — a compiled LangGraph graph is a plain object with a `get_graph()` — and
+    calling one because it failed an `isinstance` check would invoke the user's agent
+    just to look at it.
     """
     module_name, _, attribute = reference.partition(":")
     if not module_name or not attribute:
-        raise CardError(f"--agent {reference!r} is not `module:attribute`")
+        raise CardError(f"{flag} {reference!r} is not `module:attribute`")
     try:
         module = importlib.import_module(module_name)
     except ImportError as error:
-        raise CardError(f"--agent {reference!r}: {error}") from None
+        raise CardError(f"{flag} {reference!r}: {error}") from None
     try:
         found = getattr(module, attribute)
     except AttributeError:
-        raise CardError(f"--agent {reference!r}: {module_name} has no {attribute!r}") from None
-    adapter = found() if isinstance(found, type) or not isinstance(found, AgentAdapter) else found
+        raise CardError(f"{flag} {reference!r}: {module_name} has no {attribute!r}") from None
+    return found() if isinstance(found, type) or inspect.isroutine(found) else found
+
+
+def _adapter(reference: str) -> AgentAdapter:
+    """Resolve `--agent` to something that satisfies the adapter protocol."""
+    adapter = _resolve(reference, flag="--agent")
     if not isinstance(adapter, AgentAdapter):
         raise CardError(f"--agent {reference!r} has no async run(messages, tools, config)")
     return adapter
