@@ -1,0 +1,50 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+# Actions are pinned to commit SHAs for the reason ci.yml states at length: a tag is
+# mutable, and a compromised publisher re-points it with no diff in this repo to show it.
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: release
+    runs-on: ubuntu-latest
+    # Scoped to this job rather than the workflow: the release step is the only thing here
+    # that may write, and `contents: write` at file scope would hand it to every step.
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, because the bump is computed from the commits since the
+          # last tag. A shallow clone releases the wrong version rather than failing.
+          fetch-depth: 0
+          persist-credentials: false
+
+      # No setup-uv step: the release action runs inside its own container, so uv on the
+      # runner would be invisible to `build_command`. It installs its own, pinned, in
+      # pyproject.toml — which is also what relocks uv.lock into the release commit.
+
+      - name: Version and tag
+        id: release
+        uses: python-semantic-release/python-semantic-release@39dd2052f2ce8282a5d932c31d58a2ca06d2550e # v10.6.1
+        with:
+          # RELEASE_TOKEN rather than GITHUB_TOKEN: the release commit and tag push to a
+          # protected `main`, and a token minted for the workflow cannot.
+          github_token: ${{ secrets.RELEASE_TOKEN }}
+
+      - name: Attach the built artifacts
+        if: steps.release.outputs.released == 'true'
+        uses: python-semantic-release/publish-action@5a5718ce47b892ef699f2972dae122297771d641 # v10.6.1
+        with:
+          github_token: ${{ secrets.RELEASE_TOKEN }}
+          tag: ${{ steps.release.outputs.tag }}

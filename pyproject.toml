@@ -1,9 +1,6 @@
 # Dependencies stay limited to httpx, pydantic, typer, and rich — anything beyond those
 # needs an explicit ask. inspect-ai is not among them: the backend spike closed against it
 # (see DECISIONS.md, 2026-08-16).
-#
-# Release automation is deliberately absent: nothing is published yet, and the flags that
-# make a 0.x release behave land with it. See #14.
 
 [project]
 name = "specdeck"
@@ -67,3 +64,40 @@ select = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.semantic_release]
+# The PR title drives the bump, because squash-merge makes it the commit subject. A title
+# that is not a Conventional Commit produces no release rather than an error, which is why
+# CONTRIBUTING.md treats the title as part of the change rather than a label.
+version_toml = ["pyproject.toml:project.version"]
+tag_format = "v{version}"
+commit_message = "chore(release): {version} [skip ci]"
+
+# Both flags are load-bearing, not stylistic.
+#
+# Without allow_zero_version, semantic-release normalises the first release of any 0.x
+# project to 1.0.0 — this already happened in jacquardlabs/gauntlet, publishing a v1.0.0
+# that claimed a stable surface it did not have.
+allow_zero_version = true
+# And without major_on_zero = false, the first `feat!:` promotes 0.x straight to 1.0.0 for
+# the same reason. Phase 1 is a walking skeleton; the surface is not stable yet.
+major_on_zero = false
+
+# uv.lock records the project's own version, so a bump makes `uv sync --locked` exit 1 —
+# and that is the first step of both CI jobs. Without relocking inside the release commit,
+# every PR opened after a release fails CI on a lockfile the release itself invalidated.
+# Verified: bumping [project].version by hand reproduces the failure exactly.
+#
+# uv is installed here rather than on the runner because the release action runs in its own
+# container (python:3.14-slim, pip but no uv), so a `setup-uv` step outside it is invisible
+# to this command. Pinned like every other build input.
+build_command = "pip install uv==0.10.10 && uv lock && uv build"
+assets = ["uv.lock"]
+
+[tool.semantic_release.branches.main]
+match = "main"
+
+[tool.semantic_release.publish]
+# Attach the wheel and sdist to the GitHub release. Nothing is pushed to PyPI: no trusted
+# publisher is configured, and publishing a name is a decision rather than a side effect.
+upload_to_vcs_release = true
