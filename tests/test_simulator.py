@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
+from specdeck.budget import Budget, BudgetStop
 from specdeck.judge import Cassette
+from specdeck.rates import ModelRate, Rates
 from specdeck.simulator import (
     FENCE_TRANSCRIPT,
     SimulatorError,
@@ -98,3 +101,74 @@ class TestReplay:
         Cassette(tmp_path, kind="simulator").write(prompt, MODEL, "{}")
         Cassette(tmp_path).write(prompt, MODEL, "{}")
         assert len(list(tmp_path.glob("*.json"))) == 2
+
+
+RATES = Rates(
+    verified=date(2026, 8, 24),
+    table={"anthropic": {"claude-sonnet-5": ModelRate(input=1.0, output=1.0)}},
+)
+
+
+class TestTheBudget:
+    """A simulator turn is specdeck's own spend, so the cap genuinely prevents it."""
+
+    def _patch(self, monkeypatch, usage: dict | None = None):
+        payload: dict = {"content": [{"type": "text", "text": '{"reply": "Cancel it."}'}]}
+        if usage is not None:
+            payload["usage"] = usage
+
+        class Response:
+            status_code = 200
+            text = json.dumps(payload)
+
+            def json(self) -> dict:
+                return payload
+
+        calls = [0]
+
+        async def post(self, *args, **kwargs):
+            calls[0] += 1
+            return Response()
+
+        monkeypatch.setattr("httpx.AsyncClient.post", post)
+        return calls
+
+    def test_a_live_turn_charges_what_it_reported(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        self._patch(monkeypatch, {"input_tokens": 1_000_000, "output_tokens": 0})
+        budget = Budget(cap_usd=None, rates=RATES)
+        spoken(cassettes=tmp_path, model=MODEL, live=True, budget=budget)
+        assert budget.spent.usd == pytest.approx(1.0)
+
+    def test_a_replayed_turn_charges_nothing(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        Cassette(tmp_path, kind="simulator").write(
+            build_prompt(INTENT, [], MARKERS), MODEL, '{"reply": "Cancel it."}'
+        )
+        budget = Budget(cap_usd=None, rates=RATES)
+        spoken(cassettes=tmp_path, model=MODEL, budget=budget)
+        assert budget.spent.usd == 0.0
+
+    def test_a_live_turn_is_refused_before_the_wire_once_the_cap_is_reached(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        calls = self._patch(monkeypatch)
+        budget = Budget(cap_usd=0.5, rates=RATES)
+        budget.charge("claude-sonnet-5", input_tokens=1_000_000, output_tokens=0)
+        with pytest.raises(BudgetStop):
+            spoken(cassettes=tmp_path, model=MODEL, live=True, budget=budget)
+        assert calls[0] == 0
+
+    def test_a_recorded_turn_carries_its_usage(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        self._patch(monkeypatch, {"input_tokens": 7, "output_tokens": 3})
+        spoken(cassettes=tmp_path, model=MODEL, live=True)
+        written = json.loads(next(tmp_path.glob("simulator-*.json")).read_text())
+        assert written["usage"] == {"input_tokens": 7, "output_tokens": 3}

@@ -1,9 +1,11 @@
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
+from specdeck.budget import Budget, BudgetStop
 from specdeck.card import parse_text
 from specdeck.judge import (
     ATTEMPTS,
@@ -16,6 +18,7 @@ from specdeck.judge import (
     parse_response,
     render_transcript,
 )
+from specdeck.rates import ModelRate, Rates
 from specdeck.tier import Tier
 from specdeck.trace import GenAI, Operation, SpanEvent
 
@@ -448,3 +451,141 @@ class TestEveryUserTurnReachesTheJudge:
             _chat("chat-1", 3.0, [opening, reply, pressed], "Still no."),
         )
         assert render_transcript(one).count("[user] I want a refund.") == 1
+
+
+class TestTheBudget:
+    """What a judge call costs, and the one branch that costs nothing.
+
+    The provider is never reached: `httpx.AsyncClient.post` is replaced, exactly as
+    `TestLiveCall` above already does it.
+    """
+
+    RATES = Rates(
+        verified=date(2026, 8, 24),
+        table={"anthropic": {"claude-sonnet-5": ModelRate(input=1.0, output=1.0)}},
+    )
+
+    def _reply(self, verdicts: dict, usage: dict | None = None):
+        payload: dict = {"content": [{"type": "text", "text": json.dumps({"verdicts": verdicts})}]}
+        if usage is not None:
+            payload["usage"] = usage
+
+        class Response:
+            status_code = 200
+            text = json.dumps(payload)
+
+            def json(self) -> dict:
+                return payload
+
+        return Response()
+
+    def test_a_live_call_charges_the_usage_the_provider_reported(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        _patch_post(
+            monkeypatch,
+            self._reply(ALL_TRUE, {"input_tokens": 500_000, "output_tokens": 500_000}),
+        )
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        graded(
+            criteria,
+            conversation,
+            policy="airline policy",
+            cassettes=tmp_path,
+            live=True,
+            budget=budget,
+        )
+        assert budget.spent.usd == pytest.approx(1.0)
+
+    def test_a_replayed_call_charges_nothing_and_is_never_checked(
+        self, tmp_path: Path, criteria, conversation
+    ) -> None:
+        # A cap that refused free work would stop a matrix spending no money at all.
+        record(tmp_path, criteria, conversation, ALL_TRUE)
+        budget = Budget(cap_usd=0.0001, rates=self.RATES)
+        budget.charge("claude-sonnet-5", input_tokens=1_000_000, output_tokens=0)
+        assert budget.stopped
+        result = graded(
+            criteria, conversation, policy="airline policy", cassettes=tmp_path, budget=budget
+        )
+        assert result.replayed is True
+        assert budget.spent.usd == pytest.approx(1.0), "the replay added nothing"
+
+    def test_a_live_call_is_refused_once_the_cap_is_reached(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        calls = _patch_posts(monkeypatch, [self._reply(ALL_TRUE)])
+        budget = Budget(cap_usd=0.5, rates=self.RATES)
+        budget.charge("claude-sonnet-5", input_tokens=1_000_000, output_tokens=0)
+        with pytest.raises(BudgetStop):
+            graded(
+                criteria,
+                conversation,
+                policy="airline policy",
+                cassettes=tmp_path,
+                live=True,
+                budget=budget,
+            )
+        assert calls[0] == 0, "the cap refused before the wire, not after"
+
+    def test_every_resample_is_charged_not_only_the_one_that_parsed(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        # A resample is money the run actually spent, and a cap that counted only the
+        # reply that parsed would undercount exactly the runs that cost the most.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        usage = {"input_tokens": 1_000_000, "output_tokens": 0}
+        _patch_posts(
+            monkeypatch,
+            [self._reply({}, usage), self._reply(ALL_TRUE, usage)],
+        )
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        graded(
+            criteria,
+            conversation,
+            policy="airline policy",
+            cassettes=tmp_path,
+            live=True,
+            budget=budget,
+        )
+        assert budget.spent.usd == pytest.approx(2.0)
+
+
+class TestTheCassetteUsageKey:
+    """Additive, and absent when there was nothing to record.
+
+    The recordings are the Phase-3 mutation runner's fixtures. A cassette written today
+    without usage has to be byte-identical to one written before the key existed, or every
+    re-record puts a spurious diff in front of whoever does it.
+    """
+
+    def test_usage_round_trips_when_the_reply_reported_it(self, tmp_path: Path) -> None:
+        Cassette(tmp_path).write("p", "m", "r", usage=(12, 34))
+        written = json.loads(Cassette(tmp_path).path("p", "m").read_text())
+        assert written["usage"] == {"input_tokens": 12, "output_tokens": 34}
+
+    def test_a_reply_that_reported_nothing_writes_no_usage_key(self, tmp_path: Path) -> None:
+        Cassette(tmp_path).write("p", "m", "r", usage=(None, None))
+        assert "usage" not in json.loads(Cassette(tmp_path).path("p", "m").read_text())
+
+    def test_a_cassette_written_without_usage_is_byte_identical_to_before(
+        self, tmp_path: Path
+    ) -> None:
+        Cassette(tmp_path).write("p", "m", "reply", criteria=["a"])
+        expected = (
+            json.dumps(
+                {"model": "m", "criteria": ["a"], "prompt": "p", "response": "reply"}, indent=2
+            )
+            + "\n"
+        )
+        assert Cassette(tmp_path).path("p", "m").read_text() == expected
+
+    def test_an_old_cassette_still_replays(self, tmp_path: Path, criteria, conversation) -> None:
+        # The committed cards/cassettes/*.json carry no `usage` key at all.
+        record(tmp_path, criteria, conversation, ALL_TRUE)
+        assert (
+            graded(criteria, conversation, policy="airline policy", cassettes=tmp_path).replayed
+            is True
+        )
