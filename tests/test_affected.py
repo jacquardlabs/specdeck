@@ -368,6 +368,13 @@ class TestTheCommand:
         assert result.exit_code == 2, result.stdout
         assert "diff --git" in " ".join(result.stdout.split())
 
+    def test_an_empty_diff_is_refused_rather_than_run_as_a_green_deck(self, tmp_path: Path) -> None:
+        # An empty pipe in CI is almost always a `git diff` whose ref did not resolve.
+        root = _deck_copy(tmp_path)
+        result = _run(root, "")
+        assert result.exit_code == 2, result.stdout
+        assert "empty diff" in " ".join(result.stdout.split())
+
     def test_the_lockfile_selects_the_whole_deck(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         result = _run(root, _modified("cards/spec.lock.toml"))

@@ -113,6 +113,10 @@ card input, and that is an answer rather than an oversight. Under a selection, e
 the selected cards passed, not that the deck is green — the preamble names every card in the
 run and the file that put it there.
 
+An **empty** diff is refused too, rather than treated as a third kind of answer: a `git diff`
+that printed nothing is usually a ref that did not resolve, and a deck that ran no card on it
+would report green.
+
 Pass `--diff-root` when the diff's paths are not relative to the current directory. A card
 that cannot be parsed is selected by any diff, because a card that cannot be read cannot be
 excluded.

@@ -593,9 +593,21 @@ def _deck(
     baseline_file = baseline_path or root / BASELINE_NAME
     selection = None
     if affected_by is not None:
+        changes = parse_diff(_diff(affected_by), root=(diff_root or Path.cwd()).resolve())
+        if not changes:
+            # The third shape, beside a malformed diff and one that matched nothing.
+            # `parse_diff` is total on an empty input because an empty diff really is a
+            # diff of nothing, but in CI the usual cause is `git diff origin/main...`
+            # against a ref that could not be resolved — output on stderr, nothing on the
+            # pipe — and a deck that ran no card on it would report green.
+            raise DiffError(
+                "--affected-by got an empty diff, so there is nothing to select from — a "
+                "`git diff` that printed nothing is usually a ref that could not be "
+                "resolved, and a deck that ran no card on it would report green"
+            )
         selection = select(
             [_inputs(path) for path in paths],
-            parse_diff(_diff(affected_by), root=(diff_root or Path.cwd()).resolve()),
+            changes,
             lock_path=lock_file,
             vocabulary_path=vocabulary_path,
         )
