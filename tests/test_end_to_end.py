@@ -101,6 +101,37 @@ class TestTheLockIsEnforced:
         assert "--relock" in result.stdout
 
 
+class TestTheRateTableIsFoundBesideTheCard:
+    """Which table priced a run must not depend on where the runner was invoked from."""
+
+    OVERRIDE = (
+        "verified = 2026-08-20\n"
+        "[rates.anthropic]\n"
+        '"claude-sonnet-5" = { input = 100.0, output = 100.0 }\n'
+    )
+
+    def test_a_rates_file_beside_the_card_prices_the_run(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.OVERRIDE)
+        # 241 input + 95 output tokens at $100/M is $0.0336, against $0.0014 built-in.
+        assert "~$0.0336 estimate" in " ".join(_run_copy(cards, cards / CARD.name).stdout.split())
+
+    def test_the_merged_table_cannot_claim_the_newer_date(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.OVERRIDE)
+        assert "rates as of 2026-08-20" in _run_copy(cards, cards / CARD.name).stdout
+
+    def test_a_named_table_that_does_not_exist_exits_two(self, tmp_path: Path) -> None:
+        result = demo("--rates", str(tmp_path / "absent.toml"))
+        assert result.exit_code == 2, result.stdout
+        assert "absent.toml" in result.stdout
+
+    def test_a_broken_table_exits_two_not_three(self, tmp_path: Path) -> None:
+        broken = tmp_path / "rates.toml"
+        broken.write_text('[rates.anthropic]\n"claude-sonnet-5" = { input = 1.0, output = 1.0 }\n')
+        assert demo("--rates", str(broken)).exit_code == 2
+
+
 class TestTheTraceIsOtlp:
     def test_the_committed_trace_is_a_raw_otlp_export(self) -> None:
         # The locked trace decision says an agent already emitting OTel needs no adapter.
