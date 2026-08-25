@@ -518,25 +518,57 @@ class TestTheBaseline:
         text = (workspace / BASELINE_NAME).read_text()
         assert "sonnet/terse" in text and "opus/terse" in text
 
-    def test_a_column_that_did_not_pass_says_its_baseline_is_unproven(
-        self, workspace: Path
-    ) -> None:
-        # A column records its cost before its own gate is judged, so a failing column
-        # writes the cost of behaviour nobody wants as the new normal. The file is still
-        # written — refusing would answer a product question wave 3 deliberately left open
-        # — but never silently.
+    def test_a_column_that_did_not_pass_records_no_baseline(self, workspace: Path) -> None:
+        """#102, one grid wider: a failing column does not get to say what normal costs.
+
+        This reverses the earlier behaviour of writing and warning. Every column here
+        fails, so nothing is earned and no file appears at all.
+        """
         prime(workspace, [REPLY], verdict=False)
         result = run(workspace, "--update-baseline")
         assert result.exit_code == 1, result.stdout
         flat = " ".join(result.stdout.split())
         assert "sonnet/terse" in flat and "opus/terse" in flat
-        assert "did not pass" in flat
-        assert (workspace / BASELINE_NAME).exists(), "the file is still written"
+        assert "no baseline was recorded" in flat
+        assert not (workspace / BASELINE_NAME).exists(), "a failing column wrote a baseline"
+
+    def test_a_passing_column_records_while_a_failing_one_beside_it_does_not(
+        self, workspace: Path
+    ) -> None:
+        """The case #102 actually turns on: half a grid earns its baseline, half does not.
+
+        Both columns run to completion, so `fresh` holds a number for each. Only the
+        passing column's reaches disk. A grid where every column fails cannot show this —
+        no file appears at all there — so this is the one that proves the filter is
+        per column rather than all-or-nothing.
+        """
+        other = "I have cancelled it for you."
+        (workspace / "mixed.toml").write_text(
+            MATRIX.replace(
+                f'reply = "{REPLY}", endpoint = "opus"', f'reply = "{other}", endpoint = "opus"'
+            )
+        )
+        # sonnet keeps the refusal and passes; opus cancels, trips `cancel_reservation:
+        # never`, and is graded false.
+        prime(workspace, [other], verdict=False)
+
+        result = run(workspace, "--update-baseline", matrix="mixed.toml")
+        assert result.exit_code == 1, result.stdout
+        flat = " ".join(result.stdout.split())
+        assert "no baseline was recorded" in flat
+        assert "opus/terse" in flat
+        assert "sonnet/terse" not in flat.split("no baseline was recorded")[1]
+
+        recorded = Baseline.load(workspace / BASELINE_NAME)
+        key = lock_key(workspace / "refused.md", workspace / BASELINE_NAME)
+        assert recorded.get(key, "sonnet/terse") is not None, "the passing column recorded"
+        assert recorded.get(key, "opus/terse") is None, "the failing column did not"
 
     def test_a_passing_matrix_says_nothing_of_the_kind(self, workspace: Path) -> None:
         result = run(workspace, "--update-baseline")
         assert result.exit_code == 0, result.stdout
-        assert "did not pass" not in " ".join(result.stdout.split())
+        assert "no baseline was recorded" not in " ".join(result.stdout.split())
+        assert (workspace / BASELINE_NAME).exists(), "a passing matrix still records"
 
     def test_a_column_left_without_a_baseline_of_its_own_is_named(self, workspace: Path) -> None:
         # A half-recorded matrix is reachable by design: a budget stop leaves

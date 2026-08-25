@@ -128,6 +128,14 @@ what it just wrote. A run costing more than the median by more than the toleranc
 fails the invocation that recorded it — and whether the *cell* fails with it is arithmetic
 rather than judgement, so it is stated here rather than left to be discovered.
 
+**Only a run that passed records.** The fold above happens in memory; reaching disk is a
+second question, and a run whose gate failed does not get to say what normal costs. The
+committed baseline stays the last one a passing run earned, and the run says which cells
+recorded nothing and why. In a matrix this is per column, not all-or-nothing: the columns
+that passed record in the same invocation the failing ones are skipped in. The earlier
+behaviour recorded and warned, which is fail-open on a gate-tier wire — the bar a broken
+run quietly raises is the bar the next run is measured against.
+
 `median_low` leaves ⌈N/2⌉ runs at or below the recorded figure, and the default threshold
 is k = min(3, N). At N ≥ 5 those two always meet: five runs give three at or below the
 median against a threshold of three, which passes with no margin at all. Below five they do

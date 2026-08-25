@@ -41,7 +41,24 @@ class EmptyCompletion(ProviderError):
     Its own class because it is the one provider failure a caller should ask again about:
     a reasoning model that spent its budget on thinking returns a well-formed reply with
     no text block in it, and the next sample of the same prompt usually has one.
+
+    It carries the usage the reply reported, because this call was made and billed like
+    any other — and because it is the one the caller *repeats*. A thinking model that
+    keeps returning no text bills every attempt, so a cap that skips this path reads zero
+    while the money leaves. Either half is `None` when the reply did not report it, on the
+    same "used none" / "did not say" rule `Completion` holds.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        input_tokens: int | None = None,
+        output_tokens: int | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.input_tokens = input_tokens
+        self.output_tokens = output_tokens
 
 
 class Completion(BaseModel):
@@ -107,13 +124,18 @@ async def _anthropic(prompt: str, *, model: str, max_tokens: int, timeout_s: int
         raise ProviderError(f"call failed: {response.status_code} {response.text[:200]}")
     payload = response.json()
     blocks = payload["content"]
+    # Absent rather than zero when the reply did not report usage: a caller that charges a
+    # budget must be able to tell a call nobody counted from a call that cost nothing.
+    # Read before the empty-reply check, not after: that reply was billed too.
+    usage = payload.get("usage") or {}
     # Reasoning models lead with a thinking block, so select by type rather than by index.
     text = next((b["text"] for b in blocks if b.get("type") == "text"), None)
     if text is None:
-        raise EmptyCompletion("the reply carried no text block")
-    # Absent rather than zero when the reply did not report usage: a caller that charges a
-    # budget must be able to tell a call nobody counted from a call that cost nothing.
-    usage = payload.get("usage") or {}
+        raise EmptyCompletion(
+            "the reply carried no text block",
+            input_tokens=_count(usage.get("input_tokens")),
+            output_tokens=_count(usage.get("output_tokens")),
+        )
     return Completion(
         text=str(text),
         input_tokens=_count(usage.get("input_tokens")),

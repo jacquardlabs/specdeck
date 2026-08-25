@@ -238,7 +238,8 @@ column that was asked for, as **PASS**, **FAIL**, **skipped**, **stopped** or **
 never fewer columns than were declared. `--update-baseline` records a token baseline per
 column rather than one for the card, so a cheap provider is not gated at an expensive
 one's cost; a baseline recorded by a single-cell run sits in the `default` slot and the
-run says out loud that no column inherits it.
+run says out loud that no column inherits it. A column that did not pass records nothing —
+the columns beside it that did still record in the same run.
 
 ### Coverage
 

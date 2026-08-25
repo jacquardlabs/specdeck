@@ -461,10 +461,14 @@ class TestTheBaseline:
         empty.write_text("")
         assert self._run(cards, cards / CARD.name, "--baseline", str(empty)).exit_code == 0
 
-    def test_a_baseline_set_by_a_failing_run_says_so(self, tmp_path: Path) -> None:
-        # A cell that fails its gate is still a cell that ran, so a broken run's token
-        # cost can become the recorded normal. It is not refused — whether it should be is
-        # an open product question — but it is never silent.
+    def test_a_failing_run_records_no_baseline(self, tmp_path: Path) -> None:
+        """#102: a run whose gate failed does not get to say what normal costs.
+
+        This reverses the earlier behaviour, which recorded and warned. A warning is
+        fail-open on a gate-tier wire: the bar a broken run quietly raises is the bar the
+        next run is measured against. The wire is still evaluated in-cell against the
+        fresh median, so nothing about gating moves — only what reaches disk.
+        """
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
         trace_path.write_text(
@@ -473,8 +477,22 @@ class TestTheBaseline:
         result = self._run(cards, cards / CARD.name, "--update-baseline")
         assert result.exit_code == 1, result.stdout
         text = " ".join(result.stdout.split())
-        assert "recorded from a run whose gate failed" in text
-        assert (cards / "spec.baseline.toml").exists()
+        assert "the baseline was not recorded" in text
+        assert not (cards / "spec.baseline.toml").exists(), "a failing run wrote a baseline"
+
+    def test_a_failing_run_leaves_a_committed_baseline_alone(self, tmp_path: Path) -> None:
+        """The half that matters in a repo that already has one: it must not move."""
+        cards = _copy_cards(tmp_path)
+        self._run(cards, cards / CARD.name, "--update-baseline")
+        committed = (cards / "spec.baseline.toml").read_text()
+
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("get_reservation_details", "update_reservation_flights")
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 1, result.stdout
+        assert (cards / "spec.baseline.toml").read_text() == committed
 
     def test_a_baseline_set_by_a_passing_run_says_nothing(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)
@@ -596,7 +614,11 @@ class TestTheBaseline:
         text = " ".join(result.stdout.split())
         assert "token_baseline 123, under 105" in text
         assert "2/3 runs" in text
-        assert "output_tokens = 95" in (cards / "spec.baseline.toml").read_text()
+        # The wire is still folded in and still fires — that is what the two assertions
+        # above prove. What #102 changed is only what reaches disk: this invocation
+        # failed, so it records nothing.
+        assert not (cards / "spec.baseline.toml").exists()
+        assert "the baseline was not recorded" in text
 
 
 class TestJUnitOutput:

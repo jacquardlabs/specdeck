@@ -173,11 +173,16 @@ async def _sample(
 
 
 async def _call(prompt: str, model: str, *, budget: Budget | None = None) -> Completion:
-    """The provider seam, and the one line a simulator turn is charged on. See judge._call:
-    the charge sits at the return path so no caller can drop it."""
+    """The provider seam, and the lines a simulator turn is charged on. See judge._call:
+    the charge sits at every return path, including the empty reply, so no caller can
+    drop it and no retry loop can spend for free."""
     try:
         reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS)
     except EmptyCompletion as error:
+        # Charged before it is re-raised: `_turn` retries up to ATTEMPTS times, and an
+        # empty reply is billed like any other. See judge._call.
+        if budget is not None:
+            budget.charge(model, input_tokens=error.input_tokens, output_tokens=error.output_tokens)
         raise UngradableTurn(f"the simulator's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise SimulatorError(f"simulator call failed: {error}") from None
