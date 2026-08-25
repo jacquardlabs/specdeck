@@ -43,7 +43,8 @@ FAIL = "[red]FAIL[/red]"
 
 def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
     console.print()
-    console.print(Text(cell.title, style="bold"), Text(cell.card_path, style="dim"))
+    # soft_wrap: this line carries a card path, and a hard break mid-path is not copyable.
+    console.print(Text(cell.title, style="bold"), Text(cell.card_path, style="dim"), soft_wrap=True)
     console.print()
 
     verdict = PASS if cell.passed else FAIL
@@ -468,14 +469,16 @@ def render_suite(suite: Suite, console: Console, *, rates: Rates | None = None) 
     for error in suite.errors:
         # A path and an error message both come out of the user's own files, so they are
         # Text: a bracket in either would be read as a style tag and eat the line.
-        console.print("[red]error[/red]", Text(f"{error.card_path}  {error.message}"))
+        console.print(
+            "[red]error[/red]", Text(f"{error.card_path}  {error.message}"), soft_wrap=True
+        )
     if suite.errors:
         console.print()
     console.print(_deck(suite))
     for cell in suite.cells:
         if not cell.passed:
             console.print()
-            console.print(Text(cell.card_path, style="bold"))
+            console.print(Text(cell.card_path, style="bold"), soft_wrap=True)
             render(cell, console, rates=rates)
     console.print()
     passes = sum(1 for cell in suite.cells if cell.passed)
