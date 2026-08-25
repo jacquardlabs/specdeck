@@ -164,8 +164,9 @@ async def _sample(prompt: str, model: str, markers: list[str]) -> tuple[str, Tur
 
 async def _call(prompt: str, model: str) -> str:
     try:
-        return await complete(prompt, model=model, max_tokens=MAX_TOKENS)
+        reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS)
     except EmptyCompletion as error:
         raise UngradableTurn(f"the simulator's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise SimulatorError(f"simulator call failed: {error}") from None
+    return reply.text

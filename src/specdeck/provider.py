@@ -22,6 +22,7 @@ from __future__ import annotations
 import os
 
 import httpx
+from pydantic import BaseModel, ConfigDict
 
 DEFAULT_PROVIDER = "anthropic"
 DEFAULT_TIMEOUT_S = 180
@@ -43,6 +44,25 @@ class EmptyCompletion(ProviderError):
     """
 
 
+class Completion(BaseModel):
+    """A reply and what it cost, as the provider reported it.
+
+    The token counts are what makes a budget cap enforceable over specdeck's own spend at
+    all: before this, every token the judge and the simulator burned was discarded at the
+    wire, and a call nobody counted is indistinguishable from a call that was free.
+
+    Either half is `None` when the reply did not carry it — never 0. That is the same rule
+    `Trace.reports_output_tokens` holds: "used none" and "did not say" are different
+    answers, and a cap that reads the second as the first is a cap that never trips.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    text: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+
+
 def split_model(model: str) -> tuple[str, str]:
     """`anthropic/claude-sonnet-5` -> `("anthropic", "claude-sonnet-5")`; bare is default."""
     provider, _, name = model.rpartition("/")
@@ -51,8 +71,8 @@ def split_model(model: str) -> tuple[str, str]:
 
 async def complete(
     prompt: str, *, model: str, max_tokens: int, timeout_s: int = DEFAULT_TIMEOUT_S
-) -> str:
-    """One turn, one string back. No streaming, no tools — neither caller needs either."""
+) -> Completion:
+    """One turn, one reply back. No streaming, no tools — neither caller needs either."""
     provider, name = split_model(model)
     if provider != DEFAULT_PROVIDER:
         raise ProviderError(
@@ -62,7 +82,7 @@ async def complete(
     return await _anthropic(prompt, model=name, max_tokens=max_tokens, timeout_s=timeout_s)
 
 
-async def _anthropic(prompt: str, *, model: str, max_tokens: int, timeout_s: int) -> str:
+async def _anthropic(prompt: str, *, model: str, max_tokens: int, timeout_s: int) -> Completion:
     key = os.environ.get("ANTHROPIC_API_KEY")
     if not key:
         raise ProviderError("ANTHROPIC_API_KEY is not set, and --live needs it")
@@ -85,9 +105,22 @@ async def _anthropic(prompt: str, *, model: str, max_tokens: int, timeout_s: int
         )
     if response.status_code != httpx.codes.OK:
         raise ProviderError(f"call failed: {response.status_code} {response.text[:200]}")
-    blocks = response.json()["content"]
+    payload = response.json()
+    blocks = payload["content"]
     # Reasoning models lead with a thinking block, so select by type rather than by index.
     text = next((b["text"] for b in blocks if b.get("type") == "text"), None)
     if text is None:
         raise EmptyCompletion("the reply carried no text block")
-    return str(text)
+    # Absent rather than zero when the reply did not report usage: a caller that charges a
+    # budget must be able to tell a call nobody counted from a call that cost nothing.
+    usage = payload.get("usage") or {}
+    return Completion(
+        text=str(text),
+        input_tokens=_count(usage.get("input_tokens")),
+        output_tokens=_count(usage.get("output_tokens")),
+    )
+
+
+def _count(value: object) -> int | None:
+    """A reported token count, or None. A non-integer is treated as not reported."""
+    return int(value) if isinstance(value, int) else None

@@ -366,11 +366,12 @@ async def _call(prompt: str, model: str) -> str:
     429, a timeout — is a `JudgeError` that raises on the first call.
     """
     try:
-        return await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
+        reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
     except EmptyCompletion as error:
         raise UngradableReply(f"the judge's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise JudgeError(f"judge call failed: {error}") from None
+    return reply.text
 
 
 SLUG_MAX = 48
