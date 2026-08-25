@@ -312,6 +312,11 @@ def run(
             # serializer is specdeck breaking, and escaping to typer's default handler
             # would surface it as exit 1 — a card that honestly failed (#56).
             report = to_xml(cell) if junit_xml else None
+            # Computed inside the funnel though it is printed outside it, on `to_xml`'s
+            # rule: past the funnel an exception escapes to typer's default handler and
+            # exits 1, "the cell failed its gate" — which is a coverage computation
+            # reaching the exit code, the one thing coverage may never do.
+            covered = Coverage(path=path_coverage(introspection, traces))
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
@@ -350,7 +355,7 @@ def run(
     # must not sit beside the two that are. Only the path table: policy and vocabulary are
     # suite-level denominators, and one card answering "1 of 14 tools wired" would read as
     # 7% coverage of a deck it never looked at. `specdeck coverage` asks all three.
-    render_coverage(Coverage(path=path_coverage(introspection, traces)), console)
+    render_coverage(covered, console)
     # The JUnit report first: an unwritable --baseline path must not also deny CI the file
     # it asked for, and the two failures are independent.
     _write_junit(junit_xml, report, console)
