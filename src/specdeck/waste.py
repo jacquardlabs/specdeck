@@ -253,20 +253,33 @@ def _retry_loops(steps: list[Step]) -> list[Finding]:
                 f"{tool_name}({key[:40]}) failed {loop_length}× between spans "  # noqa: RUF001
                 f"{first_errors[0].index}–{last_span}"  # noqa: RUF001
             ),
-            waste_tokens=reported_sum(*(_issuing_tokens(steps, span) for span in waste_spans)),
+            waste_tokens=_waste_tokens(steps, waste_spans),
         )
     ]
 
 
-def _issuing_tokens(steps: list[Step], index: int) -> int | None:
-    """The tokens of the chat span that asked for the tool call at `index`.
+def _waste_tokens(steps: list[Step], waste_spans: list[int]) -> int | None:
+    """What the repeat attempts cost, charging each issuing request once.
 
     cctx prices a wasted retry as a whole round-trip rather than as the error text, and
-    the request that issued it is the closest thing a trace holds to that round-trip.
+    the request that issued it is the closest thing a trace holds to that round-trip. It
+    dedupes the waste turns before pricing them (diagnostician/__init__.py), because one
+    assistant turn issuing two parallel tool calls is still one request. The ordinals in
+    evidence are tool spans here, not turns, so the dedup has to happen on the chat span
+    they resolve to — deduping `waste_spans` would be a no-op, and charging per tool span
+    reads a parallel-tool-use trace at twice its cost.
     """
+    issuing = {chat.index: chat for span in waste_spans if (chat := _issuing_chat(steps, span))}
+    return reported_sum(
+        *(reported_sum(chat.input_tokens, chat.output_tokens) for chat in issuing.values())
+    )
+
+
+def _issuing_chat(steps: list[Step], index: int) -> Step | None:
+    """The chat span that asked for the tool call at `index`."""
     for step in reversed(steps[: index - 1]):
         if step.is_chat:
-            return reported_sum(step.input_tokens, step.output_tokens)
+            return step
     return None
 
 

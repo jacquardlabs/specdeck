@@ -18,6 +18,7 @@ from specdeck.trace import ERROR_TYPE, GenAI, Operation, SpanEvent, Trace
 from specdeck.waste import (
     N_STALE,
     STALE_HIGH_THRESHOLD,
+    T_SIZE,
     Kind,
     Level,
     _estimate_tokens,
@@ -219,6 +220,25 @@ class TestRetryWaste:
     def test_four_failures_charge_three_repeats(self) -> None:
         assert classify(edits(4, tokens=30))[0].waste_tokens == 180
 
+    def test_two_calls_from_one_request_charge_that_request_once(self) -> None:
+        # specdeck-only: cctx's waste_turns hold the issuing assistant turn, and it dedupes
+        # them before pricing, so a turn issuing two parallel tool calls is one request.
+        # Here the ordinals are tool spans — `loop._Builder.record` emits this shape — so
+        # the same dedup has to land on the chat they resolve to.
+        one = trace(
+            root(),
+            chat("c0", offset=1.0, input_tokens=1000, output_tokens=100),
+            tool("t0", "Edit", {"file_path": "a.py"}, "Error: nope", offset=2.0, failed=True),
+            tool("t1", "Edit", {"file_path": "a.py"}, "Error: nope", offset=2.5, failed=True),
+            chat("c1", offset=3.0, input_tokens=2000, output_tokens=200),
+            tool("t2", "Edit", {"file_path": "a.py"}, "Error: nope", offset=4.0, failed=True),
+            tool("t3", "Edit", {"file_path": "a.py"}, "Error: nope", offset=4.5, failed=True),
+        )
+        finding = classify(one)[0]
+        assert finding.evidence["waste_spans"] == [4, 6, 7]
+        # c0 once at 1,100 and c1 once at 2,200 — not c1 twice for its two tool spans.
+        assert finding.waste_tokens == 3300
+
 
 class TestStaleContext:
     def silent(self, n_silent: int = 6, content: str = LARGE) -> Trace:
@@ -234,6 +254,26 @@ class TestStaleContext:
                 tool(
                     f"ts{index}", "Read", {"file_path": "other.py"}, "some", offset=4.0 + 2 * index
                 )
+            )
+        return trace(*spans)
+
+    def trailing(self, n_after: int, content: str = LARGE) -> Trace:
+        """A large result, then `n_after` silent spans alternating chat and tool.
+
+        `silent` moves in pairs, so it can only land on an even `spans_stale`. The N_STALE
+        boundary is odd, and nothing tests a threshold it cannot sit on.
+        """
+        spans: list = [
+            root(duration=float(4 + n_after)),
+            chat("c0", offset=1.0),
+            tool("t0", "Bash", {"command": "grep -r TODO ."}, content, offset=2.0),
+        ]
+        for index in range(n_after):
+            offset = 3.0 + index
+            spans.append(
+                chat(f"s{index}", offset=offset, text="unrelated work here")
+                if index % 2 == 0
+                else tool(f"s{index}", "Read", {"file_path": "other.py"}, "some", offset=offset)
             )
         return trace(*spans)
 
@@ -288,10 +328,44 @@ class TestStaleContext:
         assert finding.confidence is Level.HIGH
         assert finding.severity is Level.HIGH
 
+    def test_exactly_n_stale_spans_later_is_not_yet_stale(self) -> None:
+        # specdeck-only: cctx's boundary is `spans_stale <= N_STALE`, and every other
+        # fixture here sits well past it, so nothing else would notice it moving.
+        assert classify(self.trailing(N_STALE)) == []
+
+    def test_one_span_further_on_is(self) -> None:
+        assert classify(self.trailing(N_STALE + 1))[0].kind is Kind.STALE_CONTEXT
+
+    def test_a_result_estimating_to_exactly_t_size_is_a_candidate(self) -> None:
+        # specdeck-only: cctx's boundary is `>= T_SIZE`, and LARGE sits 80 tokens past it.
+        # 1539 words x 1.3 truncates to exactly 2000; one word fewer falls short.
+        assert _estimate_tokens(" ".join(["tok"] * 1539)) == T_SIZE
+        assert _estimate_tokens(" ".join(["tok"] * 1538)) == T_SIZE - 1
+        assert classify(self.silent(content=" ".join(["tok"] * 1539))) != []
+        assert classify(self.silent(content=" ".join(["tok"] * 1538))) == []
+
+    def test_exactly_the_high_threshold_is_not_yet_high(self) -> None:
+        # specdeck-only: cctx's boundary is `> STALE_HIGH_THRESHOLD`. 2404 words estimate
+        # to 3,125 tokens, carried by 160 silent requests — 500,000 token-turns on the nose.
+        finding = classify(self.silent(n_silent=160, content=" ".join(["tok"] * 2404)))[0]
+        assert finding.evidence["total_token_turns"] == STALE_HIGH_THRESHOLD
+        assert finding.severity is Level.MEDIUM
+
+    def test_only_the_requests_that_re_sent_it_are_billed(self) -> None:
+        # specdeck-only: `billed_stale` is the correction cctx documents as keeping a
+        # tool-heavy stretch from reading ~2x its real cost. Six silent chat-and-tool
+        # pairs follow the result, so six requests carried it — not twelve spans.
+        item = classify(self.silent())[0].evidence["stale_items"][0]
+        assert item["spans_stale"] == 12
+        assert item["token_turns"] == item["content_tokens"] * 6
+        assert item["token_turns"] == 12_480
+
     def test_the_waste_is_the_token_turns_it_counted(self) -> None:
         """Ports test_cost_usd_is_none_from_classifier — the token half is not None here."""
         finding = classify(self.silent())[0]
         assert finding.waste_tokens == finding.evidence["total_token_turns"]
+        # The figure itself, not just that two fields agree: it is what the report prints.
+        assert finding.waste_tokens == 12_480
 
     def test_the_size_is_estimated_because_a_span_carries_no_count(self) -> None:
         # cctx reads `ToolResult.token_count` when it has one; a span never does, so the
