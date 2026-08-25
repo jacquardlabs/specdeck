@@ -206,7 +206,12 @@ def _why(one: Inputs, touched: dict[Path, Change]) -> list[str]:
 
 class _Stanza:
     """One `diff --git` stanza, accumulated. Mutable on purpose: the parser is a fold over
-    lines and the header, the rename lines and the `---`/`+++` pair each carry a piece."""
+    lines and the header, the rename lines and the `---`/`+++` pair each carry a piece.
+
+    The path of a stanza that is not a rename comes off the header and from nowhere else —
+    see `_from_header`. `---`/`+++` are read only for the `/dev/null` on one side of them,
+    which is what says added or deleted for a patch that carries no `new file mode` line.
+    """
 
     def __init__(self, header: str) -> None:
         self.header = header
@@ -217,24 +222,20 @@ class _Stanza:
 
     def read(self, line: str) -> None:
         if line.startswith("rename from "):
-            self.old, self.renamed, self.status = line[len("rename from ") :], True, "renamed"
+            self.old = _quotable(line[len("rename from ") :])
+            self.renamed, self.status = True, "renamed"
         elif line.startswith("rename to "):
-            self.new, self.renamed, self.status = line[len("rename to ") :], True, "renamed"
-        elif line.startswith("--- ") and not self.renamed:
-            self.old = _strip(line[4:], "a/")
-        elif line.startswith("+++ ") and not self.renamed:
-            self.new = _strip(line[4:], "b/")
-        elif line.startswith("new file mode") and not self.renamed:
+            self.new = _quotable(line[len("rename to ") :])
+            self.renamed, self.status = True, "renamed"
+        elif self.renamed:
+            return
+        elif line.startswith("new file mode") or _gone(line, "--- "):
             self.status = "added"
-        elif line.startswith("deleted file mode") and not self.renamed:
+        elif line.startswith("deleted file mode") or _gone(line, "+++ "):
             self.status = "deleted"
 
     def change(self, root: Path) -> Change:
-        if self.new == _DEV_NULL or self.old == _DEV_NULL:
-            self.status = "deleted" if self.new == _DEV_NULL else "added"
-        name = self.new if self.new and self.new != _DEV_NULL else self.old
-        if not name or name == _DEV_NULL:
-            name = self._from_header()
+        name = self.new or self._from_header()
         previous = self.old if self.renamed and self.old and self.old != name else ""
         return Change(
             status=self.status,
@@ -245,30 +246,47 @@ class _Stanza:
         )
 
     def _from_header(self) -> str:
-        """The path off the `diff --git` line, for a stanza with no `---`/`+++` and no
-        rename lines — a mode change on its own has neither.
+        """The path off the `diff --git` line, for every stanza that is not a rename.
 
-        Last resort because the line holds two paths with no delimiter that a path cannot
-        contain, so it is read by the shape git writes: `a/P b/P` for the same P. A stanza
-        that yields no path at all refuses the whole diff rather than contributing nothing:
-        under this feature, "contributed nothing" is indistinguishable from "no card reads
-        it", and that reads as green.
+        The header is the only line whose prefixes are self-describing, which is why the
+        path is read here rather than off `---`/`+++`: git writes the *same* path on both
+        sides of it, so `X/P Y/P` yields P whatever X and Y are — `a/`/`b/` by default,
+        `c/`/`i/`/`w/` under `diff.mnemonicPrefix`, whatever `--src-prefix` was given — and
+        `--no-prefix` yields P by writing it twice unchanged. Stripping an assumed `a/`
+        instead would read a foreign prefix as part of the path, and a path that matches no
+        card is, under this feature, an empty selection and a green run.
+
+        A prefix of more than one component cannot be told from the path it prefixes, so it
+        is refused by name rather than guessed at — the rule `_quotable` follows. A stanza
+        that yields no path at all refuses the whole diff too: "contributed nothing" is
+        indistinguishable from "no card reads it", and that also reads as green.
         """
         rest = _quotable(self.header)
-        size = (len(rest) - len("a/ b/")) // 2
-        if size > 0 and rest == f"a/{rest[2 : 2 + size]} b/{rest[2 : 2 + size]}":
-            return rest[2 : 2 + size]
+        for index, char in enumerate(rest):
+            if char != " ":
+                continue
+            old, new = rest[:index], rest[index + 1 :]
+            if old == new:
+                return old
+            _, old_sep, old_tail = old.partition("/")
+            _, new_sep, new_tail = new.partition("/")
+            if old_sep and new_sep and old_tail and old_tail == new_tail:
+                return old_tail
+        # A copy, or a rename whose `rename to` line the patch dropped: two different paths,
+        # readable only under the default prefixes.
         head, sep, tail = rest.rpartition(" b/")
         if sep and head.startswith("a/"):
             return tail
-        raise DiffError(f"could not read a path out of `diff --git {self.header}`")
+        raise DiffError(
+            f"could not read a path out of `diff --git {self.header}` — a `--src-prefix` "
+            "of more than one path component cannot be told from the path it prefixes"
+        )
 
 
-def _strip(value: str, prefix: str) -> str:
-    """The `a/`/`b/` a plain `git diff` writes. Absent under `--no-prefix`, where the path
-    is already repo-relative and is used as it stands."""
-    value = _quotable(value.split("\t")[0])
-    return value[len(prefix) :] if value.startswith(prefix) else value
+def _gone(line: str, marker: str) -> bool:
+    """Whether `line` is the `--- `/`+++ ` side that git wrote `/dev/null` on. The tab is
+    what git appends to these two lines when the path contains a space."""
+    return line.startswith(marker) and line[len(marker) :].split("\t")[0] == _DEV_NULL
 
 
 def _quotable(value: str) -> str:

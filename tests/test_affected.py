@@ -42,6 +42,20 @@ def _modified(path: str) -> str:
     )
 
 
+def _prefixed(path: str, old: str, new: str) -> str:
+    """The same modification a foreign prefix pair writes — `diff.mnemonicPrefix` writes
+    `c/` and `i/`, `--src-prefix`/`--dst-prefix` write whatever they were given."""
+    return (
+        f"diff --git {old}{path} {new}{path}\n"
+        "index 1111111..2222222 100644\n"
+        f"--- {old}{path}\n"
+        f"+++ {new}{path}\n"
+        "@@ -1,2 +1,2 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+
+
 def _deleted(path: str) -> str:
     return (
         f"diff --git a/{path} b/{path}\n"
@@ -134,6 +148,68 @@ class TestParsingADiff:
         )
         (change,) = parse_diff(body, root=ROOT)
         assert change.path == ROOT / "cards/x.md"
+
+    def test_a_mnemonic_prefix_is_read_as_a_prefix_and_not_as_the_path(self) -> None:
+        # `diff.mnemonicPrefix` is a documented git config, settable globally, and it writes
+        # `c/` and `i/` where a plain diff writes `a/` and `b/`. Read as part of the path,
+        # every one of these paths matches no card — an empty selection and a green run.
+        (change,) = parse_diff(_prefixed("cards/one.md", "c/", "i/"), root=ROOT)
+        assert change.path == ROOT / "cards/one.md"
+
+    def test_a_custom_src_and_dst_prefix_are_read_the_same_way(self) -> None:
+        (change,) = parse_diff(_prefixed("cards/one.md", "old/", "new/"), root=ROOT)
+        assert change.path == ROOT / "cards/one.md"
+
+    def test_an_addition_under_a_foreign_prefix_keeps_its_path_and_its_status(self) -> None:
+        # `--- /dev/null` is the only thing the `---`/`+++` pair is read for; the path is
+        # the header's, which carries the prefix on both sides even for a new file.
+        body = (
+            "diff --git c/added.txt i/added.txt\n"
+            "new file mode 100644\n"
+            "index 0000000..3e75765\n"
+            "--- /dev/null\n"
+            "+++ i/added.txt\n"
+            "@@ -0,0 +1 @@\n"
+            "+new\n"
+        )
+        (change,) = parse_diff(body, root=ROOT)
+        assert (change.status, change.path) == ("added", ROOT / "added.txt")
+
+    def test_the_stanzas_with_no_hunk_at_all_read_a_foreign_prefix_too(self) -> None:
+        # A mode change and a binary file never write `---`/`+++`, so the header is all
+        # there is either way and the prefix has to come off it.
+        mode = "diff --git c/sp ace.txt i/sp ace.txt\nold mode 100644\nnew mode 100755\n"
+        binary = (
+            "diff --git c/d.bin i/d.bin\n"
+            "index 366fd40..e570710 100644\n"
+            "Binary files c/d.bin and i/d.bin differ\n"
+        )
+        assert [one.path for one in parse_diff(_diff(mode, binary), root=ROOT)] == [
+            ROOT / "sp ace.txt",
+            ROOT / "d.bin",
+        ]
+
+    def test_a_prefix_of_two_components_is_refused_rather_than_guessed_at(self) -> None:
+        # `--src-prefix=foo/bar/` cannot be told from a path that starts `foo/bar/`, and a
+        # wrong guess is a card silently not selected. Refused by name, like a quoted path.
+        body = _prefixed("cards/one.md", "foo/bar/", "baz/qux/")
+        with pytest.raises(DiffError) as caught:
+            parse_diff(body, root=ROOT)
+        assert "--src-prefix" in str(caught.value)
+
+    def test_a_quoted_path_is_refused_in_a_rename_stanza_too(self) -> None:
+        # Verbatim from `git mv a.txt café.txt; git diff --cached -M` under the default
+        # `core.quotePath=true`. The header alone would not catch it — only its second path
+        # is quoted — and the rename lines are what the path is read from.
+        body = (
+            'diff --git a/a.txt "b/caf\\303\\251.txt"\n'
+            "similarity index 100%\n"
+            "rename from a.txt\n"
+            'rename to "caf\\303\\251.txt"\n'
+        )
+        with pytest.raises(DiffError) as caught:
+            parse_diff(body, root=ROOT)
+        assert "core.quotePath" in str(caught.value)
 
     def test_a_header_inside_a_hunk_body_is_body_not_a_header(self) -> None:
         # A diff of a diff. Every line of a hunk body carries a prefix character, so a
@@ -342,6 +418,15 @@ class TestTheCommand:
         assert "selected 1 of 5 cards" in unwrapped
         assert "1 card, 1 passed" in unwrapped
         assert "basic-economy-return-change" not in unwrapped
+
+    def test_the_same_edit_under_a_mnemonic_prefix_runs_the_same_card(self, tmp_path: Path) -> None:
+        # The end the reviewer reproduced at: with `diff.mnemonicPrefix=true` set globally,
+        # every path in the diff was read with an `i/` still on it, so the deck reported the
+        # ratified "the diff touched no card" answer and exited 0 on a diff that touched one.
+        root = _deck_copy(tmp_path)
+        result = _run(root, _prefixed("cards/fixtures/delay-compensation-budget.json", "c/", "i/"))
+        assert result.exit_code == 0, result.stdout
+        assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
 
     def test_the_evidence_for_the_selection_is_printed(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
