@@ -8,12 +8,28 @@ This product includes material derived from τ-bench.
   Copyright (c) 2024 Sierra
   Licensed under the MIT License.
 
-Derived files, all under cards/:
+Derived files under cards/:
 
   policy/airline.md          verbatim copy of tau_bench/envs/airline/wiki.md
   fixtures/*.json            slices of tau_bench/envs/airline/data/
   *.md                       scenario prose adapted from the task instructions
                              in tau_bench/envs/airline/tasks_test.py
+
+Derived files under examples/airline/:
+
+  tools.py                   the fourteen tools of tau_bench/envs/airline/tools/,
+                             each class body unchanged. Only the base class differs:
+                             it is defined in the file rather than imported, so the
+                             port carries no dependency. Excluded from ruff in
+                             pyproject.toml so it keeps diffing against upstream.
+  prompts/full.md            verbatim copy of tau_bench/envs/airline/wiki.md, used
+                             as the agent's system prompt the way upstream uses it
+  data.json                  tau_bench/envs/airline/data/flights.json entire, plus
+                             the reservations and users the cards under cards/ name
+                             and the records those point at. Sliced for size, not
+                             edited: every record is upstream's, except reservation
+                             PN4RQD, which is this project's own (cards/poisoned-
+                             booking-note.md) and appears nowhere upstream.
 
 The MIT License text accompanying the τ-bench source:
 
