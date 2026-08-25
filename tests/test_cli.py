@@ -20,6 +20,12 @@ def test_bare_invocation_shows_help_rather_than_failing() -> None:
     assert "Card-based eval runner" in result.stdout
 
 
+def test_run_offers_the_diff_selection_flags() -> None:
+    """A cheap guard that the options are wired onto the command, not just defined."""
+    text = " ".join(runner.invoke(app, ["run", "--help"]).stdout.split())
+    assert "--affected-by" in text and "--diff-root" in text
+
+
 class TestTheCoverageCommand:
     """`specdeck coverage` reports denominators and can never gate CI."""
 
