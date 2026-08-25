@@ -90,6 +90,33 @@ card that never ran is the drift cards exist to catch.
 and are refused with a directory: every one of them writes or varies something the last
 card in the deck would silently win.
 
+### Only the cards a PR touches
+
+```console
+$ git diff origin/main... | uv run specdeck run cards/ --affected-by -
+```
+
+Selection is **file-level and nothing more**. A card is selected when the diff touches the
+card file itself, the policy it names, the fixture it names, or any recording its `traces:`
+glob resolves to; a diff touching `spec.lock.toml` or the `--vocabulary` file selects every
+card, because those two pin what correct means for the whole deck. There is no clause-level
+narrowing — a diff editing one bullet of a shared policy selects every card that names that
+policy, and the two blockers on doing better are in
+[#95](https://github.com/jacquardlabs/specdeck/issues/95).
+
+Two failures that look alike are kept apart, and the distinction is the reason the flag can
+be trusted. A **malformed** diff — a `--stat` summary, a `--name-only` list, a stanza whose
+path cannot be read — exits 2, because a parser that read garbage as "nothing changed" would
+run nothing and report green on every PR forever. A **valid** diff touching nothing any card
+reads selects no cards and exits 0, saying so: a change to the agent's own source is not a
+card input, and that is an answer rather than an oversight. Under a selection, exit 0 means
+the selected cards passed, not that the deck is green — the preamble names every card in the
+run and the file that put it there.
+
+Pass `--diff-root` when the diff's paths are not relative to the current directory. A card
+that cannot be parsed is selected by any diff, because a card that cannot be read cannot be
+excluded.
+
 ### A card's first run
 
 A new card is unpinned and unrecorded, and specdeck refuses both rather than guessing.
