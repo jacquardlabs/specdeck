@@ -22,6 +22,10 @@ $ uv run specdeck run cards/basic-economy-return-change.md \
   gate     PASS   1/1 runs   (passes at 1)
   credit   4/4   (over 1 passing run)
 
+  variance n/a — 1 passing run, a spread needs two
+  latency  p50 3.87s, p95 3.87s over 1 run
+  cost     ~$0.0014 estimate (rates as of 2026-08-24), agent tokens only, 1 run
+
   wires, run 1 of 1
     ok   never:update_reservation_flights  0 occurrences
     ok   at_most:search_direct_flight      0 calls, budget 2
@@ -39,6 +43,14 @@ One of five τ-bench airline cards, its wires evaluated against a raw OTLP expor
 prose graded by a pinned judge replaying a recorded cassette. No API key, no network. The
 trace is a real OpenTelemetry GenAI export rather than a specdeck-shaped file, because an
 agent already emitting OTel needs no adapter.
+
+The three dim figures qualify the two above them and never replace them. The dollar amount
+prices the agent's own traced tokens off a rate table shipped in the package — an estimate
+carrying the date it was checked, never a billing figure. `specdeck rates` prints that
+table; `--rates`, or a `rates.toml` beside the card, corrects it — a broken table you named
+stops the run, one merely found beside the card only prints a note. A run that wastes tokens
+gets a `waste` block under the detail; a finding says what it cost and never changes the
+verdict.
 
 Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start,
 `3` specdeck itself broke. A caller reading only the code should never route a malformed

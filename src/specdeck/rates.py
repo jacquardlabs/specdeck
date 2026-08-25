@@ -127,7 +127,9 @@ class Rates(BaseModel):
         The provider comes from the model string by default, not from the trace:
         `gen_ai.provider.name` is written "unknown" on every chat span our own loop
         produces, so keying on it would leave every trace this runner generates unpriced.
-        `provider=` is the override for a raw OTLP span that names a real one.
+        `provider=` is the override for a caller holding one out of band. A trace does not
+        need it: `trace.qualified_model` folds a real `gen_ai.provider.name` into the id
+        before it is ever grouped, so `usage_by_model` hands this method `openai/gpt-4o`.
         """
         named, name = split_model(model)
         entries = self.table.get(provider or named)

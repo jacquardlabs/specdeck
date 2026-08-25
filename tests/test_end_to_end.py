@@ -58,6 +58,25 @@ class TestTheCardRunsGreen:
     def test_the_judge_is_replayed_not_called(self) -> None:
         assert "replayed" in demo().stdout
 
+    def test_it_prints_the_three_secondary_figures(self) -> None:
+        stdout = " ".join(demo().stdout.split())
+        # 3.87s is the recorded root span's own duration, the same number the `latency`
+        # wire prints one block further down.
+        assert "latency p50 3.87s, p95 3.87s over 1 run" in stdout
+        assert "variance n/a — 1 passing run" in stdout
+
+    def test_the_dollar_figure_is_an_estimate_and_says_whose_tokens(self) -> None:
+        # 241 input and 95 output tokens of claude-sonnet-5, off the recorded trace, at
+        # the built-in table's rate. No key, no network: the figure is arithmetic.
+        stdout = " ".join(demo().stdout.split())
+        assert "cost ~$0.0014 estimate (rates as of" in stdout
+        assert "agent tokens only" in stdout
+        for billing in ("billed", "charged", "invoice"):
+            assert billing not in stdout
+
+    def test_a_clean_run_prints_no_waste_block(self) -> None:
+        assert "waste" not in demo().stdout
+
     def test_every_wire_holds(self) -> None:
         stdout = demo().stdout
         for wire in ("never:update_reservation_flights", "at_most:search_direct_flight"):
@@ -80,6 +99,54 @@ class TestTheLockIsEnforced:
         result = _run_copy(edited, edited / CARD.name)
         assert result.exit_code == 2
         assert "--relock" in result.stdout
+
+
+class TestTheRateTableIsFoundBesideTheCard:
+    """Which table priced a run must not depend on where the runner was invoked from."""
+
+    OVERRIDE = (
+        "verified = 2026-08-20\n"
+        "[rates.anthropic]\n"
+        '"claude-sonnet-5" = { input = 100.0, output = 100.0 }\n'
+    )
+
+    def test_a_rates_file_beside_the_card_prices_the_run(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.OVERRIDE)
+        # 241 input + 95 output tokens at $100/M is $0.0336, against $0.0014 built-in.
+        assert "~$0.0336 estimate" in " ".join(_run_copy(cards, cards / CARD.name).stdout.split())
+
+    def test_the_merged_table_cannot_claim_the_newer_date(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.OVERRIDE)
+        assert "rates as of 2026-08-20" in _run_copy(cards, cards / CARD.name).stdout
+
+    def test_a_named_table_that_does_not_exist_exits_two(self, tmp_path: Path) -> None:
+        result = demo("--rates", str(tmp_path / "absent.toml"))
+        assert result.exit_code == 2, result.stdout
+        assert "absent.toml" in result.stdout
+
+    #: The likely typo: measurement.md tells users to drop a table beside the card, and
+    #: `verified` is the one key nothing about a rate row reminds them to write.
+    BROKEN = '[rates.anthropic]\n"claude-sonnet-5" = { input = 1.0, output = 1.0 }\n'
+
+    def test_a_broken_table_exits_two_not_three(self, tmp_path: Path) -> None:
+        broken = tmp_path / "rates.toml"
+        broken.write_text(self.BROKEN)
+        assert demo("--rates", str(broken)).exit_code == 2
+
+    def test_a_broken_table_beside_the_card_does_not_abort_the_eval(self, tmp_path: Path) -> None:
+        # An unrequested optional file must not stop a card that has nothing wrong with
+        # it. Exit 2 is documented as "the run could not start"; the run started fine.
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.BROKEN)
+        result = _run_copy(cards, cards / CARD.name)
+        assert result.exit_code == 0, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "no `verified` date" in text
+        assert "rates.toml" in text
+        # Priced from the built-in table, which carries its own date. Never silently.
+        assert "~$0.0014 estimate" in text
 
 
 class TestTheTraceIsOtlp:

@@ -21,9 +21,21 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from .provider import DEFAULT_PROVIDER
+
 #: The semconv version specdeck's own loop emits. A recorded trace declares its own and is
 #: read as it stands; this is only what `loop.run_agent` stamps on a trace it just built.
 SEMCONV = "semantic-conventions-genai@1.38.0"
+
+#: What `loop.run_agent` writes to `gen_ai.provider.name` when the adapter named none. Not
+#: a semconv value — the well-known set has no "unknown" — so it is a placeholder to read
+#: past rather than a provider to key a rate table on.
+UNKNOWN_PROVIDER = "unknown"
+
+#: OTel's general-purpose span attribute, not a `gen_ai.*` one, which is why it sits
+#: outside `GenAI`. An adapter sets it to mark a tool call that failed; nothing specdeck
+#: writes today does, so the waste classifiers fall back to reading the result text.
+ERROR_TYPE = "error.type"
 
 
 class Operation(StrEnum):
@@ -199,6 +211,29 @@ class Trace(BaseModel):
         )
 
     @property
+    def usage_by_model(self) -> dict[str, tuple[int | None, int | None]]:
+        """Reported input and output tokens per model, over this trace's `chat` spans.
+
+        The one place a token count is read off a trace: the cost estimate, the token
+        baseline and the budget cap all group the same way, so they cannot disagree about
+        which model spent what. Keyed by `qualified_model`, so the provider the span named
+        survives into the key and a rate table can price a model the default never serves.
+
+        A half stays `None` when no span of that model reported it — `reports_output_tokens`
+        keeps "used none" and "did not say" apart, and summing an absent count to 0 here
+        would put the second back as the first further down.
+        """
+        totals: dict[str, tuple[int | None, int | None]] = {}
+        for span in self.of(Operation.CHAT):
+            model = qualified_model(span)
+            seen_input, seen_output = totals.get(model, (None, None))
+            totals[model] = (
+                reported_sum(seen_input, span.attributes.get(GenAI.USAGE_INPUT_TOKENS)),
+                reported_sum(seen_output, span.attributes.get(GenAI.USAGE_OUTPUT_TOKENS)),
+            )
+        return totals
+
+    @property
     def final_response(self) -> str:
         """The last assistant message of the last `chat` span — what the judge reads."""
         for span in reversed(self.of(Operation.CHAT)):
@@ -206,3 +241,33 @@ class Trace(BaseModel):
                 if message.get("role") == "assistant" and message.get("content"):
                     return str(message["content"])
         return ""
+
+
+def qualified_model(span: Span) -> str:
+    """What a `chat` span served, prefixed with its provider when it names a real one.
+
+    `gen_ai.response.model` first, falling back to `gen_ai.request.model`: the response
+    names what actually served the call, and only the request is Required.
+
+    A bare id is Anthropic's everywhere in specdeck (`provider.split_model`), so the prefix
+    marks a departure from that default and `anthropic/x` stays `x`. Carrying it is what
+    lets a rate table price a model the default provider never serves: without it a span
+    naming `openai` and `gpt-4o` reads as Anthropic's `gpt-4o` and reports n/a against a
+    `[rates.openai]` section that prices it.
+    """
+    name = str(span.attributes.get(GenAI.RESPONSE_MODEL) or span.attributes[GenAI.REQUEST_MODEL])
+    provider = str(span.attributes.get(GenAI.PROVIDER_NAME) or "")
+    if "/" in name or provider in ("", UNKNOWN_PROVIDER, DEFAULT_PROVIDER):
+        return name
+    return f"{provider}/{name}"
+
+
+def reported_sum(*counts: Any) -> int | None:
+    """Sum token counts that were actually reported, or None when none of them were.
+
+    The rule every usage total in the codebase folds with. Adding an absent count as zero
+    turns a trace that stayed silent into one claiming it spent nothing, which is the
+    distinction `Trace.reports_output_tokens` exists to hold.
+    """
+    reported = [int(count) for count in counts if count is not None]
+    return sum(reported) if reported else None
