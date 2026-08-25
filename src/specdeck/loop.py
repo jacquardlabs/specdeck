@@ -17,10 +17,21 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from .agent import AgentAdapter, Chat, ToolCall
+from .budget import Budget
 from .card import Card
 from .simulator import Turn as UserTurn
 from .simulator import turn as simulate
-from .trace import SEMCONV, GenAI, Message, Span, SpanEvent, Specdeck, Trace
+from .trace import (
+    SEMCONV,
+    UNKNOWN_MODEL,
+    UNKNOWN_PROVIDER,
+    GenAI,
+    Message,
+    Span,
+    SpanEvent,
+    Specdeck,
+    Trace,
+)
 
 DEFAULT_MAX_TURNS = 12
 DEFAULT_AGENT_NAME = "agent-under-test"
@@ -43,8 +54,15 @@ async def run_agent(
     agent_name: str = DEFAULT_AGENT_NAME,
     max_turns: int = DEFAULT_MAX_TURNS,
     live: bool = False,
+    budget: Budget | None = None,
 ) -> Trace:
-    """Drive one conversation and return its trace."""
+    """Drive one conversation and return its trace.
+
+    The budget, when there is one, governs the simulator's turns before they happen and
+    charges the agent's own tokens after they have. That asymmetry is the shape of the
+    problem, not a shortcut: `adapter.run` spends the money and only then reports what it
+    spent, so this run's cost can stop the *next* one and never this one.
+    """
     if max_turns < 1:
         raise LoopError("a run needs at least one turn")
     markers = markers or []
@@ -61,6 +79,7 @@ async def run_agent(
             model=simulator_model,
             live=live,
             slug=card.slug,
+            budget=budget,
         )
         # The marker lands on the agent turn the user is answering, which is the span it
         # describes: "the traveller did not accept *that*". On the opening turn there is
@@ -75,7 +94,13 @@ async def run_agent(
             raise LoopError("the adapter returned no events for a turn it was asked to take")
         messages.extend(builder.record(events, inputs=list(messages)))
 
-    return Trace(semconv=semconv, spans=builder.finish())
+    trace = Trace(semconv=semconv, spans=builder.finish())
+    if budget is not None:
+        # Charged from the trace, which is the adapter's own account of what it called —
+        # never from the column's declared model, which is what was agreed to be paid for
+        # rather than what was spent. Under a cap this refuses a trace it cannot price.
+        budget.charge_trace(trace, adapter=type(adapter).__name__)
+    return trace
 
 
 class _Builder:
@@ -114,8 +139,8 @@ class _Builder:
         start = self._now()
         attributes: dict = {
             GenAI.OPERATION_NAME: "chat",
-            GenAI.PROVIDER_NAME: "unknown",
-            GenAI.REQUEST_MODEL: event.model or "unknown",
+            GenAI.PROVIDER_NAME: UNKNOWN_PROVIDER,
+            GenAI.REQUEST_MODEL: event.model or UNKNOWN_MODEL,
             GenAI.RESPONSE_FINISH_REASONS: [event.finish_reason],
         }
         if event.model:

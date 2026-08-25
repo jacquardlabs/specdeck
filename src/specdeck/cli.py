@@ -9,23 +9,35 @@ from itertools import groupby
 from pathlib import Path
 
 import typer
+from pydantic import BaseModel, ConfigDict
 from rich.console import Console
 from rich.text import Text
 
 from specdeck import __version__
 from specdeck.agent import AgentAdapter
-from specdeck.baseline import BASELINE_NAME, Baseline, BaselineError, observed
+from specdeck.baseline import BASELINE_NAME, DEFAULT_CELL, Baseline, BaselineError, observed
+from specdeck.budget import Budget, BudgetError
 from specdeck.builtin import DEFAULT_LATENCY_BUDGET_S, BuiltinConfig
 from specdeck.card import Card, CardError, parse
-from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
+from specdeck.cell import (
+    DEFAULT_CONCURRENCY,
+    DEFAULT_K,
+    DEFAULT_N,
+    Cell,
+    CellError,
+    run_cell,
+    run_cell_async,
+)
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
+from specdeck.matrix import Column, MatrixError, cell_key, columns, load_matrix
+from specdeck.matrix_run import DEFAULT_MATRIX_CONCURRENCY, MatrixResult, Status, run_matrix
 from specdeck.provider import ProviderError
 from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
-from specdeck.report import render
+from specdeck.report import render, render_matrix
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
@@ -41,21 +53,30 @@ app = typer.Typer(
 #: The exit-code registry. Nothing here reads it — it is the written record the runner is
 #: held to, so a later command extends it instead of colliding with it. A caller routes on
 #: the code alone, so a code means one thing forever and a genuinely new state takes a new
-#: number: 4 is reserved and unissued for "the matrix did not complete: budget" (#15). A
-#: run that could not start and a run that answered are different facts, hence 2 and 3.
+#: number. A run that could not start and a run that answered are different facts, hence 2
+#: and 3; a matrix that stopped part-way answered neither, hence 4 — reserved by #17/#18
+#: and issued here, because routing "the budget ran out" to CI as an eval regression is the
+#: same confusion 3 exists to prevent.
 EXIT_CODES = {
     0: "the cell passed",
     1: "the cell failed its gate",
     2: "the run could not start — a user error, one of USER_ERRORS below",
     3: "specdeck itself broke",
+    4: "the matrix did not complete: budget",
 }
+
+#: The matrix's budget abort. Its own code because the answer is unknown: the columns that
+#: did not run neither passed nor failed, and 1 would claim they regressed.
+BUDGET_EXIT = 4
 
 USER_ERRORS = (
     BaselineError,
+    BudgetError,
     CardError,
     CellError,
     JudgeError,
     LoopError,
+    MatrixError,
     ProviderError,
     RateError,
     SimulatorError,
@@ -150,10 +171,30 @@ def run(
     junit_xml: Path | None = typer.Option(  # noqa: B008
         None, "--junit-xml", help="Write a JUnit XML report here, for CI to render."
     ),
+    matrix_path: Path | None = typer.Option(  # noqa: B008
+        None, "--matrix", help="A matrix of providers x prompt variants, with --agent."
+    ),
+    budget_usd: float | None = typer.Option(
+        None, "--budget-usd", help="Hard spend cap for the matrix. Overrides [budget] usd."
+    ),
+    matrix_concurrency: int = typer.Option(
+        DEFAULT_MATRIX_CONCURRENCY,
+        "--matrix-concurrency",
+        help="Matrix columns in flight at once. Forced to 1 under --live.",
+    ),
 ) -> None:
     """Evaluate one card — against recorded traces, or by running the agent."""
     console = Console()
     try:
+        if matrix_path and trace:
+            # A recorded trace was produced by one provider running one prompt. A column
+            # over it could vary nothing, so the grid would print the same run N times.
+            raise CardError("--matrix runs the agent, so it cannot be combined with --trace")
+        if matrix_path and not agent:
+            raise CardError("--matrix needs --agent: a column is a run of the agent")
+        if budget_usd is not None and not matrix_path:
+            # A cap with nothing to cap is dead surface that reads as protection.
+            raise CardError("--budget-usd applies to --matrix, which was not given")
         if bool(trace) == bool(agent):
             raise CardError("pass exactly one of --trace and --agent")
         card = parse(card_path)
@@ -176,43 +217,77 @@ def run(
         for one in recordings:
             lock.verify_semconv(one.semconv)
         cassette_dir = cassettes or card_path.parent / "cassettes"
-        traces = recordings or _drive(
-            card,
-            agent or "",
-            cassettes=cassette_dir,
-            lock=lock,
-            runs=n,
-            markers=_markers(vocabulary_path),
-            max_turns=max_turns,
-            live=live,
-        )
-        builtin, pending = _builtin(
-            card_path,
-            baseline_path,
-            traces,
-            latency_budget=latency_budget,
-            update=update_baseline,
-        )
-        cell = run_cell(
-            card,
-            traces,
-            # Every other card input resolves against the card; the cassette directory
-            # has to as well, or where you stand changes which recordings are found.
-            cassettes=cassette_dir,
-            n=n,
-            k=k,
-            judge_model=lock.judge_model,
-            # Named in the report only when one actually spoke: a run from recorded traces
-            # had no simulated user, and the pin describes nothing that happened.
-            simulator_model=lock.simulator_model if agent else "",
-            live=live,
-            concurrency=concurrency,
-            builtin=builtin,
-        )
-        # Serialised inside the funnel though it is written outside it: a bug in the
-        # serializer is specdeck breaking, and escaping to typer's default handler would
-        # surface it as exit 1 — the same code as a card that honestly failed (#56).
-        report = to_xml(cell) if junit_xml else None
+        if matrix_path is not None:
+            if junit_xml is not None:
+                # `junit.to_xml` takes one cell and writes one `<testsuites>` document.
+                # Widening it to a matrix is a real mapping decision (#18 owns the file),
+                # not a parameter, so it is refused rather than half-answered.
+                raise CardError(
+                    "--junit-xml does not take a matrix yet — see "
+                    "https://github.com/jacquardlabs/specdeck/issues/85"
+                )
+            matrix, pending = _matrix(
+                _Invocation(
+                    card=card,
+                    card_path=card_path,
+                    reference=agent or "",
+                    cassettes=cassette_dir,
+                    lock=lock,
+                    n=n,
+                    k=k,
+                    markers=_markers(vocabulary_path),
+                    max_turns=max_turns,
+                    live=live,
+                    concurrency=concurrency,
+                    latency_budget=latency_budget,
+                    update=update_baseline,
+                ),
+                matrix_path,
+                baseline_path,
+                rates=rates,
+                budget_usd=budget_usd,
+                matrix_concurrency=matrix_concurrency,
+                console=console,
+            )
+        else:
+            matrix, pending = None, None
+            traces = recordings or _drive(
+                card,
+                agent or "",
+                cassettes=cassette_dir,
+                lock=lock,
+                runs=n,
+                markers=_markers(vocabulary_path),
+                max_turns=max_turns,
+                live=live,
+            )
+            builtin, pending = _builtin(
+                card_path,
+                baseline_path,
+                traces,
+                latency_budget=latency_budget,
+                update=update_baseline,
+            )
+            cell = run_cell(
+                card,
+                traces,
+                # Every other card input resolves against the card; the cassette directory
+                # has to as well, or where you stand changes which recordings are found.
+                cassettes=cassette_dir,
+                n=n,
+                k=k,
+                judge_model=lock.judge_model,
+                # Named in the report only when one actually spoke: a run from recorded
+                # traces had no simulated user, and the pin describes nothing that happened.
+                simulator_model=lock.simulator_model if agent else "",
+                live=live,
+                concurrency=concurrency,
+                builtin=builtin,
+            )
+            # Serialised inside the funnel though it is written outside it: a bug in the
+            # serializer is specdeck breaking, and escaping to typer's default handler
+            # would surface it as exit 1 — a card that honestly failed (#56).
+            report = to_xml(cell) if junit_xml else None
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
@@ -222,6 +297,14 @@ def run(
         # reading the exit code routed a broken lockfile to the SME as an eval regression.
         console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
         raise typer.Exit(3) from None
+
+    if matrix is not None:
+        render_matrix(matrix, console, rates=rates)
+        _write_baseline(pending, console)
+        # Raised out here, never inside the funnel: `typer.Exit` subclasses `RuntimeError`,
+        # so an exit raised in the try above would be caught by `except Exception` and
+        # reported as exit 3, "specdeck itself broke".
+        raise typer.Exit(_matrix_exit(matrix))
 
     render(cell, console, rates=rates)
     # The JUnit report first: an unwritable --baseline path must not also deny CI the file
@@ -241,6 +324,166 @@ def run(
             ),
         )
     raise typer.Exit(0 if cell.passed else 1)
+
+
+class _Invocation(BaseModel):
+    """Everything a column needs that the command line settled once, for every column.
+
+    A model rather than fourteen positional arguments: the matrix path multiplies the
+    parameter list by the number of helpers it passes through, and a mis-ordered pair of
+    same-typed arguments is the kind of bug no test names.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    card: Card
+    card_path: Path
+    reference: str
+    cassettes: Path
+    lock: Lockfile
+    n: int
+    k: int
+    markers: list[str]
+    max_turns: int
+    live: bool
+    concurrency: int
+    latency_budget: float
+    update: bool
+
+
+def _matrix(
+    invocation: _Invocation,
+    matrix_path: Path,
+    baseline_path: Path | None,
+    *,
+    rates: Rates,
+    budget_usd: float | None,
+    matrix_concurrency: int,
+    console: Console,
+) -> tuple[MatrixResult, tuple[Path, Baseline] | None]:
+    """Run every column of the matrix under one budget, and hand back what to write.
+
+    The lockfile is verified once, by `run`, before this is reached — never per column.
+    `_lock` writes the file under `--relock`, and N columns relocking concurrently would
+    be N writers on one `spec.lock.toml`. The card is the same card in every column;
+    only what the adapter is handed differs.
+    """
+    grid = load_matrix(matrix_path)
+    declared = columns(grid)
+    cap = budget_usd if budget_usd is not None else grid.budget_usd
+    budget = Budget(cap_usd=cap, rates=rates)
+    # Before anything runs, and over every column: a matrix with one unpriceable column
+    # is refused whole. See `Budget.preflight` for why that beats skipping the column.
+    budget.preflight(declared)
+
+    if invocation.live and matrix_concurrency > 1:
+        # Not a performance choice — see `matrix_run`'s docstring. Turn 1 of every column
+        # builds the identical simulator prompt, so two live columns race one cassette.
+        console.print(
+            "[yellow]note[/yellow]",
+            Text(
+                "--live serialises the columns: the simulator's first turn is the same "
+                "prompt in every column, so two of them would race one cassette"
+            ),
+        )
+        matrix_concurrency = 1
+
+    baseline_file = baseline_path or invocation.card_path.parent / BASELINE_NAME
+    key = lock_key(invocation.card_path, baseline_file)
+    recorded = Baseline.load(baseline_file)
+    _warn_default_baseline(recorded, key, declared, console)
+    fresh: dict[str, int] = {}
+
+    async def one_column(column: Column) -> Cell:
+        traces = await _drive_async(
+            invocation.card,
+            _adapter(invocation.reference),
+            cassettes=invocation.cassettes,
+            lock=invocation.lock,
+            runs=invocation.n,
+            markers=invocation.markers,
+            max_turns=invocation.max_turns,
+            live=invocation.live,
+            config=column.config,
+            budget=budget,
+        )
+        baseline = recorded.get(key, cell_key(column))
+        if invocation.update:
+            # Recorded then verified against, the way `--relock` verifies against the lock
+            # it just wrote. `observed` refuses before returning anything unrecordable.
+            baseline = observed(traces)
+            fresh[cell_key(column)] = baseline
+        return await run_cell_async(
+            invocation.card,
+            traces,
+            cassettes=invocation.cassettes,
+            n=invocation.n,
+            k=invocation.k,
+            judge_model=invocation.lock.judge_model,
+            simulator_model=invocation.lock.simulator_model,
+            live=invocation.live,
+            concurrency=invocation.concurrency,
+            builtin=BuiltinConfig(
+                latency_budget_s=invocation.latency_budget, token_baseline=baseline
+            ),
+            budget=budget,
+        )
+
+    result = asyncio.run(
+        run_matrix(
+            declared,
+            one_column,
+            budget=budget,
+            concurrency=matrix_concurrency,
+            user_errors=USER_ERRORS,
+        )
+    )
+    # One write for the whole matrix, after every column has finished. N columns each
+    # saving their own copy would be N writers on one file, and the last one would win.
+    pending = None
+    if fresh:
+        for cell, tokens in sorted(fresh.items()):
+            recorded = recorded.record(key, tokens, cell=cell)
+        pending = (baseline_file, recorded)
+    return result, pending
+
+
+def _warn_default_baseline(
+    recorded: Baseline, key: str, declared: list[Column], console: Console
+) -> None:
+    """Say so when a card's recorded baseline belongs to no column in this matrix.
+
+    A baseline recorded by a single-cell run sits in the `"default"` slot, and no matrix
+    column keys there — so every column silently gets no regression wire, and a card that
+    fails single-cell passes under `--matrix`. Silence there is the worst outcome.
+    """
+    if recorded.get(key, DEFAULT_CELL) is None:
+        return
+    if any(recorded.get(key, cell_key(column)) is not None for column in declared):
+        return
+    console.print(
+        "[yellow]note[/yellow]",
+        Text(
+            f"the recorded baseline is the single-cell '{DEFAULT_CELL}' one and no column "
+            "has its own, so no column gets a token-regression wire — re-record with "
+            "--matrix --update-baseline"
+        ),
+    )
+
+
+def _matrix_exit(result: MatrixResult) -> int:
+    """One code for the whole grid, worst first.
+
+    A budget stop outranks a gate failure, because a matrix missing a column has not
+    answered the question that was asked, and a CI reading 1 would call that an eval
+    regression. A column that raised outranks a gate failure for the same reason, and
+    keeps the 2-vs-3 split: a user error is theirs to fix, anything else is ours.
+    """
+    if result.stopped_early:
+        return BUDGET_EXIT
+    if errored := [one for one in result.columns if one.status is Status.ERRORED]:
+        return 2 if all(one.user_error for one in errored) else 3
+    return 0 if result.passed else 1
 
 
 def _builtin(
@@ -370,6 +613,41 @@ def _drive(
     on a growing transcript, so two conversations racing would interleave recordings that
     are meant to be one conversation each.
     """
+    return asyncio.run(
+        _drive_async(
+            card,
+            _adapter(reference),
+            cassettes=cassettes,
+            lock=lock,
+            runs=runs,
+            markers=markers,
+            max_turns=max_turns,
+            live=live,
+        )
+    )
+
+
+async def _drive_async(
+    card: Card,
+    adapter: AgentAdapter,
+    *,
+    cassettes: Path,
+    lock: Lockfile,
+    runs: int,
+    markers: list[str],
+    max_turns: int,
+    live: bool,
+    config: dict | None = None,
+    budget: Budget | None = None,
+) -> list[Trace]:
+    """The body of `_drive`, as a coroutine the matrix can await beside its siblings.
+
+    `_drive` owns the event loop for the single-cell path and cannot be reused by the
+    matrix for exactly that reason: `asyncio.run` does not nest.
+
+    `config` is what a column varies. `run_agent` has always forwarded it to `adapter.run`;
+    the CLI simply never had anything to put in it until a column did.
+    """
     if not lock.simulator_model:
         # Naming --relock alone would loop the reader back here: the pin only moves when
         # --simulator-model is passed too (see `_lock`), so a bare relock writes it empty
@@ -378,24 +656,21 @@ def _drive(
             "the lockfile pins no simulator model — run with "
             "--relock --simulator-model <model> to pin one"
         )
-    adapter = _adapter(reference)
-
-    async def all_runs() -> list[Trace]:
-        return [
-            await run_agent(
-                card,
-                adapter,
-                cassettes=cassettes,
-                simulator_model=lock.simulator_model,
-                semconv=lock.semconv,
-                markers=markers,
-                max_turns=max_turns,
-                live=live,
-            )
-            for _ in range(runs)
-        ]
-
-    return asyncio.run(all_runs())
+    return [
+        await run_agent(
+            card,
+            adapter,
+            cassettes=cassettes,
+            simulator_model=lock.simulator_model,
+            semconv=lock.semconv,
+            markers=markers,
+            max_turns=max_turns,
+            live=live,
+            config=config,
+            budget=budget,
+        )
+        for _ in range(runs)
+    ]
 
 
 def _adapter(reference: str) -> AgentAdapter:

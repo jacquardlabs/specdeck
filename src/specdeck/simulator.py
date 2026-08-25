@@ -24,8 +24,9 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from .budget import Budget
 from .judge import ATTEMPTS, Cassette
-from .provider import EmptyCompletion, ProviderError, complete
+from .provider import Completion, EmptyCompletion, ProviderError, complete
 from .trace import Message
 
 MAX_TOKENS = 1024
@@ -128,6 +129,7 @@ async def turn(
     model: str,
     live: bool = False,
     slug: str = "",
+    budget: Budget | None = None,
 ) -> Turn:
     """One simulated-user turn, replayed from a cassette unless `--live`."""
     prompt = build_prompt(intent, transcript, markers)
@@ -140,33 +142,45 @@ async def turn(
             "run with --live once to record it"
         )
     if recorded is not None:
+        # Not checked against the budget: replaying a recorded turn spends nothing, and a
+        # cap that refused free work would stop a matrix that was costing no money.
         return parse_response(recorded, markers)
 
-    response, spoken = await _sample(prompt, model, markers)
+    if budget is not None:
+        budget.check(f"a simulator turn for {slug or 'this card'}")
+    response, spoken, usage = await _sample(prompt, model, markers, budget=budget)
     # Recorded after parsing, for the judge's reason: a cassette written from an
     # unusable reply is replayed forever, and --live never re-calls once it exists.
-    cassette.write(prompt, model, response)
+    cassette.write(prompt, model, response, usage=usage)
     return spoken
 
 
-async def _sample(prompt: str, model: str, markers: list[str]) -> tuple[str, Turn]:
+async def _sample(
+    prompt: str, model: str, markers: list[str], *, budget: Budget | None = None
+) -> tuple[str, Turn, tuple[int | None, int | None]]:
     """Call until a turn parses, at most `ATTEMPTS` times. Mirrors the judge's, and for
     the same reason: one unusable reply should not end a run mid-conversation."""
     last: UngradableTurn | None = None
     for _ in range(ATTEMPTS):
         try:
-            response = await _call(prompt, model)
-            return response, parse_response(response, markers)
+            reply = await _call(prompt, model, budget=budget)
+            spoken = parse_response(reply.text, markers)
         except UngradableTurn as error:
             last = error
+            continue
+        return reply.text, spoken, (reply.input_tokens, reply.output_tokens)
     raise UngradableTurn(f"no usable simulator turn in {ATTEMPTS} attempts, last: {last}")
 
 
-async def _call(prompt: str, model: str) -> str:
+async def _call(prompt: str, model: str, *, budget: Budget | None = None) -> Completion:
+    """The provider seam, and the one line a simulator turn is charged on. See judge._call:
+    the charge sits at the return path so no caller can drop it."""
     try:
         reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS)
     except EmptyCompletion as error:
         raise UngradableTurn(f"the simulator's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise SimulatorError(f"simulator call failed: {error}") from None
-    return reply.text
+    if budget is not None:
+        budget.charge(model, input_tokens=reply.input_tokens, output_tokens=reply.output_tokens)
+    return reply

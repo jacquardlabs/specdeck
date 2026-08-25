@@ -32,6 +32,12 @@ SEMCONV = "semantic-conventions-genai@1.38.0"
 #: past rather than a provider to key a rate table on.
 UNKNOWN_PROVIDER = "unknown"
 
+#: And what it writes to `gen_ai.request.model` for an adapter that reported none. Named
+#: here rather than spelled at each reader, because a budget cap has to recognise it: a
+#: span saying "unknown" prices at no rate at all, and charging it zero is the silent
+#: spend the cap exists to refuse.
+UNKNOWN_MODEL = "unknown"
+
 #: OTel's general-purpose span attribute, not a `gen_ai.*` one, which is why it sits
 #: outside `GenAI`. An adapter sets it to mark a tool call that failed; nothing specdeck
 #: writes today does, so the waste classifiers fall back to reading the result text.

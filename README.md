@@ -66,8 +66,9 @@ whenever a cell was produced, on pass and on fail; not written when the run coul
 
 Exit codes are distinct: `0` the cell passed, `1` it failed a gate — including a token
 regression, which is a gate wire like any other — `2` the run could not start, `3` specdeck
-itself broke. A caller reading only the code should never route a malformed lockfile to the
-SME as an eval regression.
+itself broke, `4` a matrix did not complete because its budget stopped it. A caller reading
+only the code should never route a malformed lockfile, or a matrix that ran out of money,
+to the SME as an eval regression.
 
 ### A card's first run
 

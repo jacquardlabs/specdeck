@@ -23,11 +23,13 @@ of a user-supplied trace: a model id and a waste summary both reach the page une
 from __future__ import annotations
 
 from rich.console import Console
+from rich.table import Table
 from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
 from .judge import JudgeResult
+from .matrix_run import ColumnResult, MatrixResult, Status
 from .rates import Rates
 from .tier import Tier
 from .waste import UNITS, Finding, Level
@@ -254,3 +256,116 @@ def judge_source(judged: list[JudgeResult]) -> str:
     if all(j.replayed for j in judged):
         return "replayed"
     return "live" if not any(j.replayed for j in judged) else "mixed replay and live"
+
+
+#: How a column's outcome reads in the grid. A skipped column is never a FAIL: it did not
+#: answer, and rendering "the budget ran out" as a card regression is the one confusion
+#: the whole status enum exists to prevent.
+_STATUS = {
+    Status.PASSED: ("PASS", "green"),
+    Status.FAILED: ("FAIL", "red"),
+    Status.SKIPPED_BUDGET: ("skipped", "yellow"),
+    Status.STOPPED_BUDGET: ("stopped", "yellow"),
+    Status.ERRORED: ("error", "red"),
+}
+
+
+def render_matrix(result: MatrixResult, console: Console, *, rates: Rates | None = None) -> None:
+    """The provider x prompt grid, then what it spent, then why any column failed.
+
+    The footer sits above the per-column detail, not below it: the spend and the overshoot
+    are what a budget cap is for, and five pages of failing-run detail would bury them.
+
+    Full `render` per failing column rather than a condensed one. A failing column is
+    exactly the thing the reader has to act on, and a second, thinner failure layout would
+    be a second thing to keep in step with the first.
+    """
+    console.print()
+    console.print(_grid(result))
+    _notes(result, console)
+    console.print()
+    for line in _footer(result):
+        console.print(line)
+    for shown in result.columns:
+        if shown.status is Status.FAILED and shown.cell is not None:
+            console.print()
+            console.print(Text(f"column {shown.column.name}", style="bold"))
+            render(shown.cell, console, rates=rates)
+
+
+def _grid(result: MatrixResult) -> Table:
+    """Rows are prompt variants, columns are providers — the shape the matrix was declared
+    in, so a reader can find the entry they wrote. A degenerate one-axis matrix keeps the
+    same table with one row or one column, rather than a second layout."""
+    providers = list(dict.fromkeys(one.column.provider for one in result.columns))
+    prompts = list(dict.fromkeys(one.column.prompt for one in result.columns))
+    found = {(one.column.provider, one.column.prompt): one for one in result.columns}
+    table = Table(show_edge=False, pad_edge=False, box=None, padding=(0, 2))
+    table.add_column("", style="dim")
+    for provider in providers:
+        # A provider name comes out of the user's own file, so it is Text, not markup.
+        table.add_column(Text(provider or "—", style="bold"))
+    for prompt in prompts:
+        table.add_row(
+            Text(prompt or "—"),
+            *(_cell_summary(found.get((provider, prompt))) for provider in providers),
+        )
+    return table
+
+
+def _cell_summary(one: ColumnResult | None) -> Text:
+    if one is None:
+        return Text("—", style="dim")
+    word, style = _STATUS[one.status]
+    line = Text()
+    line.append(f"{word:<8}", style=style)
+    if one.cell is None:
+        return line
+    line.append(f"gate {one.cell.passes}/{one.cell.runs}", style="dim")
+    credit = (
+        f"  credit {one.cell.credit_mean:g}/{one.cell.credit_total}"
+        if one.cell.credit_mean is not None
+        else "  credit n/a"
+    )
+    line.append(credit, style="dim")
+    return line
+
+
+def _notes(result: MatrixResult, console: Console) -> None:
+    """Why any column did not simply pass or fail. Never silently fewer columns."""
+    for one in result.columns:
+        if one.status in (Status.PASSED, Status.FAILED) or not one.detail:
+            continue
+        console.print(Text(f"  {one.column.name}: {one.detail}", style="dim"))
+
+
+def _footer(result: MatrixResult) -> list[Text]:
+    """The spend, the cap, and every way this matrix was less than what was asked for."""
+    lines = [_figure("spent", f"{result.spent_label}, {_runs(len(result.columns), 'column')}")]
+    if result.cap_usd is not None:
+        lines.append(_figure("cap", f"${result.cap_usd:g}, hard"))
+    if result.unmetered:
+        named = ", ".join(f"{model} x{count}" for model, count in sorted(result.unmetered.items()))
+        # Stated, not folded in as zero: an uncounted call is spend this figure is short by.
+        lines.append(_figure("", f"{named} reported no usage and are not in that figure"))
+    # Counted per status, and never rolled into one "incomplete" number: a column nobody
+    # could afford and a column that raised are different facts with different fixes.
+    counts = {
+        status: sum(1 for one in result.columns if one.status is status)
+        for status in (Status.SKIPPED_BUDGET, Status.STOPPED_BUDGET, Status.ERRORED)
+    }
+    if listed := ", ".join(
+        f"{count} {_STATUS[status][0]}" for status, count in counts.items() if count
+    ):
+        lines.append(_figure("", listed))
+    if result.stopped_early or result.overspent:
+        # The asymmetry, said out loud on the run it happened to. The cap prevents
+        # specdeck's own next call; it cannot prevent an agent call already in flight.
+        lines.append(
+            _figure(
+                "",
+                "the cap stops new work, it cannot recall work in flight — one agent run "
+                "can exceed the remaining budget before specdeck sees its token counts",
+            )
+        )
+    return lines
