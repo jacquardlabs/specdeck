@@ -2,13 +2,15 @@
 
 Executable behavioral specs for LLM systems. A domain expert writes a prose criterion.
 A developer wires deterministic constraints under it. The runner executes the resulting
-cards against a provider × prompt matrix and reports pass rate, cost, and judge drift.
+cards and reports a gate pass rate and a credit score, never blended. The provider ×
+prompt matrix, cost, and judge drift are the next three phases.
 
-> **Status: Phase 1, walking skeleton.** Five cards run end to end against recorded
-> traces, and `--agent` runs your agent under specdeck's own loop. Everything else below — the provider matrix, coverage, calibration, drafting —
-> describes the target surface, not shipped behavior. Progress is tracked in
-> [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
-> product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
+> **Status: Phase 1 complete.** Five cards run end to end against recorded traces, and
+> `--agent` runs your own agent under specdeck's loop. Phase 2 — the provider × prompt
+> matrix and cost — is next; coverage, calibration, and drafting come after. Anything
+> below described in the future tense is a target, not shipped behavior. Progress is
+> tracked in [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per
+> phase; the product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
 > [DECISIONS.md](DECISIONS.md).
 
 ## What runs today
@@ -19,6 +21,18 @@ $ uv run specdeck run cards/basic-economy-return-change.md \
 
   gate     PASS   1/1 runs   (passes at 1)
   credit   4/4   (over 1 passing run)
+
+  wires, run 1 of 1
+    ok   never:update_reservation_flights  0 occurrences
+    ok   at_most:search_direct_flight      0 calls, budget 2
+    ok   latency                           3.87, under 120
+    ok   stop_reason                       0 occurrences
+
+  criteria, run 1 of 1
+    ok   The agent looks up the reservation, recognises it is basic economy, and…
+    ...
+
+  judge claude-sonnet-5 (replayed), 1 call over 1 run
 ```
 
 One of five τ-bench airline cards, its wires evaluated against a raw OTLP export, its
@@ -41,15 +55,23 @@ $ specdeck run cards/your-card.md --trace run.otlp.json --relock --live
 
 `--relock` writes `spec.lock.toml` beside the card, pinning the judge model and hashing
 the rubric, the compiled wires, and the simulator prompt. `--runs` defaults to one per
-`--trace`. `--live` calls the judge once and records the reply into
-`cassettes/` beside the card. Every run after that needs neither flag and makes no network
-call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
+`--trace`. `--live` calls the judge and records the reply into `cassettes/` beside the
+card — once, unless the reply carries no gradable verdict, in which case it resamples up
+to three times and records the one that parsed. Every run after that needs neither flag
+and makes no network call.
+
+The two pins invalidate on different edits, on purpose. The lockfile goes stale when the
+prose, a criterion, a weight, or a **wire** changes — anything the card asserts. A
+cassette is keyed on the judge prompt, so it goes stale when the prose, a criterion, the
+policy, or the trace changes; wires never enter that prompt, so editing one costs no
+recording.
 
 ### Running the agent
 
 ```console
 $ specdeck run cards/your-card.md --agent yourpkg.adapter:Agent \
-    --vocabulary cards/vocabulary.txt --runs 5
+    --vocabulary cards/vocabulary.txt --runs 5 \
+    --relock --simulator-model claude-sonnet-5 --live   # first run only
 ```
 
 Your agent implements one protocol — `async run(messages, tools, config) -> events`, plus
@@ -59,8 +81,9 @@ card's `simulator:` intent and stamps `specdeck.marker` on the turns it disagree
 its model is pinned in `spec.lock.toml` alongside the judge's, because simulator
 benevolence bias shifts pass rates with no card change.
 
-Simulator turns record into the same cassettes as the judge, so a conversation replays
-without a key once recorded.
+Simulator turns record into the same `cassettes/` directory as the judge, under a
+`simulator-` prefix, so a conversation replays without a key once recorded. Later runs
+need none of the three flags above.
 
 ### Lint
 
@@ -69,10 +92,12 @@ $ uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/voca
 ```
 
 Zero tokens, no network. Checks structure, dead fixture and policy paths, lockfile
-freshness, wire syntax, and contradictory or redundant wires; with a tool vocabulary it
-also catches wires naming a tool that does not exist, and it reports cassettes no card
-owns. A rule that lacks the data it needs reports itself **skipped** rather than passing
-quietly.
+freshness, wire syntax, unknown measures, and contradictory or redundant wires, and
+reports cassettes no card owns. Given a declared vocabulary it also catches wires naming a
+tool or a marker that does not exist. A rule that lacks the data it needs reports itself
+**skipped** rather than passing quietly — `specdeck lint cards` on this repo prints one
+today, because detecting a cassette whose prompt has moved needs the trace that produced
+it.
 
 One rule reads inside the prose block and only one: prose describing the card's own
 pass/fail machinery makes the judge answer with commentary instead of a verdict. It warns.
@@ -80,9 +105,11 @@ Nothing else about the SME's wording is lint's business.
 
 Runs in pre-commit and in CI, from the same command.
 
-Not yet: the provider matrix, the definition-fed and
-prose-aware lint groups, and the `eventually` and precedence patterns — the palette ships
-`never`, `at_most`, bounds, and after-K-then-Y.
+Not yet: the provider × prompt matrix, the definition-fed and prose-aware lint groups, and
+the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
+and after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
+only; they sit behind one `complete()` seam, and a second provider is
+[#60](https://github.com/jacquardlabs/specdeck/issues/60).
 
 ## Why
 
@@ -112,7 +139,7 @@ It never promises an exception.
 wire:
   - modify_reservation: never
   - web_search: at_most 2
-  - writer<->reviewer: escalate_to_hitl after 5 non_agreement
+  - escalate_to_hitl: after 5 non_agreement
   - latency: under 120s
   - stop_reason: not truncated
 
@@ -124,7 +151,8 @@ credit:
 
 Two owned zones. The prose block is the domain expert's — it becomes the judge prompt
 verbatim, hashed into the lockfile. The `wire` block is the developer's — deterministic
-constraints over the execution trace. CI routes review by zone.
+constraints over the execution trace, hashed separately so a stale lock says which half
+moved. Routing PR review by zone is the intent; there is no CODEOWNERS file yet.
 
 A prose-only card runs immediately, judge-only. Wires are never a prerequisite.
 
@@ -137,8 +165,8 @@ weighted, reported, and never blocking. A cell reports two numbers, never blende
 pass rate over N runs, and credit score conditional on pass. Credit never offsets a
 failed gate.
 
-Judge model, rubric text, and simulator are hash-pinned in `spec.lock.toml`. An unpinned
-judge is not a test.
+Judge model, rubric text, compiled wires, and the simulator are hash-pinned in
+`spec.lock.toml`. An unpinned judge is not a test.
 
 Measurement model: [docs/measurement.md](docs/measurement.md).
 

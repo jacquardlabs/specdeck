@@ -27,7 +27,7 @@ It never promises an exception.
 wire:
   - modify_reservation: never
   - web_search: at_most 2
-  - writer<->reviewer: escalate_to_hitl after 5 non_agreement
+  - escalate_to_hitl: after 5 non_agreement
   - latency: under 120s
   - stop_reason: not truncated
 
