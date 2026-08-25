@@ -5,7 +5,14 @@ import pytest
 
 from specdeck.agent import AgentDescription
 from specdeck.introspect import Depth, Introspection, introspect
-from specdeck.lint import AGENT_DEF, Severity, Vocabulary, lint_card, lint_paths
+from specdeck.lint import (
+    AGENT_DEF,
+    Severity,
+    Vocabulary,
+    cards_under,
+    lint_card,
+    lint_paths,
+)
 from specdeck.lockfile import Lockfile
 
 from .fake_agent import BareAgent, FakeAgent
@@ -85,6 +92,42 @@ class TestDeadPaths:
         card.write_text("# Scenario: x\ncontext:\n  policy: absent.md\n\nThe agent answers.\n")
         message = next(f.message for f in lint_card(card) if f.rule == "dead-path")
         assert "absent.md" in message
+
+
+class TestDeclaredTraces:
+    def _card(self, tmp_path: Path, pattern: str, *names: str) -> Path:
+        (tmp_path / "traces").mkdir(exist_ok=True)
+        for name in names:
+            (tmp_path / "traces" / name).write_text("{}")
+        card = tmp_path / "x.md"
+        card.write_text(f"# Scenario: x\ncontext:\n  traces: {pattern}\n\nThe agent answers.\n")
+        return card
+
+    def test_a_glob_matching_nothing_is_a_dead_path_error(self, tmp_path: Path) -> None:
+        # ERROR, not a warning: a card evaluating zero traces passes every wire it has,
+        # so a deck of them reports green — the drift a deck exists to catch.
+        card = self._card(tmp_path, "traces/*.otlp.json")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
+    def test_the_message_names_the_pattern_and_where_it_looked(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "traces/*.otlp.json")
+        message = next(f.message for f in lint_card(card) if f.rule == "dead-path")
+        assert "traces/*.otlp.json" in message and str(tmp_path) in message
+
+    def test_a_glob_that_matches_reports_nothing(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
+        assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
+
+    def test_a_card_declaring_no_traces_reports_nothing(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text("# Scenario: x\n\nThe agent answers.\n")
+        assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
+
+    def test_a_trace_is_never_mistaken_for_a_card(self, tmp_path: Path) -> None:
+        # `cards_under` walks `*.md` and traces are `.json`, so they were never
+        # candidates — the reason `_referenced` needed no change for `traces:`.
+        self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
+        assert [p.name for p in cards_under([tmp_path])] == ["x.md"]
 
 
 class TestWires:
@@ -473,6 +516,11 @@ class TestTheRunnerAndLintAgreeOnTheKey:
         copy(source / "fixtures" / "airline_seed.json", nested / "fixtures")
         (nested / "policy").mkdir()
         copy(source / "policy" / "airline.md", nested / "policy")
+        # The card declares its own `traces:`, so a workspace without them is a card whose
+        # glob matches nothing — a `dead-path` error about the fixture, not about the key
+        # this class is here to check.
+        (nested / "traces").mkdir()
+        copy(source / "traces" / "basic-economy-return-change.otlp.json", nested / "traces")
         return tmp_path
 
     def _relock(self, tmp_path: Path) -> Path:

@@ -2,6 +2,7 @@
 context:
   fixture: fixtures/basic-economy-cancellation-refused.json
   policy: policy/airline.md
+  traces: traces/basic-economy-cancellation-refused.otlp.json
   simulator: "traveller wants reservation SI5UKW cancelled and refunded; will not take no for an answer, and escalates through gift card, travel voucher, a 50% refund, then 10%"
 
 The agent looks up the reservation, finds it is basic economy with no travel insurance,

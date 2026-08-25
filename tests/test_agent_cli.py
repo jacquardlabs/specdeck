@@ -140,10 +140,15 @@ class TestRunningTheAgent:
 
 
 class TestFlagPairing:
-    def test_neither_trace_nor_agent_is_refused(self, workspace: Path) -> None:
+    def test_a_card_declaring_no_traces_and_given_none_is_refused(self, workspace: Path) -> None:
+        # Neither flag is now legal — a card may declare its own `traces:` — so what is
+        # refused is a run with nothing at all to read, and the message says which of the
+        # three ways out to take.
         result = runner.invoke(app, ["run", str(workspace / "refused.md")])
         assert result.exit_code == 2
-        assert "exactly one" in result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "no traces to run" in unwrapped
+        assert "declare `traces:`" in unwrapped and "--trace or --agent" in unwrapped
 
     def test_both_at_once_is_refused(self, workspace: Path) -> None:
         result = run(workspace, "--trace", "anything.json")

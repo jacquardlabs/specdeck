@@ -114,6 +114,34 @@ class Cell(BaseModel):
         }
 
 
+class SuiteError(BaseModel):
+    """A card the suite could not run at all. Never a verdict about that card.
+
+    Carried rather than raised, because the first card that cannot start is not the only
+    one worth reading — a deck aborting on card one hides four results that were free.
+    """
+
+    card_path: str
+    message: str
+
+
+class Suite(BaseModel):
+    """A deck of cards, run. Rows, not a third axis.
+
+    A cell is one card x one provider x one prompt over N runs, and the traces a card
+    declares are that N. The suite adds cards; the matrix adds columns. They multiply
+    without traces participating in either.
+    """
+
+    cells: list[Cell]
+    errors: list[SuiteError] = Field(default_factory=list)
+
+    @property
+    def passed(self) -> bool:
+        """A card that could not start has not passed, so an error is never green."""
+        return not self.errors and all(cell.passed for cell in self.cells)
+
+
 def run_cell(
     card: Card,
     traces: list[Trace],

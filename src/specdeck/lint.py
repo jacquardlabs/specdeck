@@ -230,6 +230,21 @@ def _dead_paths(card: Card, name: str) -> list[Finding]:
                     message=f"{key} {value!r} does not exist (looked in {resolved.parent})",
                 )
             )
+    if card.context.traces and not card.trace_paths:
+        # ERROR, not a warning: a card whose glob resolves to nothing runs zero traces,
+        # and a suite reporting green over a card that never ran is exactly the drift the
+        # deck exists to catch. Machine-verifiable, so the severity rule settles it too.
+        findings.append(
+            Finding(
+                rule="dead-path",
+                severity=Severity.ERROR,
+                card=name,
+                message=(
+                    f"traces {card.context.traces!r} matches no file (looked under "
+                    f"{Path(card.path).parent}); a card evaluating zero traces reports green"
+                ),
+            )
+        )
     return findings
 
 
@@ -491,8 +506,10 @@ def _cassettes(cards: list[Path]) -> list[Finding]:
                 card=CASSETTE_DIR,
                 message=(
                     "a cassette whose card still exists but whose prompt has moved cannot "
-                    "be detected without the trace that produced it. Traces are declared "
-                    "per card in #70; until then this rule sees ownership, not staleness."
+                    "be detected without the trace the cassette itself was keyed on, which "
+                    "nothing records. A card's `traces:` names what it reads now, not what "
+                    "a recording was made from, so this rule still sees ownership, not "
+                    "staleness."
                 ),
             )
         )

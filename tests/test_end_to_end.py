@@ -695,3 +695,156 @@ class TestTheExitCodeRegistry:
         for code in EXIT_CODES:
             assert f"`{code}`" in flat, flat
         assert "specdeck itself broke" in flat
+
+
+class TestTheCardDeclaresItsOwnTraces:
+    """The card-to-trace binding lives in the card, not in the shell history of whoever
+    invoked the runner."""
+
+    def test_a_card_needs_no_flag_at_all(self) -> None:
+        result = invoke(str(CARD))
+        assert result.exit_code == 0, result.stdout
+        assert "1/1 runs" in result.stdout
+
+    def test_trace_still_overrides_the_declaration(self, tmp_path: Path) -> None:
+        # Proof the declaration did not quietly win: the override points at a trace the
+        # card fails against, and the run has to fail.
+        cards = _copy_cards(tmp_path)
+        broken = tmp_path / "broken.otlp.json"
+        broken.write_text(
+            (CARDS / "traces" / "basic-economy-return-change.otlp.json")
+            .read_text()
+            .replace("get_reservation_details", "update_reservation_flights")
+        )
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(broken),
+            "--cassettes",
+            str(cards / "cassettes"),
+        )
+        assert result.exit_code == 1, result.stdout
+
+    def test_a_card_declaring_nothing_and_given_nothing_is_a_user_error(
+        self, tmp_path: Path
+    ) -> None:
+        cards = _copy_cards(tmp_path)
+        card = cards / CARD.name
+        card.write_text(
+            card.read_text().replace("  traces: traces/basic-economy-return-change.otlp.json\n", "")
+        )
+        result = invoke(str(card), "--relock")
+        assert result.exit_code == 2
+        assert "no traces to run" in " ".join(result.stdout.split())
+
+    def test_a_glob_that_matches_nothing_refuses_rather_than_running_empty(
+        self, tmp_path: Path
+    ) -> None:
+        # A card evaluating zero traces passes every wire it has and reports green.
+        cards = _copy_cards(tmp_path)
+        card = cards / CARD.name
+        card.write_text(
+            card.read_text().replace(
+                "traces: traces/basic-economy-return-change.otlp.json",
+                "traces: traces/absent-*.json",
+            )
+        )
+        result = invoke(str(card))
+        assert result.exit_code == 2
+        unwrapped = " ".join(result.stdout.split())
+        assert "matches no file" in unwrapped and "absent-*.json" in unwrapped
+
+
+class TestTheWholeDeck:
+    """`specdeck run cards/` — rows, not a third axis."""
+
+    def test_the_committed_deck_runs_green_offline(self) -> None:
+        result = invoke(str(CARDS))
+        assert result.exit_code == 0, result.stdout
+        assert "5 cards, 5 passed" in " ".join(result.stdout.split())
+
+    def test_it_names_every_card_it_ran(self) -> None:
+        stdout = invoke(str(CARDS)).stdout
+        for path in sorted(CARDS.glob("*.md")):
+            assert path.stem in stdout
+
+    def test_one_failing_card_exits_one_and_the_other_four_still_report(
+        self, tmp_path: Path
+    ) -> None:
+        # A deck that aborts on the first failure hides four results that were free.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("get_reservation_details", "update_reservation_flights")
+        )
+        result = invoke(str(cards))
+        assert result.exit_code == 1, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "5 cards, 4 passed" in unwrapped
+        assert "basic-economy-return-change" in unwrapped
+
+    def test_one_card_that_cannot_start_exits_two_and_the_rest_still_run(
+        self, tmp_path: Path
+    ) -> None:
+        # 2 outranks 1: a deck missing a card has not answered the question asked, and a
+        # CI reading 1 would call that an eval regression.
+        cards = _copy_cards(tmp_path)
+        card = cards / CARD.name
+        card.write_text(card.read_text().replace("refuses to", "declines to"))
+        result = invoke(str(cards))
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "4 cards, 4 passed, 1 could not run" in unwrapped
+
+    def test_a_card_that_does_not_parse_is_one_error_among_the_results(
+        self, tmp_path: Path
+    ) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "not-a-card.md").write_text("no heading here\n")
+        result = invoke(str(cards))
+        assert result.exit_code == 2, result.stdout
+        assert "5 cards, 5 passed, 1 could not run" in " ".join(result.stdout.split())
+
+    def test_an_empty_directory_is_a_user_error_never_a_green_deck(self, tmp_path: Path) -> None:
+        # "All zero of them passed" is the empty report a deck exists to make impossible.
+        empty = tmp_path / "deck"
+        empty.mkdir()
+        result = invoke(str(empty))
+        assert result.exit_code == 2
+        assert "no cards under" in result.stdout
+
+    def test_the_lockfile_resolves_from_the_deck_root(self, tmp_path: Path) -> None:
+        # A card in a subdirectory verifies under the `sub/x.md` key `lock_key` writes.
+        cards = _copy_cards(tmp_path)
+        nested = cards / "sub"
+        nested.mkdir()
+        (cards / CARD.name).rename(nested / CARD.name)
+        result = invoke(str(cards))
+        assert result.exit_code == 2, result.stdout
+        assert f"sub/{CARD.name}" in " ".join(result.stdout.split())
+
+    @pytest.mark.parametrize(
+        "flag,extra",
+        [
+            ("--relock", []),
+            ("--trace", [str(TRACE)]),
+            ("--agent", ["tests.fake_agent:FakeAgent"]),
+            ("--matrix", ["matrix.toml"]),
+            ("--junit-xml", ["out.xml"]),
+            ("--update-baseline", []),
+        ],
+    )
+    def test_a_one_card_flag_is_refused_with_a_reason(self, flag: str, extra: list[str]) -> None:
+        result = invoke(str(CARDS), flag, *extra)
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        # The reason, not a bare refusal: every one of these has an obvious next question,
+        # and a caller who reads why knows whether to loop over the cards themselves.
+        assert f"{flag} takes one card, not a directory —" in unwrapped
+
+    def test_a_cap_with_no_matrix_to_cap_is_refused_over_a_deck_too(self) -> None:
+        # `--matrix` is refused with a directory, so a cap here can never cap anything.
+        # Silently accepting a flag the single-card path rejects is the drift to avoid.
+        result = invoke(str(CARDS), "--budget-usd", "5.00")
+        assert result.exit_code == 2, result.stdout
+        assert "--budget-usd applies to --matrix" in " ".join(result.stdout.split())

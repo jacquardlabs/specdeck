@@ -20,6 +20,7 @@ One markdown file per scenario.
 context:
   fixture: airline_seed.json
   policy: airline.md
+  traces: traces/refund-basic-economy.*.otlp.json
   simulator: "frustrated customer wants a refund on flight F1234"
 
 The agent refuses the change, clearly explains the basic economy
@@ -44,7 +45,22 @@ Four blocks, and a parser of roughly 50 lines. No Gherkin, no step definitions.
 ### `context`
 
 What the run is set up with: fixture data, policy documents the judge and the coverage
-report both read, and the simulator's opening intent.
+report both read, the simulator's opening intent, and the traces the card is evaluated
+against.
+
+`traces` is one glob, resolved against the card's own directory. It is what makes a suite
+possible: `specdeck run cards/` discovers every card, resolves its traces, and runs them,
+so the card-to-trace binding lives in the card rather than in the shell history of whoever
+invoked it. `--trace` overrides it for an ad-hoc run against a fresh recording, and
+`--agent` replaces it by generating traces instead of reading them. A glob that matches
+nothing is an error in both the runner and lint, never an empty run: a card that silently
+evaluates zero traces reports green, which is the drift cards exist to catch.
+
+Matches are sorted, so run order in the report is filename order and is stable — which
+means `run-10` sorts before `run-2`. Zero-pad the index if the order matters to you.
+
+Traces are not pinned in the lockfile. Which recordings a card reads is not a claim about
+what "correct" means, and re-globbing after adding a run is not drift.
 
 `context` and `wire` values are palette picks from an introspected vocabulary — the tool
 registry, MCP schemas, the agent roster. They are never free-typed. This is what makes
@@ -245,7 +261,7 @@ data source they need.
 
 | Group | Phase | Rules |
 |---|---|---|
-| **Static** | 1 | Zone structure. Dead fixture and policy paths. Lockfile freshness. Contradictory wires. Credit weight validity. Card-mechanics language in prose (warning). Cassettes no card owns (warning). Judge and agent sharing a model family (warning). |
+| **Static** | 1 | Zone structure. Dead fixture, policy, and trace paths, including a `traces` glob that matches nothing. Lockfile freshness. Contradictory wires. Credit weight validity. Card-mechanics language in prose (warning). Cassettes no card owns (warning). Judge and agent sharing a model family (warning). |
 | **Vocabulary-fed** | 1–2 | Wires referencing unknown tools. Invalid pattern × scope combinations. |
 
 | **Definition-fed** | 2 | Introspect the agent definition, from `--agent-def <module:attribute>` — a LangGraph graph, OpenAI SDK hand-offs, MCP configs, Claude Code subagent files. Obligations below. |
