@@ -256,4 +256,36 @@ BOOKING = Conversation(
 )
 
 
-CONVERSATIONS = [CANCELLATION_REFUSED, ESCALATION, DELAY_COMPENSATION, BOOKING]
+# -- 5. tau-bench airline TASKS[?] -- olivia_gonzalez_2305, Z7GOZK -------------
+#
+# The original walking-skeleton card, folded in so the generator owns every trace rather
+# than all but one. A basic economy return-flight change: refused, with cancellation under
+# the traveller's own travel insurance offered as the route that does exist.
+
+RETURN_CHANGE = Conversation(
+    slug="basic-economy-return-change",
+    opening=(
+        "Hi \u2014 I'm on a half-day trip to Texas and I need to get back to Newark later than "
+        "my 3pm return. Can you move me to a later flight? Only EWR, not JFK."
+    ),
+    turns=[
+        Turn(
+            content="Let me pull up that reservation.",
+            tool="get_reservation_details",
+            arguments={"reservation_id": "Z7GOZK"},
+            result=fixture("airline_seed.json", "reservations/Z7GOZK"),
+        ),
+        Turn(
+            content=(
+                "I'm sorry \u2014 I checked, and this reservation is in basic economy, and basic "
+                "economy flights can't be modified once booked. I can't move you to a later "
+                "flight. You do have travel insurance on this booking, so if you're unwell I can "
+                "cancel the trip under the insurance and refund you, and you're free to rebook "
+                "afterwards. Would you like me to do that?"
+            )
+        ),
+    ],
+)
+
+
+CONVERSATIONS = [CANCELLATION_REFUSED, ESCALATION, DELAY_COMPENSATION, BOOKING, RETURN_CHANGE]

@@ -7,8 +7,10 @@ import pytest
 from specdeck.card import parse_text
 from specdeck.ir import Tier
 from specdeck.judge import (
+    ATTEMPTS,
     Cassette,
     JudgeError,
+    UngradableReply,
     build_prompt,
     criteria_of,
     judge,
@@ -199,6 +201,19 @@ def _patch_post(monkeypatch, response) -> None:
     monkeypatch.setattr("httpx.AsyncClient.post", post)
 
 
+def _patch_posts(monkeypatch, responses: list) -> list[int]:
+    """Reply with each response in turn, and count the calls made. The last one repeats."""
+    calls = [0]
+
+    async def post(self, *args, **kwargs):
+        response = responses[min(calls[0], len(responses) - 1)]
+        calls[0] += 1
+        return response
+
+    monkeypatch.setattr("httpx.AsyncClient.post", post)
+    return calls
+
+
 class TestLiveCall:
     """The --live path. Never touches the network: the async client's post is replaced."""
 
@@ -261,6 +276,80 @@ class TestLiveCall:
         written = json.loads(next(tmp_path.glob("judge-*.json")).read_text())
         assert written["criteria"] == [c.id for c in criteria]
         assert "Transcript" in written["prompt"] or "TRANSCRIPT" in written["prompt"]
+
+
+class TestResampling:
+    """A live run absorbs judge nondeterminism, and only that. See #66."""
+
+    def _reply(self, text: str, status: int = 200):
+        return TestLiveCall()._reply([{"type": "text", "text": text}], status=status)
+
+    def test_an_ungradable_reply_is_resampled_rather_than_fatal(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        good = json.dumps({"verdicts": ALL_TRUE})
+        calls = _patch_posts(
+            monkeypatch, [self._reply("I would rather not say."), self._reply(good)]
+        )
+        result = graded(criteria, conversation, cassettes=tmp_path, live=True)
+        assert calls[0] == 2
+        assert result.resamples == 1
+        assert all(v.passed for v in result.verdicts)
+
+    def test_only_the_reply_that_parsed_is_recorded(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        # One cassette, holding the good sample -- not the discarded one beside it.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        good = json.dumps({"verdicts": ALL_TRUE})
+        _patch_posts(monkeypatch, [self._reply("no."), self._reply(good)])
+        graded(criteria, conversation, cassettes=tmp_path, live=True)
+        written = [json.loads(p.read_text()) for p in tmp_path.glob("judge-*.json")]
+        assert [w["response"] for w in written] == [good]
+
+    def test_resampling_is_bounded(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        calls = _patch_posts(monkeypatch, [self._reply("never gradable")])
+        with pytest.raises(UngradableReply, match=rf"{ATTEMPTS} attempts"):
+            graded(criteria, conversation, cassettes=tmp_path, live=True)
+        assert calls[0] == ATTEMPTS
+        assert list(tmp_path.glob("judge-*.json")) == []
+
+    def test_a_transport_failure_is_not_resampled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        # A 429 will not resolve by asking again, and paying for it three times is worse
+        # than saying so on the first call.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        calls = _patch_posts(monkeypatch, [self._reply("", status=429)])
+        with pytest.raises(JudgeError, match=r"429"):
+            graded(criteria, conversation, cassettes=tmp_path, live=True)
+        assert calls[0] == 1
+
+    def test_a_hand_edited_cassette_is_not_resampled_either(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        # Replay makes no calls at all, so a broken recording has to raise, not retry.
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        good = json.dumps({"verdicts": ALL_TRUE})
+        _patch_posts(monkeypatch, [self._reply(good)])
+        graded(criteria, conversation, cassettes=tmp_path, live=True)
+        cassette = next(tmp_path.glob("judge-*.json"))
+        payload = json.loads(cassette.read_text())
+        payload["response"] = "hand-edited to nonsense"
+        cassette.write_text(json.dumps(payload))
+        with pytest.raises(UngradableReply):
+            graded(criteria, conversation, cassettes=tmp_path)
+
+    def test_a_clean_reply_reports_no_resamples(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        _patch_posts(monkeypatch, [self._reply(json.dumps({"verdicts": ALL_TRUE}))])
+        assert graded(criteria, conversation, cassettes=tmp_path, live=True).resamples == 0
 
 
 class TestUntrustedContent:

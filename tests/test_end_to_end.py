@@ -16,7 +16,7 @@ from specdeck.cli import app
 
 CARDS = Path(__file__).resolve().parent.parent / "cards"
 CARD = CARDS / "basic-economy-return-change.md"
-TRACE = CARDS / "traces" / "run-01.otlp.json"
+TRACE = CARDS / "traces" / "basic-economy-return-change.otlp.json"
 
 runner = CliRunner()
 
@@ -99,7 +99,7 @@ def _run_copy(cards: Path, card: Path):
     return invoke(
         str(card),
         "--trace",
-        str(cards / "traces" / "run-01.otlp.json"),
+        str(cards / "traces" / "basic-economy-return-change.otlp.json"),
         "--runs",
         "1",
         "--pass-threshold",
@@ -113,7 +113,7 @@ class TestFailingCellExitsOne:
     def test_a_failed_gate_wire_exits_one_not_zero(self, tmp_path: Path) -> None:
         # A failing card that exits 0 would pass CI silently.
         cards = _copy_cards(tmp_path)
-        trace_path = cards / "traces" / "run-01.otlp.json"
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
         broken = trace_path.read_text().replace(
             "get_reservation_details", "update_reservation_flights"
         )
@@ -136,7 +136,7 @@ class TestRelock:
         result = invoke(
             str(cards / CARD.name),
             "--trace",
-            str(cards / "traces" / "run-01.otlp.json"),
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
             "--runs",
             "1",
             "--pass-threshold",
@@ -157,7 +157,7 @@ class TestRelock:
         invoke(
             str(cards / CARD.name),
             "--trace",
-            str(cards / "traces" / "run-01.otlp.json"),
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
             "--runs",
             "1",
             "--pass-threshold",
@@ -175,7 +175,7 @@ class TestRelock:
         result = invoke(
             str(cards / CARD.name),
             "--trace",
-            str(cards / "traces" / "run-01.otlp.json"),
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
             "--runs",
             "1",
             "--pass-threshold",
@@ -195,7 +195,7 @@ class TestRelock:
         result = invoke(
             str(cards / CARD.name),
             "--trace",
-            str(cards / "traces" / "run-01.otlp.json"),
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
             "--runs",
             "1",
             "--pass-threshold",
@@ -216,7 +216,7 @@ class TestCassetteDefault:
         result = invoke(
             str(cards / CARD.name),
             "--trace",
-            str(cards / "traces" / "run-01.otlp.json"),
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
             "--runs",
             "1",
             "--pass-threshold",

@@ -31,6 +31,11 @@ API_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
 TIMEOUT_S = 180
 
+#: How many times a live call may be resampled when the reply carries no verdicts. Bounded
+#: rather than generous: a criterion that needs a second sample every time is ambiguous
+#: prose, and burying that under retries hides the thing worth fixing. See #67.
+ATTEMPTS = 3
+
 #: Everything between these markers is evidence to grade. It contains agent output,
 #: simulated-user turns, and raw tool results, any of which may be attacker-controlled —
 #: a poisoned tool result asking for a passing verdict is exactly the attack the gate
@@ -67,6 +72,15 @@ class JudgeError(Exception):
     """The judge could not produce verdicts."""
 
 
+class UngradableReply(JudgeError):
+    """The judge answered, but the reply carried no usable verdicts.
+
+    Its own class because it is the one judge failure worth asking again about: the
+    model is nondeterministic, and the next sample of the same prompt may well parse.
+    A missing key, a 429, or a timeout will not resolve by repeating the question.
+    """
+
+
 class Criterion(BaseModel):
     id: str
     text: str
@@ -90,6 +104,9 @@ class JudgeResult(BaseModel):
     rubric_hash: str
     replayed: bool
     verdicts: list[JudgeVerdict]
+    #: Replies discarded before this one parsed. Reported, because a criterion that
+    #: needs resampling is a criterion the SME should reword.
+    resamples: int = 0
 
     @property
     def gate_passed(self) -> bool:
@@ -180,13 +197,13 @@ def parse_response(
     """
     match = re.search(r"\{.*\}", text, re.S)
     if not match:
-        raise JudgeError("the judge replied with no JSON object")
+        raise UngradableReply("the judge replied with no JSON object")
     try:
         payload = json.loads(match.group(0))
     except json.JSONDecodeError as error:
-        raise JudgeError(f"the judge's JSON did not parse: {error.msg}") from None
+        raise UngradableReply(f"the judge's JSON did not parse: {error.msg}") from None
     if "verdicts" not in payload:
-        raise JudgeError("the judge's reply carried no `verdicts` object")
+        raise UngradableReply("the judge's reply carried no `verdicts` object")
     verdicts = payload.get("verdicts") or {}
     for key, value in verdicts.items():
         if not isinstance(value, bool):
@@ -197,7 +214,7 @@ def parse_response(
     if expected is not None:
         ungraded = [name for name in expected if name not in verdicts]
         if ungraded:
-            raise JudgeError(f"the judge graded no verdict for: {', '.join(ungraded)}")
+            raise UngradableReply(f"the judge graded no verdict for: {', '.join(ungraded)}")
     return verdicts, payload.get("reasons") or {}
 
 
@@ -260,16 +277,22 @@ async def judge(
             f"no cassette for this prompt at {cassette.path(prompt, model)} — "
             "run with --live once to record it"
         )
-    response = recorded if recorded is not None else await _call(prompt, model)
-    # Parse before recording: a cassette written from an unparseable reply is replayed
-    # forever, and --live never re-calls because the file now exists.
-    verdicts, reasons = parse_response(response, [c.id for c in criteria])
-    if recorded is None:
-        cassette.write(prompt, model, response, criteria=[c.id for c in criteria])
+    ids = [c.id for c in criteria]
+    resamples = 0
+    if recorded is not None:
+        # A recorded reply is never resampled: it parsed once to be written, so a failure
+        # here means the cassette was hand-edited, and asking the model cannot fix that.
+        response, (verdicts, reasons) = recorded, parse_response(recorded, ids)
+    else:
+        response, verdicts, reasons, resamples = await _sample(prompt, model, ids)
+        # Recorded after parsing: a cassette written from an unparseable reply is replayed
+        # forever, and --live never re-calls because the file now exists.
+        cassette.write(prompt, model, response, criteria=ids)
     return JudgeResult(
         model=model,
         rubric_hash=rubric_hash(criteria),
         replayed=recorded is not None,
+        resamples=resamples,
         verdicts=[
             JudgeVerdict(
                 id=c.id,
@@ -283,6 +306,33 @@ async def judge(
             for c in criteria
         ],
     )
+
+
+async def _sample(
+    prompt: str, model: str, expected: list[str], *, attempts: int = ATTEMPTS
+) -> tuple[str, dict[str, bool], dict[str, str], int]:
+    """Call the judge until a reply parses, at most `attempts` times.
+
+    Only an `UngradableReply` is resampled. A transport failure raises straight out: a
+    live run that cannot reach the API should say so on the first call rather than pay
+    for the same failure three times.
+
+    Returns the reply that parsed, so the cassette records that one and not a discarded
+    sibling, along with how many were discarded ahead of it.
+    """
+    last: UngradableReply | None = None
+    for attempt in range(attempts):
+        try:
+            # The call is inside the try: a reply that is all thinking and no text block
+            # is the same nondeterminism as a reply that graded nothing, and _call raises
+            # UngradableReply for it.
+            response = await _call(prompt, model)
+            verdicts, reasons = parse_response(response, expected)
+        except UngradableReply as error:
+            last = error
+            continue
+        return response, verdicts, reasons, attempt
+    raise UngradableReply(f"no gradable reply in {attempts} attempts, last: {last}")
 
 
 async def _call(prompt: str, model: str) -> str:
@@ -311,7 +361,7 @@ async def _call(prompt: str, model: str) -> str:
     # Reasoning models lead with a thinking block, so select by type rather than by index.
     text = next((b["text"] for b in blocks if b.get("type") == "text"), None)
     if text is None:
-        raise JudgeError("the judge's reply carried no text block")
+        raise UngradableReply("the judge's reply carried no text block")
     return str(text)
 
 

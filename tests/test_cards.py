@@ -1,8 +1,8 @@
-"""The committed card suite, checked without spending a judge call.
+"""The committed card suite: every card, evaluated end to end from its cassette.
 
-Everything here reads files. The assertions that need a recorded verdict live in
-tests/test_end_to_end.py, which owns card 1; this module owns the properties every card
-must hold whether or not its cassette exists yet.
+No network and no key — replay is the default mode, so the whole suite runs offline. The
+CLI-surface assertions (flags, exit codes, relock) stay in tests/test_end_to_end.py; this
+module owns the properties every card must hold.
 """
 
 from __future__ import annotations
@@ -15,6 +15,7 @@ from pathlib import Path
 import pytest
 
 from specdeck.card import parse
+from specdeck.cell import run_cell
 from specdeck.cli import _vocabulary
 from specdeck.ir import AfterKThen, AtMost, Bound, Never
 from specdeck.judge import criteria_of, rubric_text
@@ -29,9 +30,10 @@ CARDS = ROOT / "cards"
 SEMCONV = "semantic-conventions-genai@1.38.0"
 
 CARD_PATHS = sorted(CARDS.glob("*.md"))
-#: Card 1 predates the generator and keeps its own trace filename; the rest are named for
-#: their card, which is what lets the generator find them.
-GENERATED = [p for p in CARD_PATHS if p.stem != "basic-economy-return-change"]
+#: Every card's trace is generated and named for the card. There is no exception: card 1
+#: kept a hand-written `run-01.otlp.json` until #63, and one trace outside the generator
+#: is one trace that rots when the schema moves.
+GENERATED = CARD_PATHS
 
 
 def ids(paths: list[Path]) -> list[str]:
@@ -178,3 +180,24 @@ class TestRubricPinning:
         edited = criteria_of(card)
         edited[0].text += " And it always apologises."
         assert entry.rubric_hash != fingerprint(rubric_text(edited))
+
+
+class TestEveryCardRuns:
+    """Each card, gate and credit, from its recorded cassette. No key, no network."""
+
+    @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
+    def test_the_card_passes_against_its_own_trace(
+        self, path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        card = parse(path)
+        trace = load_trace(CARDS / "traces" / f"{path.stem}.otlp.json")
+        cell = run_cell(card, [trace], cassettes=CARDS / "cassettes", n=1, k=1)
+        assert cell.passed, path.name
+        assert cell.results[0].judged.replayed
+        assert cell.credit_score == cell.credit_total, path.name
+
+    def test_no_cassette_is_orphaned(self) -> None:
+        # Every prose edit re-keys the prompt and strands the old recording. Until #69
+        # teaches lint to say so, the count is the check.
+        assert len(list((CARDS / "cassettes").glob("judge-*.json"))) == len(CARD_PATHS)

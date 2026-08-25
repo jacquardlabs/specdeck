@@ -25,7 +25,7 @@
               "name": "invoke_agent airline-support",
               "kind": "SPAN_KIND_INTERNAL",
               "startTimeUnixNano": "1786968000000000000",
-              "endTimeUnixNano": "1786968008420000000",
+              "endTimeUnixNano": "1786968003870000000",
               "attributes": [
                 {
                   "key": "gen_ai.operation.name",
@@ -49,12 +49,12 @@
             },
             {
               "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
-              "spanId": "a1b2c3d4e5f60001",
+              "spanId": "a1b2c3d4e5f60000",
               "parentSpanId": "00f067aa0ba902b7",
               "name": "chat claude-sonnet-5",
               "kind": "SPAN_KIND_INTERNAL",
               "startTimeUnixNano": "1786968000030000000",
-              "endTimeUnixNano": "1786968002180000000",
+              "endTimeUnixNano": "1786968001830000000",
               "attributes": [
                 {
                   "key": "gen_ai.operation.name",
@@ -95,20 +95,20 @@
                 {
                   "key": "gen_ai.usage.input_tokens",
                   "value": {
-                    "intValue": "1840"
+                    "intValue": "37"
                   }
                 },
                 {
                   "key": "gen_ai.usage.output_tokens",
                   "value": {
-                    "intValue": "12"
+                    "intValue": "8"
                   }
                 }
               ],
               "events": [
                 {
                   "name": "gen_ai.client.inference.operation.details",
-                  "timeUnixNano": "1786968002180000000",
+                  "timeUnixNano": "1786968001830000000",
                   "attributes": [
                     {
                       "key": "gen_ai.input.messages",
@@ -170,12 +170,12 @@
             },
             {
               "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
-              "spanId": "a1b2c3d4e5f60002",
-              "parentSpanId": "a1b2c3d4e5f60001",
+              "spanId": "a1b2c3d4e5f70000",
+              "parentSpanId": "a1b2c3d4e5f60000",
               "name": "execute_tool get_reservation_details",
               "kind": "SPAN_KIND_INTERNAL",
-              "startTimeUnixNano": "1786968002190000000",
-              "endTimeUnixNano": "1786968002402000000",
+              "startTimeUnixNano": "1786968001840000000",
+              "endTimeUnixNano": "1786968002050000000",
               "attributes": [
                 {
                   "key": "gen_ai.operation.name",
@@ -198,7 +198,7 @@
                 {
                   "key": "gen_ai.tool.call.id",
                   "value": {
-                    "stringValue": "toolu_01FhK2mQ"
+                    "stringValue": "toolu_00FhK2mQ"
                   }
                 },
                 {
@@ -217,12 +217,12 @@
             },
             {
               "traceId": "4bf92f3577b34da6a3ce929d0e0e4736",
-              "spanId": "a1b2c3d4e5f60003",
+              "spanId": "a1b2c3d4e5f60001",
               "parentSpanId": "00f067aa0ba902b7",
               "name": "chat claude-sonnet-5",
               "kind": "SPAN_KIND_INTERNAL",
-              "startTimeUnixNano": "1786968002410000000",
-              "endTimeUnixNano": "1786968008410000000",
+              "startTimeUnixNano": "1786968002060000000",
+              "endTimeUnixNano": "1786968003860000000",
               "attributes": [
                 {
                   "key": "gen_ai.operation.name",
@@ -263,20 +263,20 @@
                 {
                   "key": "gen_ai.usage.input_tokens",
                   "value": {
-                    "intValue": "2310"
+                    "intValue": "204"
                   }
                 },
                 {
                   "key": "gen_ai.usage.output_tokens",
                   "value": {
-                    "intValue": "96"
+                    "intValue": "87"
                   }
                 }
               ],
               "events": [
                 {
                   "name": "gen_ai.client.inference.operation.details",
-                  "timeUnixNano": "1786968008410000000",
+                  "timeUnixNano": "1786968003860000000",
                   "attributes": [
                     {
                       "key": "gen_ai.input.messages",
