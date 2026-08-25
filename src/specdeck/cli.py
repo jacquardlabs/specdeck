@@ -226,7 +226,7 @@ def run(
                     "--junit-xml does not take a matrix yet — see "
                     "https://github.com/jacquardlabs/specdeck/issues/85"
                 )
-            matrix, pending = _matrix(
+            matrix, pending, unproven = _matrix(
                 _Invocation(
                     card=card,
                     card_path=card_path,
@@ -250,7 +250,7 @@ def run(
                 console=console,
             )
         else:
-            matrix, pending = None, None
+            matrix, pending, unproven = None, None, []
             traces = recordings or _drive(
                 card,
                 agent or "",
@@ -301,6 +301,21 @@ def run(
     if matrix is not None:
         render_matrix(matrix, console, rates=rates)
         _write_baseline(pending, console)
+        if unproven:
+            # The single-cell path's note, one grid wider. A column records its cost before
+            # its own gate is judged — it has to, because the wire that cost produces is
+            # evaluated in that same cell — so a column that then failed, or raised, has
+            # already written the cost of behaviour nobody wants as the new normal. Whether
+            # that should be refused outright is still the open product question wave 3
+            # left; a silent bad baseline is the outcome neither answer wants.
+            console.print(
+                "[yellow]note[/yellow]",
+                Text(
+                    f"the baseline for {', '.join(unproven)} was recorded from a column "
+                    "that did not pass — re-record it once the column passes, or the cost "
+                    "of a broken run becomes the normal"
+                ),
+            )
         # Raised out here, never inside the funnel: `typer.Exit` subclasses `RuntimeError`,
         # so an exit raised in the try above would be caught by `except Exception` and
         # reported as exit 3, "specdeck itself broke".
@@ -360,8 +375,8 @@ def _matrix(
     budget_usd: float | None,
     matrix_concurrency: int,
     console: Console,
-) -> tuple[MatrixResult, tuple[Path, Baseline] | None]:
-    """Run every column of the matrix under one budget, and hand back what to write.
+) -> tuple[MatrixResult, tuple[Path, Baseline] | None, list[str]]:
+    """Run every column under one budget; hand back what to write and what to warn about.
 
     The lockfile is verified once, by `run`, before this is reached — never per column.
     `_lock` writes the file under `--relock`, and N columns relocking concurrently would
@@ -450,7 +465,15 @@ def _matrix(
         for cell, tokens in sorted(fresh.items()):
             recorded = recorded.record(key, tokens, cell=cell)
         pending = (baseline_file, recorded)
-    return result, pending
+    # A column records its cost before its own gate is judged, so a column that then
+    # failed — or raised on the way — recorded one anyway. Not `not passed` on the cell:
+    # an ERRORED column never produced one and is exactly as unproven.
+    unproven = [
+        one.column.name
+        for one in result.columns
+        if one.status is not Status.PASSED and cell_key(one.column) in fresh
+    ]
+    return result, pending, unproven
 
 
 def _warn_default_baseline(

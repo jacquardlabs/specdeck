@@ -223,12 +223,28 @@ class TestRunningTheMatrix:
         # The prompt axis merges under every provider, so both columns carry its key too.
         assert all(call["style"] == "terse" for call in fake_agent.CONFIG_CALLS)
 
-    def test_the_lockfile_is_written_once_not_once_per_column(self, workspace: Path) -> None:
-        # `_lock` writes under --relock, and N columns relocking would be N writers on
-        # one file. Proven by the content: one [cards.*] entry, not two.
-        run(workspace)
-        lock = tomllib.loads((workspace / "spec.lock.toml").read_text())
-        assert list(lock["cards"]) == ["refused.md"]
+    def test_the_lockfile_is_written_once_not_once_per_column(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # `_lock` writes the file under --relock, and N columns relocking would be N
+        # writers on one `spec.lock.toml`. Counted, not inferred from the content: two
+        # calls with the same key produce a file identical to one call's, so an assertion
+        # on what was written passes under exactly the bug it claims to rule out.
+        from specdeck import cli
+
+        real = cli._lock
+        calls = []
+
+        def counted(*args, **kwargs):
+            calls.append(1)
+            return real(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "_lock", counted)
+        assert run(workspace).exit_code == 0
+        assert len(calls) == 1
+        assert list(tomllib.loads((workspace / "spec.lock.toml").read_text())["cards"]) == [
+            "refused.md"
+        ]
 
     def test_a_failing_column_is_a_failing_matrix(self, workspace: Path) -> None:
         prime(workspace, [REPLY], verdict=False)
@@ -422,6 +438,26 @@ class TestTheBaseline:
         run(workspace, "--update-baseline")
         text = (workspace / BASELINE_NAME).read_text()
         assert "sonnet/terse" in text and "opus/terse" in text
+
+    def test_a_column_that_did_not_pass_says_its_baseline_is_unproven(
+        self, workspace: Path
+    ) -> None:
+        # A column records its cost before its own gate is judged, so a failing column
+        # writes the cost of behaviour nobody wants as the new normal. The file is still
+        # written — refusing would answer a product question wave 3 deliberately left open
+        # — but never silently.
+        prime(workspace, [REPLY], verdict=False)
+        result = run(workspace, "--update-baseline")
+        assert result.exit_code == 1, result.stdout
+        flat = " ".join(result.stdout.split())
+        assert "sonnet/terse" in flat and "opus/terse" in flat
+        assert "did not pass" in flat
+        assert (workspace / BASELINE_NAME).exists(), "the file is still written"
+
+    def test_a_passing_matrix_says_nothing_of_the_kind(self, workspace: Path) -> None:
+        result = run(workspace, "--update-baseline")
+        assert result.exit_code == 0, result.stdout
+        assert "did not pass" not in " ".join(result.stdout.split())
 
     def test_a_single_cell_baseline_alone_is_called_out(self, workspace: Path) -> None:
         # Silence here is the worst outcome: every column would get no regression wire,
