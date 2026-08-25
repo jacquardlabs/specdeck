@@ -5,7 +5,7 @@ A developer wires deterministic constraints under it. The runner executes the re
 cards against a provider × prompt matrix and reports pass rate, cost, and judge drift.
 
 > **Status: Phase 1, walking skeleton.** Five cards run end to end against recorded
-> traces. Everything else below — the provider matrix, coverage, calibration, drafting —
+> traces, and `--agent` runs your agent under specdeck's own loop. Everything else below — the provider matrix, coverage, calibration, drafting —
 > describes the target surface, not shipped behavior. Progress is tracked in
 > [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
 > product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
@@ -43,6 +43,23 @@ the rubric and simulator prompt. `--live` calls the judge once and records the r
 `cassettes/` beside the card. Every run after that needs neither flag and makes no network
 call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
 
+### Running the agent
+
+```console
+$ specdeck run cards/your-card.md --agent yourpkg.adapter:Agent \
+    --vocabulary cards/vocabulary.txt --runs 5
+```
+
+Your agent implements one protocol — `async run(messages, tools, config) -> events`, plus
+an optional `describe()`. The adapter returns the events, so the trace is whatever the
+agent actually did, including tool calls the loop never sees. A simulated user plays the
+card's `simulator:` intent and stamps `specdeck.marker` on the turns it disagrees with;
+its model is pinned in `spec.lock.toml` alongside the judge's, because simulator
+benevolence bias shifts pass rates with no card change.
+
+Simulator turns record into the same cassettes as the judge, so a conversation replays
+without a key once recorded.
+
 ### Lint
 
 ```console
@@ -57,7 +74,7 @@ prose block — that zone is the SME's.
 
 Runs in pre-commit and in CI, from the same command.
 
-Not yet: running the agent itself, the provider matrix, the definition-fed and
+Not yet: the provider matrix, the definition-fed and
 prose-aware lint groups, and the `eventually` and precedence patterns — the palette ships
 `never`, `at_most`, bounds, and after-K-then-Y.
 
