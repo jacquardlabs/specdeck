@@ -34,17 +34,61 @@ jobs:
       # runner would be invisible to `build_command`. It installs its own, pinned, in
       # pyproject.toml — which is also what relocks uv.lock into the release commit.
 
+      # Run from pip rather than the Docker action, because the action pinned only itself.
+      # GitPython 3.1.60 (2026-08-25) removed `Actor.name_email_regex`, which every 10.6.1
+      # config load calls, so the action's image rebuilt, resolved the new GitPython and
+      # failed on every release with `type object 'Actor' has no attribute
+      # 'name_email_regex'` — upstream python-semantic-release#1475/#1476, fix open in
+      # #1477 and unreleased. Pinning the action by SHA did not help and could not: the
+      # image is rebuilt from that SHA and re-resolves its dependencies each time. A pinned
+      # tool with an unpinned dependency is an unpinned tool, so both are pinned here.
+      # Revisit when a release carrying #1477 ships: this can go back to the action, but
+      # only if it pins GitPython itself.
+      - uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d # v10.0.1
+        with:
+          enable-cache: true
+
       - name: Version and tag
         id: release
-        uses: python-semantic-release/python-semantic-release@39dd2052f2ce8282a5d932c31d58a2ca06d2550e # v10.6.1
-        with:
+        env:
           # RELEASE_TOKEN rather than GITHUB_TOKEN: the release commit and tag push to a
           # protected `main`, and a token minted for the workflow cannot.
-          github_token: ${{ secrets.RELEASE_TOKEN }}
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # The credential goes into .git/config for this step only and is removed in the
+          # step below, which runs even when this one fails. `persist-credentials: false`
+          # on the checkout is what makes that removal meaningful: nothing else in the job
+          # puts a writable token on disk. This is the same exposure the Docker action had
+          # — build_command runs third-party code while the credential is present — and no
+          # smaller one is available, because semantic-release does the push itself.
+          git remote set-url origin \
+            "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+          uvx --with 'GitPython<3.1.60' --from 'python-semantic-release==10.6.1' \
+            semantic-release -v version
+
+          # `released` drives the upload step, exactly as the action's output did.
+          if git describe --exact-match --tags HEAD >/dev/null 2>&1; then
+            echo "released=true" >> "$GITHUB_OUTPUT"
+            echo "tag=$(git describe --exact-match --tags HEAD)" >> "$GITHUB_OUTPUT"
+          else
+            echo "released=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Drop the pushed credential
+        if: always()
+        run: git remote set-url origin "https://github.com/${GITHUB_REPOSITORY}.git"
 
       - name: Attach the built artifacts
         if: steps.release.outputs.released == 'true'
-        uses: python-semantic-release/publish-action@5a5718ce47b892ef699f2972dae122297771d641 # v10.6.1
-        with:
-          github_token: ${{ secrets.RELEASE_TOKEN }}
-          tag: ${{ steps.release.outputs.tag }}
+        env:
+          GH_TOKEN: ${{ secrets.RELEASE_TOKEN }}
+        run: |
+          set -euo pipefail
+          # `version` already built into dist/ via build_command and created the release;
+          # this only attaches the wheel and sdist, which is all publish-action did.
+          gh release upload "${{ steps.release.outputs.tag }}" dist/* --clobber
