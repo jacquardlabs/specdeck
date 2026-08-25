@@ -107,6 +107,23 @@ class TestTheCoverageCommand:
         text = " ".join(result.stdout.split())
         assert "refunds.md" in text and "named by no card" in text
 
+    def test_a_reported_path_is_never_broken_across_lines(self, tmp_path: Path) -> None:
+        """Rich word-wraps, and a hard break inside a filename is not a cosmetic bug.
+
+        The two tests around this one passed on macOS and failed in CI purely because the
+        temp path is shorter there, so the wrap landed inside `refunds.md` rather than
+        beside it — `refund s.md`, which no reader can copy and no assertion can find. The
+        deck name here is long enough to push the path past 80 columns on any platform.
+        """
+        deck = tmp_path / ("a-deck-with-a-deliberately-long-name-" * 3).rstrip("-")
+        deck.mkdir()
+        self._policy_deck(deck, "# Refund Policy\n\n- refunds go to the card\n")
+        result = runner.invoke(app, ["coverage", str(deck)])
+        assert result.exit_code == 0
+        text = " ".join(result.stdout.split())
+        assert "refunds.md" in text
+        assert "named by no card" in text
+
     def test_a_policy_document_that_is_not_a_card_is_reported_rather_than_aborting(
         self, tmp_path: Path
     ) -> None:
