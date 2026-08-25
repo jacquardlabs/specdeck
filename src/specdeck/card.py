@@ -40,6 +40,10 @@ class CardContext(BaseModel):
 
 
 class Card(BaseModel):
+    """One scenario, parsed. The zones stay separate all the way through: `prose` is the
+    SME's and is graded by the judge, `wires` is the developer's and is compiled to the
+    property IR. Paths in `context` are resolved against the card, never the cwd."""
+
     path: str
     title: str
     context: CardContext
@@ -81,10 +85,25 @@ class Card(BaseModel):
 
 
 def parse(path: Path | str) -> Card:
-    return parse_text(Path(path).read_text(), path=str(path))
+    """Read a card from disk. A path that does not resolve is a `CardError`, not an
+    `OSError`: the CLI routes its own error types to exit 2, and a mistyped path is a user
+    error rather than a crash."""
+    try:
+        text = Path(path).read_text()
+    except OSError as error:
+        raise CardError(f"cannot read the card at {path}: {error.strerror or error}") from None
+    return parse_text(text, path=str(path))
 
 
 def parse_text(text: str, path: str = "<card>") -> Card:
+    """Parse a card's four blocks: heading, `context`, prose, `wire`, and `credit`.
+
+    The prose block is everything outside the keyed blocks, and is the SME's zone verbatim
+    — it becomes the judge prompt and is hashed into the lockfile, so nothing here
+    normalises it. `credit` splits into `credit_wires` and `credit_criteria` because the
+    two are evaluated by different machinery: a quoted string is graded by the judge, a
+    `wire:` entry is compiled to the property IR and checked against the trace.
+    """
     lines = text.splitlines()
     if not lines or not lines[0].startswith("# "):
         raise CardError(f"{path}: a card starts with a `# ` heading")

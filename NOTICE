@@ -34,3 +34,11 @@ The MIT License text accompanying the τ-bench source:
   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
   SOFTWARE.
+
+---
+
+Third-party runtime dependencies are listed in `uv.lock`. One carries a licence other than
+MIT/BSD/Apache: `certifi`, pulled in transitively by `httpx` via `httpcore`, is MPL-2.0.
+It is consumed unmodified, which MPL-2.0 permits without further obligation. Vendoring or
+patching the CA bundle into a redistributed artifact would require carrying the MPL notice
+with it — logged here so that edit is a known event rather than a discovery.

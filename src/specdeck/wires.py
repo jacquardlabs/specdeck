@@ -11,6 +11,7 @@ form named and the issue it waits on, rather than compiling to something approxi
 
 from __future__ import annotations
 
+import json
 import re
 
 from .card import Card
@@ -150,3 +151,16 @@ def _whole(fragment: str, text: str) -> int:
     if number != int(number):
         raise WireError(f"{text!r}: a call budget must be a whole number, got {number:g}")
     return int(number)
+
+
+def wires_text(properties: list[Property]) -> str:
+    """The canonical pinned text for a card's wires: the compiled IR, stably serialised.
+
+    The IR and not the wire text, so `at_most  2` reformatted is not drift while
+    `at_most 20` is. Sorted by id, because the order wires appear in a card is the
+    developer's arrangement rather than a claim about behaviour.
+    """
+    return json.dumps(
+        [p.model_dump(mode="json") for p in sorted(properties, key=lambda p: p.id)],
+        sort_keys=True,
+    )

@@ -29,14 +29,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
+from .tier import Tier
 from .trace import GenAI, Operation, Span, Specdeck, Trace
-
-
-class Tier(StrEnum):
-    """Gate defines pass and blocks. Credit is weighted, reported, never blocking."""
-
-    GATE = "gate"
-    CREDIT = "credit"
 
 
 class Measure(StrEnum):

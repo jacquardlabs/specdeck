@@ -15,18 +15,20 @@ cards against a provider × prompt matrix and reports pass rate, cost, and judge
 
 ```console
 $ uv run specdeck run cards/basic-economy-return-change.md \
-    --trace cards/traces/basic-economy-return-change.otlp.json --runs 1 --pass-threshold 1
+    --trace cards/traces/basic-economy-return-change.otlp.json
 
   gate     PASS   1/1 runs   (passes at 1)
   credit   4/4   (over 1 passing run)
 ```
 
 One of five τ-bench airline cards, its wires evaluated against a raw OTLP export, its
-prose graded by a pinned judge replaying a recorded cassette. No API key, no network. The trace is a real
-OpenTelemetry GenAI export rather than a specdeck-shaped file, because an agent already
-emitting OTel needs no adapter.
+prose graded by a pinned judge replaying a recorded cassette. No API key, no network. The
+trace is a real OpenTelemetry GenAI export rather than a specdeck-shaped file, because an
+agent already emitting OTel needs no adapter.
 
-Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start.
+Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start,
+`3` specdeck itself broke. A caller reading only the code should never route a malformed
+lockfile to the SME as an eval regression.
 
 ### A card's first run
 
@@ -34,12 +36,12 @@ A new card is unpinned and unrecorded, and specdeck refuses both rather than gue
 Once, with a key in the environment:
 
 ```console
-$ specdeck run cards/your-card.md --trace run.otlp.json --runs 1 --pass-threshold 1 \
-    --relock --live
+$ specdeck run cards/your-card.md --trace run.otlp.json --relock --live
 ```
 
 `--relock` writes `spec.lock.toml` beside the card, pinning the judge model and hashing
-the rubric and simulator prompt. `--live` calls the judge once and records the reply into
+the rubric, the compiled wires, and the simulator prompt. `--runs` defaults to one per
+`--trace`. `--live` calls the judge once and records the reply into
 `cassettes/` beside the card. Every run after that needs neither flag and makes no network
 call. Editing the prose, a criterion, or the trace invalidates both, on purpose.
 

@@ -5,7 +5,6 @@ from pathlib import Path
 import pytest
 
 from specdeck.card import parse_text
-from specdeck.ir import Tier
 from specdeck.judge import (
     ATTEMPTS,
     Cassette,
@@ -17,6 +16,7 @@ from specdeck.judge import (
     parse_response,
     render_transcript,
 )
+from specdeck.tier import Tier
 from specdeck.trace import GenAI, Operation, SpanEvent
 
 from .test_trace import span, trace
@@ -393,3 +393,58 @@ class TestCriterionIds:
         )
         ids = [c.id for c in criteria_of(card)]
         assert len(set(ids)) == len(ids), ids
+
+
+def _chat(span_id: str, offset: float, inputs: list[dict], reply: str):
+    one = span(span_id, Operation.CHAT, offset=offset)
+    one.events.append(
+        SpanEvent(
+            name="gen_ai.client.inference.operation.details",
+            attributes={
+                GenAI.INPUT_MESSAGES: inputs,
+                GenAI.OUTPUT_MESSAGES: [{"role": "assistant", "content": reply}],
+            },
+        )
+    )
+    return one
+
+
+class TestEveryUserTurnReachesTheJudge:
+    """Two user messages before one agent reply used to leave the first ungraded.
+
+    Keeping each chat span's last input looked equivalent, because the transcript grows by
+    one turn per call. It is not: a message that is never last is in no span's final
+    position and reached the judge in no form at all, so a criterion phrased over turn
+    sequence was graded on evidence that was not in the prompt. See #56.
+    """
+
+    def _trace(self):
+        first = {"role": "user", "content": "I want a refund."}
+        second = {"role": "user", "content": "Actually, make it a voucher."}
+        return trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=9.0),
+            _chat("chat-0", 1.0, [first, second], "I cannot do either."),
+        )
+
+    def test_a_user_turn_with_no_reply_of_its_own_is_still_shown(self) -> None:
+        rendered = render_transcript(self._trace())
+        assert "[user] I want a refund." in rendered
+        assert "[user] Actually, make it a voucher." in rendered
+
+    def test_turn_order_is_preserved(self) -> None:
+        rendered = render_transcript(self._trace())
+        assert rendered.index("I want a refund") < rendered.index("make it a voucher")
+        assert rendered.index("make it a voucher") < rendered.index("I cannot do either")
+
+    def test_a_turn_repeated_across_spans_is_shown_once(self) -> None:
+        # The transcript is cumulative: every later chat span replays the whole history,
+        # so the guard against dropping turns must not start duplicating them instead.
+        opening = {"role": "user", "content": "I want a refund."}
+        reply = {"role": "assistant", "content": "I cannot."}
+        pressed = {"role": "user", "content": "Try again."}
+        one = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=9.0),
+            _chat("chat-0", 1.0, [opening], "I cannot."),
+            _chat("chat-1", 3.0, [opening, reply, pressed], "Still no."),
+        )
+        assert render_transcript(one).count("[user] I want a refund.") == 1

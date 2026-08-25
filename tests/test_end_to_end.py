@@ -223,3 +223,53 @@ class TestCassetteDefault:
             "1",
         )
         assert result.exit_code == 0, result.stdout
+
+
+class TestExitCodesAreDistinct:
+    """0 pass, 1 a failed cell, 2 a user error, 3 a crash. A caller that reads only the
+    code routes on them, so a broken lockfile must not look like an eval regression (#56).
+    """
+
+    def test_a_malformed_lockfile_is_not_a_failed_cell(self, tmp_path: Path) -> None:
+        broken = tmp_path / "spec.lock.toml"
+        broken.write_text("<<<<<<< HEAD\nbroken = [\n")
+        result = invoke(
+            str(CARD),
+            "--trace",
+            str(TRACE),
+            "--lock",
+            str(broken),
+            "--runs",
+            "1",
+            "--pass-threshold",
+            "1",
+        )
+        assert result.exit_code == 3
+        assert "internal error" in result.stdout
+
+    def test_a_card_that_does_not_exist_is_a_user_error(self, tmp_path: Path) -> None:
+        # A mistyped path used to escape the funnel as an OSError and exit 1 — the same
+        # code as a card that honestly failed.
+        result = invoke(str(tmp_path / "nope.md"), "--trace", str(TRACE))
+        assert result.exit_code == 2
+        assert "cannot read the card" in result.stdout
+
+
+class TestRunCountDefaults:
+    def test_one_trace_needs_no_flags(self) -> None:
+        # The README demo had to carry --runs 1 --pass-threshold 1 to work at all, which
+        # is evidence the default fitted no shipped path. N=5 is untouched as a statistic;
+        # what changed is guessing it when the invocation already states the count.
+        result = invoke(str(CARD), "--trace", str(TRACE))
+        assert result.exit_code == 0, result.stdout
+        assert "1/1 runs" in result.stdout
+
+    def test_the_threshold_never_exceeds_the_cell(self) -> None:
+        result = invoke(str(CARD), "--trace", str(TRACE), "--trace", str(TRACE))
+        assert result.exit_code == 0, result.stdout
+        assert "2/2 runs" in result.stdout
+
+    def test_an_explicit_runs_still_wins(self) -> None:
+        result = invoke(str(CARD), "--trace", str(TRACE), "--runs", "2")
+        assert result.exit_code == 2
+        assert "2 runs but 1 trace" in result.stdout

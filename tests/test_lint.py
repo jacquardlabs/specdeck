@@ -151,6 +151,7 @@ class TestLockfile:
         from specdeck.card import parse
         from specdeck.judge import criteria_of, rubric_text
         from specdeck.lockfile import CardLock, fingerprint
+        from specdeck.wires import compile_wires, wires_text
 
         card = parse(card_dir / "refund.md")
         base = Lockfile(
@@ -160,6 +161,7 @@ class TestLockfile:
             cards={
                 "refund.md": CardLock(
                     rubric_hash=fingerprint(rubric_text(criteria_of(card))),
+                    wires_hash=fingerprint(wires_text(compile_wires(card))),
                     simulator_hash=fingerprint(card.context.simulator),
                 )
             },
@@ -405,3 +407,54 @@ class TestOrphanCassettes:
         (tmp_path / "airline.md").write_text("the policy")
         (tmp_path / "refund.md").write_text(GOOD)
         assert "orphan-cassette" not in [f.rule for f in lint_paths([tmp_path]).findings]
+
+
+class TestTheRunnerAndLintAgreeOnTheKey:
+    """The test #61 says would have caught it: a card in a subdirectory, relocked by the
+    runner, then linted. Neither existed while `cards/` was flat, which is why a runner
+    that verified clean and a lint that reported `not in the lockfile` could coexist.
+    """
+
+    def _workspace(self, tmp_path: Path) -> Path:
+        from shutil import copy
+
+        source = Path(__file__).resolve().parent.parent / "cards"
+        nested = tmp_path / "airline"
+        nested.mkdir()
+        copy(source / "basic-economy-return-change.md", nested / "refund.md")
+        (nested / "fixtures").mkdir()
+        copy(source / "fixtures" / "airline_seed.json", nested / "fixtures")
+        (nested / "policy").mkdir()
+        copy(source / "policy" / "airline.md", nested / "policy")
+        return tmp_path
+
+    def _relock(self, tmp_path: Path) -> Path:
+        from typer.testing import CliRunner
+
+        from specdeck.cli import app
+
+        source = Path(__file__).resolve().parent.parent / "cards"
+        lock = tmp_path / "spec.lock.toml"
+        CliRunner().invoke(
+            app,
+            [
+                "run",
+                str(tmp_path / "airline" / "refund.md"),
+                "--trace",
+                str(source / "traces" / "basic-economy-return-change.otlp.json"),
+                "--lock",
+                str(lock),
+                "--relock",
+            ],
+        )
+        return lock
+
+    def test_the_runner_locks_a_nested_card_under_its_subdirectory(self, tmp_path: Path) -> None:
+        lock = self._relock(self._workspace(tmp_path))
+        assert "airline/refund.md" in Lockfile.load(lock).cards
+
+    def test_lint_finds_the_card_the_runner_locked(self, tmp_path: Path) -> None:
+        workspace = self._workspace(tmp_path)
+        lock = self._relock(workspace)
+        findings = lint_paths([workspace], lock=Lockfile.load(lock), lock_path=lock).findings
+        assert rules(findings, Severity.ERROR) == [], findings

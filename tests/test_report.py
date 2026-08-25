@@ -5,8 +5,9 @@ from rich.console import Console
 
 from specdeck.card import parse_text
 from specdeck.cell import Cell, Run, run_cell
-from specdeck.ir import Tier, Verdict
+from specdeck.ir import Verdict
 from specdeck.report import render
+from specdeck.tier import Tier
 
 from .test_cell import CARD, conversation, record
 
