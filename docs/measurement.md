@@ -111,21 +111,44 @@ is floored to a whole token before the bound is set, because no run costs half a
 no regression wire at all — a first install runs green, and gating on a number nobody wrote
 down would mean inventing one. Once a baseline exists the bound fails closed: a trace that
 reports no `gen_ai.usage.output_tokens` reds the card naming the attribute, which is the
-same rule every other token figure follows. `--update-baseline` refuses to record from such
-a trace for that reason, so nothing can be recorded that immediately makes the gate useless.
+same rule every other token figure follows.
 
-Recording and gating happen in the same run: `--update-baseline` writes the median and this
-run is then judged against it, exactly as `--relock` records a lock and verifies against
-what it just wrote. A run whose tokens exceed the fresh median by more than the tolerance
-therefore fails immediately after recording — which is the k-of-N statistic doing its job,
-not a contradiction.
+**A recorded baseline is positive at both ends.** `--update-baseline` refuses, and writes
+nothing, when any run reported no `gen_ai.usage.output_tokens` *or* reported them totalling
+zero — two different facts, two different messages, and neither may be recorded. The reader
+refuses the same figure, so a hand-edited `output_tokens = 0` reports itself as a user error
+rather than as an internal one. Nothing can be recorded, or committed, that makes the gate
+useless: a bound of zero is not a bound the runner will hold.
 
-The file is written before the cell is judged, so a run whose gate then fails still sets a
-baseline. That is not refused, because whether a failing run may record one is a product
-question nobody has answered, and refusing would answer it. It is never silent: the run
-prints a note saying the baseline came from a failing run and should be re-recorded once
-the card passes. Unlike a rubric hash, a cost baseline is a measurement of behaviour, and
-recording the cost of behaviour you do not want is the hazard the note exists to surface.
+Recording and gating happen in the same run: `--update-baseline` folds the fresh median
+into this run's own bound, exactly as `--relock` records a lock and then verifies against
+what it just wrote. A run costing more than the median by more than the tolerance therefore
+fails the invocation that recorded it — and whether the *cell* fails with it is arithmetic
+rather than judgement, so it is stated here rather than left to be discovered.
+
+`median_low` leaves ⌈N/2⌉ runs at or below the recorded figure, and the default threshold
+is k = min(3, N). At N ≥ 5 those two always meet: five runs give three at or below the
+median against a threshold of three, which passes with no margin at all. Below five they do
+not — N=2 and N=3 need every run, and N=4 needs three of four while two may sit above the
+median. **So a cell whose runs disagree by more than the tolerance, recorded from fewer
+than five traces, fails the invocation that recorded it and keeps failing**: re-recording
+computes the same median from the same runs. That is the spread being reported, not a
+contradiction. Run the cell at N ≥ 5, where the k-of-N statistic absorbs exactly the two
+runs above the median it was chosen to absorb, or treat a token cost that swings more than
+10% as the finding.
+
+The file is written only once the cell has actually run, so a run refused before that — a
+trace count that disagrees with `--runs`, a missing cassette — leaves a committed baseline
+untouched rather than overwriting it with a number from a cell that never ran. A path named
+with `--baseline` that cannot be written exits 2 after the report has printed, the rule
+`--junit-xml` and `--rates` already follow.
+
+A run whose gate then *fails* does still set a baseline. That is not refused, because
+whether a failing run may record one is a product question nobody has answered, and
+refusing would answer it. It is never silent: the run prints a note saying the baseline came
+from a failing run and should be re-recorded once the card passes. Unlike a rubric hash, a
+cost baseline is a measurement of behaviour, and recording the cost of behaviour you do not
+want is the hazard the note exists to surface.
 
 ## The CI report
 
@@ -139,6 +162,10 @@ One row per run rather than one per card, because a report a human can act on ha
 a red row beside exit 0. Every failure message carries the k-of-N it was judged against —
 "run 3 of 5 failed; the cell needs 4 of 5 and got 4" — and the suite's `system-out` repeats
 the cell's own verdict, so nothing has to be inferred from a count of red rows.
+
+It is written as UTF-8, because the document's own declaration says `encoding='utf-8'` and
+every summary line carries an em dash. Left to the host's locale, a non-UTF-8 default either
+kills a passing run or hands CI bytes that contradict the declaration.
 
 Nothing is written when the run never produced a cell (exit 2 or 3). An empty green suite
 for a run that never started would be a lie, and some renderers read a missing file as

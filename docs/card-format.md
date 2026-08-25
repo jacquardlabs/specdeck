@@ -161,7 +161,10 @@ output_tokens = 95
 `specdeck run --update-baseline` writes it — the median of the runs' `total_output_tokens`,
 taking the lower of the two on an even count so the figure is a number some run actually
 produced. It refuses, and writes nothing, when any run reported no
-`gen_ai.usage.output_tokens`: a recorded 0 would bound every later run at 0.
+`gen_ai.usage.output_tokens` or reported them totalling zero: a baseline of 0 is not a bound
+the runner will hold, and one hand-edited into the file is a user error, not an internal
+one. The file is written only after the cell has run, so a run refused before that leaves a
+committed baseline exactly as it was.
 
 The wire fails a run that exceeds the baseline by more than 10%. That tolerance is chosen,
 not derived. **A card with no baseline recorded gets no wire at all** — a first install

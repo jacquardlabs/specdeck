@@ -186,7 +186,7 @@ def run(
             max_turns=max_turns,
             live=live,
         )
-        builtin = _builtin(
+        builtin, pending = _builtin(
             card_path,
             baseline_path,
             traces,
@@ -224,11 +224,15 @@ def run(
         raise typer.Exit(3) from None
 
     render(cell, console, rates=rates)
-    if update_baseline and not cell.passed:
-        # The baseline is written before the cell runs, so a failing run's token cost can
-        # become the recorded normal. Said out loud rather than refused: whether a failing
-        # run may set a baseline is a product question nobody has answered, and a silent
-        # bad baseline is the outcome neither answer wants.
+    # The JUnit report first: an unwritable --baseline path must not also deny CI the file
+    # it asked for, and the two failures are independent.
+    _write_junit(junit_xml, report, console)
+    _write_baseline(pending, console)
+    if pending is not None and not cell.passed:
+        # A cell that fails its gate is still a cell that ran, so its cost is still
+        # recorded. Said out loud rather than refused: whether a failing run may set a
+        # baseline is a product question nobody has answered, and a silent bad baseline is
+        # the outcome neither answer wants.
         console.print(
             "[yellow]note[/yellow]",
             Text(
@@ -236,7 +240,6 @@ def run(
                 "once the card passes, or the cost of a broken run becomes the normal"
             ),
         )
-    _write_junit(junit_xml, report, console)
     raise typer.Exit(0 if cell.passed else 1)
 
 
@@ -247,8 +250,8 @@ def _builtin(
     *,
     latency_budget: float,
     update: bool,
-) -> BuiltinConfig:
-    """What the free wires are configured with, resolved against the card.
+) -> tuple[BuiltinConfig, tuple[Path, Baseline] | None]:
+    """What the free wires are configured with, and the baseline still owed to disk.
 
     The baseline file sits beside the card like the lockfile and the cassettes, so where
     the runner was invoked from cannot change which costs a card is compared against.
@@ -256,6 +259,13 @@ def _builtin(
     A repo with no baseline recorded runs green and simply gets no regression wire. The
     free gates exist to catch a card getting worse; there is nothing yet to be worse than,
     and a first install must not go red for a number nobody has written down.
+
+    Nothing is written here. `--update-baseline` folds the fresh median into the config, so
+    this run is judged against what it just recorded — the way `--relock` verifies against
+    the lock it just wrote — but the file itself is handed back for the caller to write
+    once the cell has actually run. Written here, a run refused further down (a trace count
+    that disagrees with `--runs`, a missing cassette) would still have overwritten a
+    committed baseline with a number from a cell that never ran.
     """
     if latency_budget <= 0:
         # Checked here rather than left to pydantic: a `ValidationError` is not a
@@ -266,12 +276,35 @@ def _builtin(
     path = baseline_path or card_path.parent / BASELINE_NAME
     key = lock_key(card_path, path)
     recorded = Baseline.load(path)
+    pending = None
     if update:
-        # `observed` refuses before anything is written, so a run that cannot honestly be
+        # `observed` refuses before anything is recorded, so a run that cannot honestly be
         # recorded leaves no file behind claiming it was.
         recorded = recorded.record(key, observed(traces))
-        recorded.save(path)
-    return BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key))
+        pending = (path, recorded)
+    return (
+        BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key)),
+        pending,
+    )
+
+
+def _write_baseline(pending: tuple[Path, Baseline] | None, console: Console) -> None:
+    """The recorded cost, once the cell it describes has actually run.
+
+    Deliberately outside the funnel above and after the cell, on `_write_junit`'s rule: a
+    path the user named is part of the invocation, so a broken one exits 2 loudly rather
+    than surfacing as exit 3, "specdeck itself broke". The cell's own report has already
+    printed by the time this runs, so a typo in `--baseline` costs the reader nothing but
+    the file.
+    """
+    if pending is None:
+        return
+    path, baseline = pending
+    try:
+        baseline.save(path)
+    except OSError as error:
+        console.print("[red]error[/red]", Text(f"cannot write the baseline to {path}: {error}"))
+        raise typer.Exit(2) from None
 
 
 def _write_junit(path: Path | None, report: str | None, console: Console) -> None:
@@ -287,7 +320,11 @@ def _write_junit(path: Path | None, report: str | None, console: Console) -> Non
     if path is None or report is None:
         return
     try:
-        path.write_text(report)
+        # UTF-8 named, not left to the locale: the document declares `encoding='utf-8'` in
+        # band and every report carries an em dash, so a non-UTF-8 default either raises
+        # `UnicodeEncodeError` — exit 1, a card that honestly failed (#56) — or writes
+        # bytes that contradict the declaration and reach CI silently unparseable.
+        path.write_text(report, encoding="utf-8")
     except OSError as error:
         console.print("[red]error[/red]", Text(f"cannot write the JUnit report to {path}: {error}"))
         raise typer.Exit(2) from None

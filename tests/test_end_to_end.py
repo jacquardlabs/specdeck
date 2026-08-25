@@ -462,9 +462,9 @@ class TestTheBaseline:
         assert self._run(cards, cards / CARD.name, "--baseline", str(empty)).exit_code == 0
 
     def test_a_baseline_set_by_a_failing_run_says_so(self, tmp_path: Path) -> None:
-        # The file is written before the cell runs, so a broken run's token cost can
-        # become the recorded normal. It is not refused — whether it should be is an open
-        # product question — but it is never silent.
+        # A cell that fails its gate is still a cell that ran, so a broken run's token
+        # cost can become the recorded normal. It is not refused — whether it should be is
+        # an open product question — but it is never silent.
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
         trace_path.write_text(
@@ -493,6 +493,110 @@ class TestTheBaseline:
         assert result.exit_code == 2, result.stdout
         assert "gen_ai.usage.output_tokens" in result.stdout
         assert not (cards / "spec.baseline.toml").exists()
+
+    def test_a_trace_that_spent_nothing_refuses_and_writes_nothing(self, tmp_path: Path) -> None:
+        # Not the same fact as reporting no usage: this trace reported the attribute and
+        # it summed to 0. Recorded, it would exit 3 on every later run of the card.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text()
+            .replace('"intValue": "8"', '"intValue": "0"')
+            .replace('"intValue": "87"', '"intValue": "0"')
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 2, result.stdout
+        assert "totalling 0" in " ".join(result.stdout.split())
+        assert not (cards / "spec.baseline.toml").exists()
+
+    def test_a_hand_edited_zero_exits_two_not_three(self, tmp_path: Path) -> None:
+        # The reader refuses what the writer can no longer produce, so a file already in
+        # someone's repo reports itself rather than reading as specdeck breaking.
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(
+            f'[cards."{CARD.name}"."default"]\noutput_tokens = 0\n'
+        )
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '[cards."basic-economy-return-change.md"]\noutput_tokens = 95\n',
+            "cards = 5\n",
+            '[cards]\n"basic-economy-return-change.md" = 5\n',
+        ],
+    )
+    def test_a_wrong_shaped_baseline_exits_two_not_three(self, tmp_path: Path, text: str) -> None:
+        # Valid TOML, wrong structure — the natural hand-edit. A caller routing on the
+        # exit code must not read a user's typo as "specdeck itself broke".
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(text)
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+
+    def test_a_run_that_never_started_leaves_a_committed_baseline_alone(
+        self, tmp_path: Path
+    ) -> None:
+        # The file is written only once the cell has run. Written before, a refusal down
+        # in `run_cell` would have overwritten a committed number from a cell that never
+        # ran — and, exiting before the report, without even the note that says so.
+        cards = _copy_cards(tmp_path)
+        committed = cards / "spec.baseline.toml"
+        before = f'[cards."{CARD.name}"."default"]\noutput_tokens = 95\n'
+        committed.write_text(before)
+        result = self._run(cards, cards / CARD.name, "--runs", "5", "--update-baseline")
+        assert result.exit_code == 2, result.stdout
+        assert committed.read_text() == before
+
+    def test_a_baseline_path_that_cannot_be_written_exits_two(self, tmp_path: Path) -> None:
+        # A path the user named is part of the invocation, the rule --junit-xml and
+        # --rates already follow. Exit 3 would report a typo as an internal defect.
+        cards = _copy_cards(tmp_path)
+        result = self._run(
+            cards,
+            cards / CARD.name,
+            "--baseline",
+            str(tmp_path / "absent" / "base.toml"),
+            "--update-baseline",
+        )
+        assert result.exit_code == 2, result.stdout
+        assert "cannot write the baseline" in result.stdout
+        # The cell had already run and its report had already printed: the file is the
+        # only thing lost.
+        assert "gate" in result.stdout
+
+    def test_a_spread_wider_than_the_tolerance_fails_the_run_that_recorded_it(
+        self, tmp_path: Path
+    ) -> None:
+        # measurement.md says this out loud rather than leaving it to be discovered: the
+        # fresh median gates the same run, so at n=3 with k=3 a single run more than 10%
+        # above the median fails the invocation that recorded it. 95, 95, 123 -> median
+        # 95, bound 105, run 3 over it.
+        cards = _copy_cards(tmp_path)
+        traces = cards / "traces"
+        cheap = traces / "basic-economy-return-change.otlp.json"
+        dear = traces / "dear.otlp.json"
+        dear.write_text(cheap.read_text().replace('"intValue": "87"', '"intValue": "115"'))
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cheap),
+            "--trace",
+            str(cheap),
+            "--trace",
+            str(dear),
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--update-baseline",
+        )
+        assert result.exit_code == 1, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "token_baseline 123, under 105" in text
+        assert "2/3 runs" in text
+        assert "output_tokens = 95" in (cards / "spec.baseline.toml").read_text()
 
 
 class TestJUnitOutput:
@@ -535,6 +639,20 @@ class TestJUnitOutput:
         result = demo("--junit-xml", str(tmp_path / "absent" / "r.xml"))
         assert result.exit_code == 2, result.stdout
         assert "cannot write the JUnit report" in result.stdout
+
+    def test_the_bytes_match_the_encoding_the_document_declares(self, tmp_path: Path) -> None:
+        # The declaration says utf-8 in band, so the file has to be utf-8 whatever the
+        # host's locale is. Left to `write_text`'s default, a latin-1 host raises on the
+        # em dash every summary carries (exit 1, a card that honestly failed) and a cp1252
+        # host raises nothing at all — CI just receives a document that will not parse.
+        # Asserted on the bytes rather than by forcing a locale, which is not something a
+        # test can change for an already-running interpreter.
+        report = tmp_path / "r.xml"
+        assert demo("--junit-xml", str(report)).exit_code == 0
+        raw = report.read_bytes()
+        assert b"encoding='utf-8'" in raw
+        assert "—".encode() in raw
+        assert ET.fromstring(raw.decode()).find(".//system-out") is not None
 
     def test_no_flag_writes_no_file(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)

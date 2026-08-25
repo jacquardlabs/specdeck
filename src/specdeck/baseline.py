@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import statistics
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 
 from pydantic import BaseModel, Field
@@ -49,7 +50,11 @@ class CellBaseline(BaseModel):
     than a migration of a file users have already committed.
     """
 
-    output_tokens: int
+    #: Positive, because `BuiltinConfig` refuses a baseline of 0 or less. Without the bound
+    #: here the writer could produce a file the reader then rejects as an internal error on
+    #: every later run, and a hand-edited `output_tokens = 0` would do the same — this turns
+    #: both into the exit 2 a user-owned file deserves.
+    output_tokens: int = Field(gt=0)
 
 
 class Baseline(BaseModel):
@@ -65,7 +70,11 @@ class Baseline(BaseModel):
         return None if entry is None else entry.output_tokens
 
     def record(self, card_key: str, output_tokens: int, *, cell: str = DEFAULT_CELL) -> Baseline:
-        """A copy with this card's cell refreshed. Other cards are untouched."""
+        """A copy with this card's cell refreshed. Other cards are untouched.
+
+        `output_tokens` must be positive; `observed` is the only caller and refuses before
+        it returns anything else.
+        """
         cells = self.cards.get(card_key, {}) | {cell: CellBaseline(output_tokens=output_tokens)}
         return self.model_copy(update={"cards": self.cards | {card_key: cells}}, deep=True)
 
@@ -91,13 +100,11 @@ class Baseline(BaseModel):
 
     @classmethod
     def from_toml(cls, text: str) -> Baseline:
-        data = tomllib.loads(text)
-        return cls(
-            cards={
-                card: {cell: CellBaseline(**entry) for cell, entry in cells.items()}
-                for card, cells in (data.get("cards") or {}).items()
-            }
-        )
+        # Validated by pydantic against the declared shape rather than walked by hand. A
+        # hand-written comprehension raises `TypeError` or `AttributeError` on a file whose
+        # tables are nested one level wrong — the natural hand-edit — and those are not
+        # `ValueError`, so `load` let them out as exit 3 for a file the user owns.
+        return cls.model_validate(tomllib.loads(text))
 
     def to_toml(self) -> str:
         lines = [f"# Written by specdeck. {UPDATE_HINT.capitalize()}; do not hand-edit."]
@@ -120,19 +127,31 @@ def observed(traces: list[Trace]) -> int:
     count no run produced — and the point of the statistic is that it is a number something
     actually cost.
 
-    A trace that reported no usage refuses instead of contributing a 0. A baseline of 0
-    would bound every later run at 0, and one averaged down by a silent trace would gate a
-    card on the instrumentation rather than on the cost.
+    A trace that reported no usage refuses instead of contributing a 0, and so does one
+    whose chat spans reported 0 between them. A baseline of 0 is not a bound the runner can
+    hold — `BuiltinConfig` rejects it — and one averaged down by a silent trace would gate
+    a card on the instrumentation rather than on the cost. The two are kept apart because
+    they are different facts: one run said nothing, the other said nothing was spent.
     """
     if not traces:
         raise BaselineError("no runs to record a baseline from")
-    silent = [
-        index for index, trace in enumerate(traces, start=1) if not trace.reports_output_tokens
-    ]
-    if silent:
-        listed = ", ".join(str(index) for index in silent)
+    if silent := _runs_where(traces, lambda trace: not trace.reports_output_tokens):
         raise BaselineError(
-            f"run {listed} reports no {GenAI.USAGE_OUTPUT_TOKENS}, so there is no token cost "
+            f"run {silent} reports no {GenAI.USAGE_OUTPUT_TOKENS}, so there is no token cost "
             "to record — instrument the agent's usage before recording a baseline"
         )
+    if empty := _runs_where(traces, lambda trace: trace.total_output_tokens == 0):
+        raise BaselineError(
+            f"run {empty} reports {GenAI.USAGE_OUTPUT_TOKENS} totalling 0, and a baseline of "
+            "0 bounds every later run at nothing — record from runs that cost something"
+        )
     return statistics.median_low(trace.total_output_tokens for trace in traces)
+
+
+def _runs_where(traces: list[Trace], predicate: Callable[[Trace], bool]) -> str:
+    """The 1-based run numbers matching, listed for a message, or "" when none do.
+
+    Numbered from 1 because that is how the report and the JUnit rows count runs, and a
+    refusal naming run 0 sends the reader to a run nothing else calls by that name.
+    """
+    return ", ".join(str(index) for index, trace in enumerate(traces, start=1) if predicate(trace))

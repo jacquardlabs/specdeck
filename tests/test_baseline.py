@@ -94,11 +94,35 @@ class TestLoad:
         with pytest.raises(BaselineError, match=str(path)):
             Baseline.load(path)
 
-    def test_an_entry_of_the_wrong_shape_is_a_baseline_error(self, tmp_path: Path) -> None:
+    #: Every one of these is syntactically valid TOML and structurally wrong, which is what
+    #: a hand-edit produces. Walking the tables by hand raised `TypeError` or
+    #: `AttributeError` on the last four — neither is a `ValueError`, so they escaped as
+    #: exit 3, "specdeck itself broke", for a file the user owns.
+    WRONG = (
+        '[cards."a.md"."default"]\noutput_tokens = "many"\n',
+        '[cards."a.md"]\noutput_tokens = 95\n',
+        "cards = 5\n",
+        '[cards]\n"a.md" = 5\n',
+        '[cards."a.md"]\ndefault = [1, 2]\n',
+        '[cards."a.md"."default"]\noutput_tokens = 0\n',
+    )
+
+    @pytest.mark.parametrize("text", WRONG)
+    def test_an_entry_of_the_wrong_shape_is_a_baseline_error(
+        self, tmp_path: Path, text: str
+    ) -> None:
         # Routed as a user error, not an internal one: a hand-edited file is the user's.
         path = tmp_path / BASELINE_NAME
-        path.write_text('[cards."a.md"."default"]\noutput_tokens = "many"\n')
-        with pytest.raises(BaselineError):
+        path.write_text(text)
+        with pytest.raises(BaselineError, match=str(path)):
+            Baseline.load(path)
+
+    def test_a_recorded_zero_is_refused_by_the_reader_too(self, tmp_path: Path) -> None:
+        # `BuiltinConfig` rejects a baseline of 0, so a file holding one would exit 3 on
+        # every later run of that card until a human deleted it. Refused at the boundary.
+        path = tmp_path / BASELINE_NAME
+        path.write_text('[cards."a.md"."default"]\noutput_tokens = 0\n')
+        with pytest.raises(BaselineError, match="greater than 0"):
             Baseline.load(path)
 
     def test_what_was_saved_is_what_loads(self, tmp_path: Path) -> None:
@@ -137,6 +161,23 @@ class TestWhatMayNotBeRecorded:
     def test_nothing_to_record_is_an_error_not_a_zero(self) -> None:
         with pytest.raises(BaselineError, match=r"no runs"):
             observed([])
+
+    def test_a_run_that_reported_zero_tokens_refuses_too(self) -> None:
+        # Reporting 0 and reporting nothing are different facts and get different
+        # messages, but neither may be recorded: `BuiltinConfig` refuses a baseline of 0,
+        # so writing one would exit 3 on every later run of the card.
+        with pytest.raises(BaselineError, match="totalling 0"):
+            observed([run(0), run(100), run(120)])
+
+    def test_the_zero_refusal_names_which_run_spent_nothing(self) -> None:
+        with pytest.raises(BaselineError, match=r"run 2"):
+            observed([run(100), run(0), run(120)])
+
+    def test_a_zero_run_cannot_be_outvoted_by_its_neighbours(self) -> None:
+        # The median over [0, 100, 100] is 100, so guarding only the recorded figure would
+        # record a cost off a set containing a run the instrumentation got wrong.
+        with pytest.raises(BaselineError):
+            observed([run(0), run(100), run(100)])
 
 
 class TestOneKeyDerivation:
