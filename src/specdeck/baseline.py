@@ -43,8 +43,11 @@ class BaselineError(Exception):
 
 
 class CellBaseline(BaseModel):
-    """What one cell of one card cost. A model rather than a bare int, so a second
-    recorded quantity is a new key here instead of a file migration."""
+    """What one cell of one card cost.
+
+    A model rather than a bare int, so a second recorded quantity is a new key here rather
+    than a migration of a file users have already committed.
+    """
 
     output_tokens: int
 

@@ -17,7 +17,7 @@ from specdeck.agent import AgentAdapter
 from specdeck.baseline import BASELINE_NAME, Baseline, BaselineError, observed
 from specdeck.builtin import DEFAULT_LATENCY_BUDGET_S, BuiltinConfig
 from specdeck.card import Card, CardError, parse
-from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, Cell, CellError, run_cell
+from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
@@ -38,10 +38,11 @@ app = typer.Typer(
     add_completion=False,
 )
 
-#: The exit-code registry. A caller that reads only the code routes on it, so a code means
-#: one thing forever and a genuinely new state takes a new number rather than sharing one.
-#: 4 is reserved, unissued: "the matrix did not complete: budget" (#15). A run that could
-#: not start and a run that answered are different facts, which is why 2 and 3 exist.
+#: The exit-code registry. Nothing here reads it — it is the written record the runner is
+#: held to, so a later command extends it instead of colliding with it. A caller routes on
+#: the code alone, so a code means one thing forever and a genuinely new state takes a new
+#: number: 4 is reserved and unissued for "the matrix did not complete: budget" (#15). A
+#: run that could not start and a run that answered are different facts, hence 2 and 3.
 EXIT_CODES = {
     0: "the cell passed",
     1: "the cell failed its gate",
@@ -208,6 +209,10 @@ def run(
             concurrency=concurrency,
             builtin=builtin,
         )
+        # Serialised inside the funnel though it is written outside it: a bug in the
+        # serializer is specdeck breaking, and escaping to typer's default handler would
+        # surface it as exit 1 — the same code as a card that honestly failed (#56).
+        report = to_xml(cell) if junit_xml else None
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
@@ -219,7 +224,19 @@ def run(
         raise typer.Exit(3) from None
 
     render(cell, console, rates=rates)
-    _write_junit(junit_xml, cell, console)
+    if update_baseline and not cell.passed:
+        # The baseline is written before the cell runs, so a failing run's token cost can
+        # become the recorded normal. Said out loud rather than refused: whether a failing
+        # run may set a baseline is a product question nobody has answered, and a silent
+        # bad baseline is the outcome neither answer wants.
+        console.print(
+            "[yellow]note[/yellow]",
+            Text(
+                "the baseline was recorded from a run whose gate failed — re-record it "
+                "once the card passes, or the cost of a broken run becomes the normal"
+            ),
+        )
+    _write_junit(junit_xml, report, console)
     raise typer.Exit(0 if cell.passed else 1)
 
 
@@ -257,7 +274,7 @@ def _builtin(
     return BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key))
 
 
-def _write_junit(path: Path | None, cell: Cell, console: Console) -> None:
+def _write_junit(path: Path | None, report: str | None, console: Console) -> None:
     """The CI report, when one was asked for.
 
     Written on pass and on fail alike — a cell that failed is exactly what CI needs to
@@ -267,10 +284,10 @@ def _write_junit(path: Path | None, cell: Cell, console: Console) -> None:
     on the invocation is part of it, and CI silently receiving no report is worse than a
     loud refusal.
     """
-    if path is None:
+    if path is None or report is None:
         return
     try:
-        path.write_text(to_xml(cell))
+        path.write_text(report)
     except OSError as error:
         console.print("[red]error[/red]", Text(f"cannot write the JUnit report to {path}: {error}"))
         raise typer.Exit(2) from None

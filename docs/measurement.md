@@ -120,6 +120,13 @@ what it just wrote. A run whose tokens exceed the fresh median by more than the 
 therefore fails immediately after recording — which is the k-of-N statistic doing its job,
 not a contradiction.
 
+The file is written before the cell is judged, so a run whose gate then fails still sets a
+baseline. That is not refused, because whether a failing run may record one is a product
+question nobody has answered, and refusing would answer it. It is never silent: the run
+prints a note saying the baseline came from a failing run and should be re-recorded once
+the card passes. Unlike a rubric hash, a cost baseline is a measurement of behaviour, and
+recording the cost of behaviour you do not want is the hazard the note exists to surface.
+
 ## The CI report
 
 `specdeck run --junit-xml PATH` writes a JUnit document, on pass and on fail alike. The

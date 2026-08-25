@@ -461,6 +461,27 @@ class TestTheBaseline:
         empty.write_text("")
         assert self._run(cards, cards / CARD.name, "--baseline", str(empty)).exit_code == 0
 
+    def test_a_baseline_set_by_a_failing_run_says_so(self, tmp_path: Path) -> None:
+        # The file is written before the cell runs, so a broken run's token cost can
+        # become the recorded normal. It is not refused — whether it should be is an open
+        # product question — but it is never silent.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("get_reservation_details", "update_reservation_flights")
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 1, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "recorded from a run whose gate failed" in text
+        assert (cards / "spec.baseline.toml").exists()
+
+    def test_a_baseline_set_by_a_passing_run_says_nothing(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 0
+        assert "whose gate failed" not in result.stdout
+
     def test_a_trace_with_no_usage_refuses_and_writes_nothing(self, tmp_path: Path) -> None:
         # A recorded baseline of 0 would make every later run pass forever.
         cards = _copy_cards(tmp_path)
@@ -545,7 +566,14 @@ class TestTheExitCodeRegistry:
         # it. 4 is reserved for the matrix budget abort (#15) and is not issued yet.
         assert sorted(EXIT_CODES) == [0, 1, 2, 3]
 
-    def test_the_registry_agrees_with_what_the_readme_documents(self) -> None:
+    def test_the_readme_paragraph_names_every_code_the_registry_holds(self) -> None:
+        # The paragraph, not the file: `0` appears in a README all over the place, so a
+        # bare containment check stays green through an edit that deletes the sentence.
         readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        paragraph = next(
+            block for block in readme.split("\n\n") if block.startswith("Exit codes are")
+        )
+        flat = " ".join(paragraph.split())
         for code in EXIT_CODES:
-            assert f"`{code}`" in readme
+            assert f"`{code}`" in flat, flat
+        assert "specdeck itself broke" in flat
