@@ -66,9 +66,11 @@ select = [
 quote-style = "double"
 
 [tool.semantic_release]
-# The PR title drives the bump, because squash-merge makes it the commit subject. A title
-# that is not a Conventional Commit produces no release rather than an error, which is why
-# CONTRIBUTING.md treats the title as part of the change rather than a label.
+# Every commit subject on the branch drives the bump. The repo merges with merge commits
+# (2026-08-24), and this tool defaults ignore_merge_commits = True — it skips the merge
+# commit whatever its title says and parses the commits behind it. A commit that is not a
+# Conventional Commit produces no release rather than an error, which is why CONTRIBUTING.md
+# treats the subject as part of the change rather than a label.
 version_toml = ["pyproject.toml:project.version"]
 tag_format = "v{version}"
 commit_message = "chore(release): {version} [skip ci]"
