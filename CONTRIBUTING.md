@@ -6,9 +6,9 @@ Matched to the sibling repos (cctx, gauntlet, talk-radio, serverless-rag).
 
 | Setting | Value | Why |
 |---|---|---|
-| Merge method | squash only | One commit per PR on `main`; merge commits and rebase-merge are off. |
+| Merge method | merge commit only | Squash and rebase-merge are off. Both rewrite the parent's commits, so every child of a stacked PR conflicts; a merge commit lands the parent's commits on `main` unchanged, and the child then carries only its own. |
 | Delete branch on merge | on | Branches are disposable; the PR is the record. |
-| Linear history on `main` | required | |
+| Linear history on `main` | not required | A merge-commit strategy and required-linear-history are mutually exclusive; the merge commits are the deliberate choice. |
 | Force push to `main` | blocked | |
 | Delete `main` | blocked | |
 | Pull request required | yes, 0 approvals | A solo repo still gets the PR surface — diff, discussion, CI — without a second person to wait for. |
@@ -47,10 +47,13 @@ artifact in the description.
 
 ## Conventions
 
-- **Conventional Commits** for commit subjects and PR titles. GitHub's squash-merge uses
-  the PR title as the commit subject, and semantic-release parses it — a non-conforming
-  title produces no release rather than an error, which is the quiet failure worth knowing
-  about.
+- **Conventional Commits** for commit subjects and PR titles. Under merge commits the
+  subject of every commit on the branch is load-bearing, not just the PR title:
+  python-semantic-release defaults `ignore_merge_commits = True`, so it skips the merge
+  commit itself and parses the individual commits behind it. A PR whose commits are all
+  non-conforming produces no release rather than an error, which is the quiet failure worth
+  knowing about. The PR title still matters for review and for the changelog a reader
+  scans, but it no longer drives the version bump.
 - **Small PRs, one per milestone.**
 - **`uv` for all Python tooling.** The floor is 3.11 and the CI matrix will test it;
   `.python-version` pins 3.12 as the local dev target, matching the sibling repos. The two
