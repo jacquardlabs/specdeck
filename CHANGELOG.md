@@ -2,6 +2,64 @@
 
 <!-- version list -->
 
+## v0.5.0 (2026-08-25)
+
+### Bug Fixes
+
+- A card the deck cannot start is selected, not dropped
+  ([`fefd2b5`](https://github.com/jacquardlabs/specdeck/commit/fefd2b562716043fce9fa161a59d82f68a14a77f))
+
+- A directory is not a recording, and the deck reads the root's baseline
+  ([`17a3319`](https://github.com/jacquardlabs/specdeck/commit/17a33198d05d358d78a8ac533c6d6b05c387eea1))
+
+- Read the diff's prefix off its header, and refuse a quoted rename
+  ([`9139e8b`](https://github.com/jacquardlabs/specdeck/commit/9139e8b4d7cd407d6362ec6102fe511ae927a5ba))
+
+- Refuse an empty diff rather than running no card and reporting green
+  ([`dd0e254`](https://github.com/jacquardlabs/specdeck/commit/dd0e25425d0476ef512afbf92f3ad7990ee43c03))
+
+- Soft-wrap user paths in errors, and pin the console width tests render at
+  ([`5633735`](https://github.com/jacquardlabs/specdeck/commit/5633735b427d0ce978738858e20d74f820fcefef))
+
+- The deck refuses a bad flag before it runs, and one bad glob is a finding
+  ([`df80b0a`](https://github.com/jacquardlabs/specdeck/commit/df80b0ab6a749034240cb6bf5945528aaaaf266a))
+
+### Continuous Integration
+
+- Pin semantic-release's dependencies, not just semantic-release
+  ([`81c9696`](https://github.com/jacquardlabs/specdeck/commit/81c9696d5a79aeafec173e10d25735541a56752c))
+
+### Documentation
+
+- --affected-by in the README and two DECISIONS rows
+  ([`689082e`](https://github.com/jacquardlabs/specdeck/commit/689082e544ca858fb9924d25e1d908031c7645df))
+
+- Merge-commit strategy, and what now drives the release
+  ([`3b098e1`](https://github.com/jacquardlabs/specdeck/commit/3b098e1fbde30f8a00e3c3e9aecc2c6bd9466a00))
+
+- The two verdict-deciding files the edge set leaves out, by issue number
+  ([`818a187`](https://github.com/jacquardlabs/specdeck/commit/818a1870ca75b1e548472ef62cd1d5d70746e7d9))
+
+### Features
+
+- --affected-by runs only the cards a diff touches
+  ([`1b903ac`](https://github.com/jacquardlabs/specdeck/commit/1b903ac62d2f6f6a674329056f6122f5bd7c87de))
+
+- A card declares its own traces, and `run` takes a deck
+  ([`4cbd114`](https://github.com/jacquardlabs/specdeck/commit/4cbd11494fb3d0207cd9ba5b394b8bde7014080b))
+
+- Requested and executed are separate wires, and a denial says so
+  ([`287cf43`](https://github.com/jacquardlabs/specdeck/commit/287cf438cda7d935778b0b81ddd91848880c0961))
+
+### Testing
+
+- Assert against plain text, whatever CI tells Typer about the terminal
+  ([`d15cc28`](https://github.com/jacquardlabs/specdeck/commit/d15cc282432d6e95f279f26cd34fab40747b8479))
+
+- Pin the vocabulary hop into the deck selector, record the empty-diff row
+  ([`7febcb3`](https://github.com/jacquardlabs/specdeck/commit/7febcb3542e92043aa13769dfac20bcf632637da))
+
+
 ## v0.4.0 (2026-08-25)
 
 ### Bug Fixes
