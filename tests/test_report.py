@@ -53,6 +53,11 @@ def rendered(cell, *, rates: Rates | None = None) -> str:
     return console.export_text()
 
 
+def flat(cell, **kwargs) -> str:
+    """Rendered with the whitespace normalised, for a line long enough to wrap at 100."""
+    return " ".join(rendered(cell, **kwargs).split())
+
+
 class TestPassingCell:
     def test_prints_both_numbers_unblended(self, tmp_path: Path, card) -> None:
         traces = [conversation()]
@@ -167,6 +172,20 @@ class TestVariance:
         )
         assert "credit 2-4, sd 1.00 over 2 passing runs" in text
 
+    def test_a_failing_runs_credit_is_not_in_the_spread(self) -> None:
+        # The spread is taken over exactly the runs `credit_mean` is taken over. A run
+        # that failed a gate was never scored, so folding its 0 in would print a range
+        # the cell never produced and contradict the mean it is there to qualify.
+        text = rendered(
+            cell_of(
+                run_stub(credit_earned=4),
+                run_stub(credit_earned=4),
+                run_stub(passed=False),
+                credit_mean=4.0,
+            )
+        )
+        assert "credit 4-4, sd 0.00 over 2 passing runs" in text
+
     def test_a_mixed_gate_says_so_beside_the_spread(self) -> None:
         text = rendered(
             cell_of(
@@ -231,9 +250,17 @@ class TestCost:
                 usage={"claude-sonnet-5": (10, 10), "claude-haiku-4-5": (10, None)},
             )
         )
-        text = rendered(cell_of(run), rates=RATES)
+        text = flat(cell_of(run), rates=RATES)
         assert "~$" in text
-        assert "no gen_ai.usage from claude-haiku-4-5" in text
+        assert "incomplete gen_ai.usage from claude-haiku-4-5" in text
+
+    def test_a_half_reported_model_does_not_read_as_no_usage_at_all(self) -> None:
+        # `unreported` flags a model when either half is missing. A million input tokens
+        # and no output count is unpriceable, but the trace did emit gen_ai.usage, and
+        # naming it sends the reader to instrument something they already emit.
+        text = rendered(cell_of(priced("claude-sonnet-5", (1_000_000, None))), rates=RATES)
+        assert "incomplete gen_ai.usage from claude-sonnet-5" in text
+        assert "no gen_ai.usage" not in text
 
     def test_a_model_id_carrying_markup_renders_literally(self) -> None:
         # The id came out of a user-supplied trace file. As markup it would raise

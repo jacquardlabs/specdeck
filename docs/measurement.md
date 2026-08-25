@@ -43,7 +43,9 @@ competing with them, which is why the report prints them beneath and dim, not be
   bare text and their cassettes record no usage, so pricing that spend would mean inventing
   it ([#80](https://github.com/jacquardlabs/specdeck/issues/80)). A model whose chat spans
   reported no usage is not charged zero for it — the line reads `n/a` naming `gen_ai.usage`,
-  the same way an unpriced model reads `n/a` naming the model.
+  the same way an unpriced model reads `n/a` naming the model. A model that reported one
+  half and not the other reads `incomplete gen_ai.usage`, not `no`: it cannot be priced,
+  and it did emit the attribute.
 
 Cost figures are labeled estimates, always, and no figure here moves the verdict.
 
@@ -67,6 +69,13 @@ from the directory it is run in. It takes no card. `specdeck run` does, and reso
 override against the card rather than the working directory — `--rates`, else a
 `rates.toml` beside the card — the same way it already finds the lockfile and the
 cassettes, so where you stand cannot change which table priced a run.
+
+The two paths fail differently, on purpose. A table named on `--rates` is part of the
+invocation, so a broken one stops the run with exit 2. One merely *found* beside the card
+is optional and prices a secondary figure: a broken one prints a note naming the file and
+the run continues on the built-in table, which carries its own `verified` date. Aborting
+an otherwise-clean eval over an unrequested file would report an infrastructure failure
+for a card that would have passed.
 
 Two limits belong to the table rather than to the runner. A model with no entry reports
 `n/a` naming the model — never $0.00, and never a substituted default rate, because an

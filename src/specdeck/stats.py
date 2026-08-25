@@ -127,6 +127,10 @@ def unreported(usage: Usage) -> tuple[str, ...]:
 
     Named separately from the estimate so the report can say a model went unpriced because
     the trace stayed silent, which is a different statement from having no rate for it.
+
+    Either half missing is enough, which is why the report calls these *incomplete* rather
+    than absent: a model reporting a million input tokens and no output count cannot be
+    priced, and it did emit `gen_ai.usage`.
     """
     return tuple(
         sorted(m for m, (used_in, used_out) in usage.items() if None in (used_in, used_out))

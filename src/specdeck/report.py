@@ -163,11 +163,19 @@ def _cost_line(cell: Cell, rates: Rates | None) -> Text:
     if rates is None:
         detail = "n/a — no rate table"
     elif (estimate := stats.cost_estimate(usage, rates)) is None:
-        detail = f"n/a — no gen_ai.usage from {', '.join(silent) or 'any model'}"
+        # "incomplete", not "no": `stats.unreported` flags a model when either half is
+        # missing, and a trace reporting a million input tokens and no output count did
+        # emit gen_ai.usage. Sending the reader to instrument what they already emit is
+        # the wrong instruction. Only an empty table means nothing was reported at all.
+        detail = (
+            f"n/a — incomplete gen_ai.usage from {', '.join(silent)}"
+            if silent
+            else "n/a — no gen_ai.usage from any model"
+        )
     else:
         detail = estimate.label
         if silent:
-            detail += f"; no gen_ai.usage from {', '.join(silent)}"
+            detail += f"; incomplete gen_ai.usage from {', '.join(silent)}"
     # Scope on the line, not in the docs: the figure covers what the agent's own trace
     # reported and nothing else, and it is a total over the cell rather than one run's.
     return _figure("cost", f"{detail}, agent tokens only, {_runs(cell.runs, 'run')}")

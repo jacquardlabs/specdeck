@@ -125,9 +125,7 @@ def run(
         if bool(trace) == bool(agent):
             raise CardError("pass exactly one of --trace and --agent")
         card = parse(card_path)
-        # Resolved against the card, like the lockfile and the cassettes: which table
-        # priced a run must not depend on where the runner was invoked from.
-        rates = load_rates(rates_path, beside=card_path.parent)
+        rates = _rates(rates_path, card_path, console)
         recordings = [load_trace(path) for path in trace or []]
         # A cell of five is the locked statistic, not a default that fits every invocation:
         # one recorded trace with --runs unset would fail on arithmetic before anything ran.
@@ -183,6 +181,29 @@ def run(
 
     render(cell, console, rates=rates)
     raise typer.Exit(0 if cell.passed else 1)
+
+
+def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:
+    """The table that prices this run, resolved against the card, not the shell.
+
+    Which table priced a run must not depend on where the runner was invoked from — the
+    same rule the lockfile and the cassettes follow.
+
+    A table named on --rates is part of the invocation, so a broken one stops the run. One
+    merely *found* beside the card is not: it prices a dim secondary figure, and letting it
+    abort turns a card that would have passed into exit 2, which README documents as "the
+    run could not start". Said out loud and priced from the built-in table instead — that
+    table carries its own `verified` date, so nothing here invents a rate.
+    """
+    try:
+        return load_rates(rates_path, beside=card_path.parent)
+    except RateError as error:
+        if rates_path is not None:
+            raise
+        console.print(
+            "[yellow]note[/yellow]", Text(f"{error} — pricing with the built-in table instead")
+        )
+        return Rates.builtin()
 
 
 def _drive(

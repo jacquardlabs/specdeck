@@ -126,10 +126,27 @@ class TestTheRateTableIsFoundBesideTheCard:
         assert result.exit_code == 2, result.stdout
         assert "absent.toml" in result.stdout
 
+    #: The likely typo: measurement.md tells users to drop a table beside the card, and
+    #: `verified` is the one key nothing about a rate row reminds them to write.
+    BROKEN = '[rates.anthropic]\n"claude-sonnet-5" = { input = 1.0, output = 1.0 }\n'
+
     def test_a_broken_table_exits_two_not_three(self, tmp_path: Path) -> None:
         broken = tmp_path / "rates.toml"
-        broken.write_text('[rates.anthropic]\n"claude-sonnet-5" = { input = 1.0, output = 1.0 }\n')
+        broken.write_text(self.BROKEN)
         assert demo("--rates", str(broken)).exit_code == 2
+
+    def test_a_broken_table_beside_the_card_does_not_abort_the_eval(self, tmp_path: Path) -> None:
+        # An unrequested optional file must not stop a card that has nothing wrong with
+        # it. Exit 2 is documented as "the run could not start"; the run started fine.
+        cards = _copy_cards(tmp_path)
+        (cards / "rates.toml").write_text(self.BROKEN)
+        result = _run_copy(cards, cards / CARD.name)
+        assert result.exit_code == 0, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "no `verified` date" in text
+        assert "rates.toml" in text
+        # Priced from the built-in table, which carries its own date. Never silently.
+        assert "~$0.0014 estimate" in text
 
 
 class TestTheTraceIsOtlp:
