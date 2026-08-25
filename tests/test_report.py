@@ -5,7 +5,7 @@ import pytest
 from rich.console import Console
 
 from specdeck.card import parse_text
-from specdeck.cell import Cell, run_cell
+from specdeck.cell import Cell, Suite, SuiteError, run_cell
 from specdeck.coverage import (
     Clause,
     Coverage,
@@ -18,7 +18,7 @@ from specdeck.coverage import (
 from specdeck.introspect import Depth
 from specdeck.ir import Verdict
 from specdeck.rates import ModelRate, Rates
-from specdeck.report import render, render_coverage
+from specdeck.report import render, render_coverage, render_suite
 from specdeck.stats import RunMeasures
 from specdeck.tier import Tier
 from specdeck.waste import Finding, Kind, Level
@@ -489,3 +489,92 @@ class TestThePathCoverageBlock:
         text = coverage_text(Coverage(path=self._path()))
         assert "understates what ran" in text
         assert "a suite-wide 'no run ever' needs #70" in text
+
+
+class TestTheSuiteReport:
+    """A green deck is a table you skim; a red one carries the detail that makes it
+    actionable."""
+
+    def _suite(self, *cells, errors=()) -> Suite:
+        return Suite(cells=list(cells), errors=list(errors))
+
+    def _rendered(self, suite: Suite) -> str:
+        console = Console(record=True, width=100, force_terminal=False)
+        render_suite(suite, console)
+        return " ".join(console.export_text().split())
+
+    def test_an_all_passing_deck_is_one_line_per_card_and_no_run_detail(self) -> None:
+        text = self._rendered(
+            self._suite(
+                cell_of(run_stub(passed=True), card_path="cards/a.md"),
+                cell_of(run_stub(passed=True), card_path="cards/b.md"),
+            )
+        )
+        assert "PASS cards/a.md gate 1/1" in text
+        assert "PASS cards/b.md gate 1/1" in text
+        assert "2 cards, 2 passed" in text
+        # The per-run block a failing card gets. A green deck must not carry it.
+        assert "wires, run 1 of" not in text
+
+    def test_a_failing_card_brings_its_whole_report_and_the_others_stay_one_line(self) -> None:
+        failing = cell_of(
+            run_stub(
+                passed=False,
+                wires=[
+                    Verdict(
+                        id="never:x", tier=Tier.GATE, weight=0, passed=False, detail="1 occurrence"
+                    )
+                ],
+            ),
+            card_path="cards/bad.md",
+            threshold=1,
+        )
+        text = self._rendered(
+            self._suite(cell_of(run_stub(passed=True), card_path="cards/good.md"), failing)
+        )
+        assert "FAIL cards/bad.md" in text
+        assert "never:x 1 occurrence" in text
+        assert "2 cards, 1 passed" in text
+
+    def test_a_card_that_could_not_run_prints_above_the_table_and_is_counted_apart(self) -> None:
+        text = self._rendered(
+            self._suite(
+                cell_of(run_stub(passed=True), card_path="cards/a.md"),
+                errors=[SuiteError(card_path="cards/b.md", message="the lock is stale")],
+            )
+        )
+        assert text.index("cards/b.md the lock is stale") < text.index("PASS cards/a.md")
+        assert "1 card, 1 passed, 1 could not run" in text
+
+    def test_a_message_carrying_markup_renders_literally(self) -> None:
+        # A path and a parser message both come out of the user's own files, and a bracket
+        # read as a style tag would discard the whole report.
+        text = self._rendered(
+            self._suite(errors=[SuiteError(card_path="/tmp/x.md", message="[rates.openai] broke")])
+        )
+        assert "[rates.openai] broke" in text
+
+    def test_an_error_is_never_a_green_deck(self) -> None:
+        suite = self._suite(
+            cell_of(run_stub(passed=True), card_path="cards/a.md"),
+            errors=[SuiteError(card_path="cards/b.md", message="nope")],
+        )
+        assert suite.passed is False
+
+    def test_a_deck_of_passing_cells_and_no_errors_passes(self) -> None:
+        assert self._suite(cell_of(run_stub(passed=True))).passed is True
+
+    def test_the_card_path_wraps_rather_than_being_ellipsised(self) -> None:
+        # The path identifies the row. A narrow terminal that truncates it leaves a
+        # verdict attached to no card the reader can name, which is worse than a wrap.
+        long = "cards/a-very-long-directory-name/and-another-one/escalation-after-refusal.md"
+        suite = self._suite(cell_of(run_stub(passed=True), card_path=long))
+        for width in (60, 140):
+            console = Console(record=True, width=width, force_terminal=False)
+            render_suite(suite, console)
+            # Rich's own truncation marker. Its absence is the whole claim: every
+            # character of the path is on the page, wrapped if it has to be.
+            assert "\u2026" not in console.export_text(), width
+        console = Console(record=True, width=140, force_terminal=False)
+        render_suite(suite, console)
+        assert long in console.export_text()

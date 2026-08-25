@@ -11,9 +11,10 @@ lets one property compile to three deployment modes: an eval assertion, a CI gat
 later an AgentSpec-style runtime monitor. It serialises to plain JSON, discriminated on
 `pattern`, so the monitor needs no format change.
 
-**Tracer scope** (#48): `never`, `at_most`, and `bound`, scoped `globally`. The rest of the
-Dwyer set — `eventually`, after-K-then-Y, precedence — and the `between` / `after K` scopes
-are deferred; after-K-then-Y additionally waits on #47, since its trigger is a domain event
+**Tracer scope** (#48): `never` (which the card format also spells `never_executed`),
+`never_requested`, `at_most`, and `bound`, scoped `globally`. The rest of the Dwyer set —
+`eventually`, after-K-then-Y, precedence — and the `between` / `after K` scopes are
+deferred; after-K-then-Y additionally waits on #47, since its trigger is a domain event
 the semconv does not define.
 
 `bound` is not in the Dwyer set. The card format's own example card carries two wires —
@@ -55,9 +56,27 @@ class Selector(BaseModel):
     marker: str | None = None
 
     def matches(self, span: Span) -> bool:
-        if self.operation is not None and span.operation is not self.operation:
+        """Whether the span is the event this selector is about, as it happened.
+
+        `span.executed_tool` rather than the raw `gen_ai.tool.name`, so a denial — a call
+        the runtime refused before it ran — is not counted as an execution.
+        """
+        if self.tool is not None and span.executed_tool != self.tool:
             return False
-        if self.tool is not None and span.attributes.get(GenAI.TOOL_NAME) != self.tool:
+        return self._conjuncts(span)
+
+    def requests(self, span: Span) -> bool:
+        """Whether the span shows the tool being *asked for*, executed or not.
+
+        The same selector read one moment earlier. `tool` is the only field that moves:
+        every other conjunct describes the span, not the call inside it.
+        """
+        if self.tool is not None and self.tool not in span.requested_tools:
+            return False
+        return self._conjuncts(span)
+
+    def _conjuncts(self, span: Span) -> bool:
+        if self.operation is not None and span.operation is not self.operation:
             return False
         if self.finish_reason is not None:
             reasons = span.attributes.get(GenAI.RESPONSE_FINISH_REASONS) or []
@@ -88,6 +107,25 @@ class Never(BaseModel):
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         hits = [s for s in spans if self.selector.matches(s)]
         return not hits, f"{len(hits)} occurrence{'' if len(hits) == 1 else 's'}"
+
+
+class NeverRequested(BaseModel):
+    """The selected tool is never asked for — not executed, not called for, not refused.
+
+    The strictly stronger claim `Never` cannot make. `Never` reads what ran, so a run
+    saved by its runtime's policy layer satisfies it; a prompt-injection card asserts that
+    the injected instruction never got the model to ask in the first place.
+    """
+
+    pattern: Literal["never_requested"] = "never_requested"
+    selector: Selector
+
+    def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
+        # Spans, not logical calls: a tool requested in a `chat` span and then executed
+        # shows on two, and deduplicating them would need a call id the semconv makes
+        # Recommended rather than Required.
+        hits = [s for s in spans if self.selector.requests(s)]
+        return not hits, f"{len(hits)} requesting span{'' if len(hits) == 1 else 's'}"
 
 
 class AtMost(BaseModel):
@@ -163,7 +201,9 @@ class AfterKThen(BaseModel):
         return bool(after), detail
 
 
-Rule = Annotated[Never | AtMost | Bound | AfterKThen, Field(discriminator="pattern")]
+Rule = Annotated[
+    Never | NeverRequested | AtMost | Bound | AfterKThen, Field(discriminator="pattern")
+]
 
 
 class Property(BaseModel):

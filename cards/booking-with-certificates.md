@@ -2,6 +2,7 @@
 context:
   fixture: fixtures/booking-with-certificates.json
   policy: policy/airline.md
+  traces: traces/booking-with-certificates.otlp.json
   simulator: "traveller wants a one-way JFK to Seattle on May 20, economy, departing no earlier than 11am, three checked bags, no insurance, paying with the larger certificate first and the remainder on the card ending 7447"
 
 The agent checks the traveller's account, finds a flight meeting every stated constraint,

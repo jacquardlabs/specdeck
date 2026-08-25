@@ -27,7 +27,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import stats
-from .cell import Cell, Run
+from .cell import Cell, Run, Suite
 from .coverage import UNDERSTATED, Coverage, PathCoverage, PolicyDocument, VocabularyTable
 from .introspect import Introspection
 from .judge import JudgeResult
@@ -42,7 +42,8 @@ FAIL = "[red]FAIL[/red]"
 
 def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
     console.print()
-    console.print(Text(cell.title, style="bold"), Text(cell.card_path, style="dim"))
+    # soft_wrap: this line carries a card path, and a hard break mid-path is not copyable.
+    console.print(Text(cell.title, style="bold"), Text(cell.card_path, style="dim"), soft_wrap=True)
     console.print()
 
     verdict = PASS if cell.passed else FAIL
@@ -449,6 +450,63 @@ _STATUS = {
     Status.STOPPED_BUDGET: ("stopped", "yellow"),
     Status.ERRORED: ("error", "red"),
 }
+
+
+def render_suite(suite: Suite, console: Console, *, rates: Rates | None = None) -> None:
+    """A deck, one line per card, with the full report only under the cards that failed.
+
+    `render_matrix`'s layout rule, one axis over: a green deck is a table you skim, and a
+    red one carries the detail that makes it actionable. A second, thinner failure layout
+    would be a second thing to keep in step with the first, so failing cards get `render`
+    itself.
+
+    A card that could not start prints above the table rather than inside it. It has no
+    gate rate to sit in a column, and printing a dash where a verdict goes reads as a
+    result.
+    """
+    console.print()
+    for error in suite.errors:
+        # A path and an error message both come out of the user's own files, so they are
+        # Text: a bracket in either would be read as a style tag and eat the line.
+        console.print(
+            "[red]error[/red]", Text(f"{error.card_path}  {error.message}"), soft_wrap=True
+        )
+    if suite.errors:
+        console.print()
+    console.print(_deck(suite))
+    for cell in suite.cells:
+        if not cell.passed:
+            console.print()
+            console.print(Text(cell.card_path, style="bold"), soft_wrap=True)
+            render(cell, console, rates=rates)
+    console.print()
+    passes = sum(1 for cell in suite.cells if cell.passed)
+    tally = f"{len(suite.cells)} card{'' if len(suite.cells) == 1 else 's'}, {passes} passed"
+    if suite.errors:
+        tally += f", {len(suite.errors)} could not run"
+    console.print(f"  [dim]{tally}[/dim]")
+    console.print()
+
+
+def _deck(suite: Suite) -> Table:
+    table = Table(show_edge=False, pad_edge=False, box=None, padding=(0, 2))
+    table.add_column("")
+    # Folded rather than ellipsised: the path is what identifies the row, and a narrow
+    # terminal truncating it leaves a verdict attached to no card the reader can name.
+    table.add_column("", style="dim", overflow="fold")
+    table.add_column("", style="dim")
+    for cell in suite.cells:
+        credit = (
+            f"credit {cell.credit_mean:g}/{cell.credit_total}"
+            if cell.credit_mean is not None
+            else "credit n/a"
+        )
+        table.add_row(
+            Text("PASS" if cell.passed else "FAIL", style="green" if cell.passed else "red"),
+            Text(cell.card_path),
+            f"gate {cell.passes}/{cell.runs}  {credit}",
+        )
+    return table
 
 
 def render_matrix(result: MatrixResult, console: Console, *, rates: Rates | None = None) -> None:

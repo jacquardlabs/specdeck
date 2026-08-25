@@ -1,6 +1,7 @@
 import inspect
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from specdeck import __version__, cli
@@ -101,7 +102,9 @@ class TestTheCoverageCommand:
         text = " ".join(result.stdout.split())
         assert "refunds.md" in text and "named by no card" in text
 
-    def test_a_reported_path_is_never_broken_across_lines(self, tmp_path: Path) -> None:
+    def test_a_reported_path_is_never_broken_across_lines(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         """Rich word-wraps, and a hard break inside a filename is not a cosmetic bug.
 
         The two tests around this one passed on macOS and failed in CI purely because the
@@ -109,6 +112,7 @@ class TestTheCoverageCommand:
         beside it — `refund s.md`, which no reader can copy and no assertion can find. The
         deck name here is long enough to push the path past 80 columns on any platform.
         """
+        monkeypatch.setenv("COLUMNS", "80")
         deck = tmp_path / ("a-deck-with-a-deliberately-long-name-" * 3).rstrip("-")
         deck.mkdir()
         self._policy_deck(deck, "# Refund Policy\n\n- refunds go to the card\n")

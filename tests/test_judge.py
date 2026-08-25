@@ -20,7 +20,8 @@ from specdeck.judge import (
 )
 from specdeck.rates import ModelRate, Rates
 from specdeck.tier import Tier
-from specdeck.trace import GenAI, Operation, SpanEvent
+from specdeck.trace import GenAI, Operation, SpanEvent, Specdeck
+from specdeck.traceio import load_trace
 
 from .test_trace import span, trace
 
@@ -128,6 +129,62 @@ class TestTranscript:
     def test_spans_appear_in_time_order(self, conversation) -> None:
         rendered = render_transcript(conversation)
         assert rendered.index("I cannot refund") < rendered.index("get_reservation_details")
+
+
+class TestDeniedCallsInTheTranscript:
+    """Without a line of its own a denial reads as a request with no result — which is a
+    hang. A card whose whole assertion is "the runtime refused this" needs the judge to
+    be able to tell the two apart."""
+
+    def _denial_trace(self):
+        return trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=5.0),
+            span(
+                "tool-0",
+                Operation.EXECUTE_TOOL,
+                offset=1.0,
+                **{
+                    Specdeck.DENIED_TOOL: "cancel_reservation",
+                    GenAI.TOOL_NAME: "runtime_policy",
+                    GenAI.TOOL_CALL_ARGUMENTS: '{"id": "SI5UKW"}',
+                    GenAI.TOOL_CALL_RESULT: "refused: basic economy is non-refundable",
+                },
+            ),
+        )
+
+    def test_it_renders_as_a_denial_naming_the_tool_that_was_refused(self) -> None:
+        rendered = render_transcript(self._denial_trace())
+        assert rendered.startswith("[denied] cancel_reservation(")
+        assert "refused: basic economy is non-refundable" in rendered
+
+    def test_the_policy_component_is_never_rendered_as_a_tool_that_ran(self) -> None:
+        assert "[tool] runtime_policy" not in render_transcript(self._denial_trace())
+
+    def test_an_ordinary_tool_span_renders_exactly_as_it_did(self, conversation) -> None:
+        # The change is inert for undenied spans, which is what keeps every committed
+        # cassette keyed on the prompt it was recorded against.
+        assert (
+            '[tool] get_reservation_details() -> {"cabin": "basic_economy"}'
+            in render_transcript(conversation)
+        )
+
+    def test_the_committed_traces_still_render_the_transcripts_their_cassettes_were_keyed_on(
+        self,
+    ) -> None:
+        """No cassette re-keys. The claim, asserted rather than argued.
+
+        A cassette is keyed on the judge prompt, and the transcript is most of that
+        prompt. Every committed recording carries the prompt it was recorded against, so
+        rendering the card's trace today and finding it inside that prompt is the whole
+        proof that the transcript change touched nothing already on disk.
+        """
+        cards = Path(__file__).resolve().parent.parent / "cards"
+        recordings = sorted((cards / "cassettes").glob("*.judge-*.json"))
+        assert recordings, "the committed cassettes are the fixture this asserts against"
+        for recording in recordings:
+            slug = recording.name.partition(".")[0]
+            rendered = render_transcript(load_trace(cards / "traces" / f"{slug}.otlp.json"))
+            assert rendered in json.loads(recording.read_text())["prompt"], slug
 
 
 class TestParseResponse:

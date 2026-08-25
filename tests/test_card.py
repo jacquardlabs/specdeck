@@ -164,3 +164,105 @@ class TestPathContainment:
         card = tmp_path / "ok.md"
         card.write_text("# Scenario: x\ncontext:\n  policy: policy/airline.md\n\nprose\n")
         assert parse(card).policy_path == tmp_path / "policy" / "airline.md"
+
+
+class TestDeclaredTraces:
+    """`traces:` is one glob, resolved against the card's own directory."""
+
+    def _card(self, tmp_path: Path, pattern: str, *names: str) -> Path:
+        # An `archive/` beside the recordings, because a subdirectory there is ordinary
+        # and a fixture holding only regular files is why a directory match went unseen.
+        (tmp_path / "traces" / "archive").mkdir(parents=True, exist_ok=True)
+        for name in names:
+            (tmp_path / "traces" / name).write_text("{}")
+        card = tmp_path / "refund.md"
+        card.write_text(f"# Scenario: x\ncontext:\n  traces: {pattern}\n\nThe agent answers.\n")
+        return card
+
+    def test_the_pattern_is_kept_verbatim(self, tmp_path: Path) -> None:
+        card = parse(self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json"))
+        assert card.context.traces == "traces/*.otlp.json"
+
+    def test_every_match_resolves_sorted(self, tmp_path: Path) -> None:
+        path = self._card(tmp_path, "traces/*.otlp.json", "b.otlp.json", "a.otlp.json")
+        assert [p.name for p in parse(path).trace_paths] == ["a.otlp.json", "b.otlp.json"]
+
+    def test_it_resolves_against_the_card_and_never_the_cwd(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Where you stand must not change which recordings a card is evaluated against —
+        # the rule `policy:` and `fixture:` already follow.
+        path = self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
+        elsewhere = tmp_path / "elsewhere"
+        elsewhere.mkdir()
+        monkeypatch.chdir(elsewhere)
+        assert parse(path).trace_paths == [tmp_path / "traces" / "a.otlp.json"]
+
+    def test_a_pattern_with_no_magic_resolves_to_that_one_file(self, tmp_path: Path) -> None:
+        path = self._card(tmp_path, "traces/a.otlp.json", "a.otlp.json", "b.otlp.json")
+        assert [p.name for p in parse(path).trace_paths] == ["a.otlp.json"]
+
+    def test_a_glob_matching_nothing_returns_nothing_rather_than_raising(
+        self, tmp_path: Path
+    ) -> None:
+        # The emptiness decision belongs to the caller: lint reports a finding and the
+        # runner refuses to start, and those are different answers to one fact.
+        assert parse(self._card(tmp_path, "traces/*.otlp.json")).trace_paths == []
+
+    def test_a_directory_the_glob_matches_is_not_a_recording(self, tmp_path: Path) -> None:
+        # `load_trace` raises `IsADirectoryError` on one, which is not a `USER_ERROR`, so
+        # a directory reaching it exits 3 — "specdeck itself broke" — for a glob the user
+        # typed, and over a deck it takes the other cards' results with it.
+        path = self._card(tmp_path, "traces/*", "a.otlp.json")
+        assert [p.name for p in parse(path).trace_paths] == ["a.otlp.json"]
+
+    def test_a_glob_matching_only_a_directory_matches_nothing(self, tmp_path: Path) -> None:
+        # Which is the answer the two callers already handle: lint reports `dead-path`
+        # and the runner refuses to start.
+        assert parse(self._card(tmp_path, "traces/arch*")).trace_paths == []
+
+    def test_an_escaping_directory_match_is_still_refused_by_name(self, tmp_path: Path) -> None:
+        # Containment runs before the file filter, so a match outside the card's directory
+        # is refused as an escape rather than degrading to "matches no file".
+        (tmp_path / "archive").mkdir()
+        inner = tmp_path / "deck"
+        inner.mkdir()
+        card = inner / "refund.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: ../arch*\n\nThe agent answers.\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).trace_paths
+
+    def test_a_glob_escaping_the_card_directory_is_rejected(self, tmp_path: Path) -> None:
+        # `Path('cards').glob('../*.md')` really does escape, so containment has to run
+        # per match rather than on the pattern.
+        (tmp_path / "outside.json").write_text("{}")
+        inner = tmp_path / "deck"
+        inner.mkdir()
+        card = inner / "refund.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: ../*.json\n\nThe agent answers.\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).trace_paths
+
+    def test_an_absolute_glob_is_a_card_error_not_a_bare_not_implemented(
+        self, tmp_path: Path
+    ) -> None:
+        # `Path.glob` raises NotImplementedError for an absolute pattern, which is not a
+        # USER_ERROR — uncaught, a pattern the user typed would exit 3, "specdeck broke".
+        card = tmp_path / "evil.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: /etc/*\n\nThe agent answers.\n")
+        with pytest.raises(CardError, match=r"traces"):
+            _ = parse(card).trace_paths
+
+    def test_a_declared_but_blank_glob_is_read_as_declaring_none(self, tmp_path: Path) -> None:
+        # It never reaches `Path.glob`, which rejects an empty pattern with a ValueError
+        # the boundary would otherwise have to turn into a user error.
+        card = tmp_path / "blank.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces:\n\nThe agent answers.\n")
+        assert parse(card).trace_paths == []
+
+    def test_a_card_declaring_none_still_parses_and_reads_none(self) -> None:
+        assert parse_text(FULL).trace_paths == []
+
+    def test_an_unknown_context_key_now_names_four_legal_ones(self) -> None:
+        with pytest.raises(CardError, match=r"traces"):
+            parse_text("# Scenario: x\ncontext:\n  dataset: d.json\n\nprose\n")

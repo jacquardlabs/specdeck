@@ -5,7 +5,14 @@ import pytest
 
 from specdeck.agent import AgentDescription
 from specdeck.introspect import Depth, Introspection, introspect
-from specdeck.lint import AGENT_DEF, Severity, Vocabulary, lint_card, lint_paths
+from specdeck.lint import (
+    AGENT_DEF,
+    Severity,
+    Vocabulary,
+    cards_under,
+    lint_card,
+    lint_paths,
+)
 from specdeck.lockfile import Lockfile
 
 from .fake_agent import BareAgent, FakeAgent
@@ -87,6 +94,73 @@ class TestDeadPaths:
         assert "absent.md" in message
 
 
+class TestDeclaredTraces:
+    def _card(self, tmp_path: Path, pattern: str, *names: str) -> Path:
+        (tmp_path / "traces").mkdir(exist_ok=True)
+        for name in names:
+            (tmp_path / "traces" / name).write_text("{}")
+        card = tmp_path / "x.md"
+        card.write_text(f"# Scenario: x\ncontext:\n  traces: {pattern}\n\nThe agent answers.\n")
+        return card
+
+    def test_a_glob_matching_nothing_is_a_dead_path_error(self, tmp_path: Path) -> None:
+        # ERROR, not a warning: a card evaluating zero traces passes every wire it has,
+        # so a deck of them reports green — the drift a deck exists to catch.
+        card = self._card(tmp_path, "traces/*.otlp.json")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
+    def test_the_message_names_the_pattern_and_where_it_looked(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "traces/*.otlp.json")
+        message = next(f.message for f in lint_card(card) if f.rule == "dead-path")
+        assert "traces/*.otlp.json" in message and str(tmp_path) in message
+
+    def test_a_glob_that_matches_reports_nothing(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
+        assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
+
+    def test_a_glob_matching_only_a_directory_is_a_dead_path_error(self, tmp_path: Path) -> None:
+        # Lint is the pre-flight for a bad `traces:` value. A directory is not a
+        # recording, so this card evaluates zero traces and must not lint clean.
+        (tmp_path / "traces" / "archive").mkdir(parents=True)
+        card = self._card(tmp_path, "traces/arch*")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
+    def test_a_card_declaring_no_traces_reports_nothing(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text("# Scenario: x\n\nThe agent answers.\n")
+        assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
+
+    def test_a_glob_that_escapes_is_a_finding_not_the_end_of_the_lint_run(
+        self, tmp_path: Path
+    ) -> None:
+        # `trace_paths` raises for a glob outside the card's directory. Propagated, one
+        # such card aborts the whole deck's lint with zero findings for its neighbours.
+        (tmp_path / "outside.json").write_text("{}")
+        deck = tmp_path / "deck"
+        deck.mkdir()
+        (deck / "a.md").write_text(
+            "# Scenario: a\ncontext:\n  traces: ../*.json\n\nThe agent answers.\n"
+        )
+        (deck / "b.md").write_text("# Scenario: b\n\nThe agent answers.\n")
+        findings = lint_paths([deck]).findings
+        escaping = [f for f in findings if f.rule == "dead-path"]
+        assert [f.severity for f in escaping] == [Severity.ERROR]
+        assert "outside the card's directory" in escaping[0].message
+        # The neighbour was still linted, which is the whole point.
+        assert any(f.card.endswith("b.md") for f in findings)
+
+    def test_an_absolute_glob_is_a_finding_too(self, tmp_path: Path) -> None:
+        card = tmp_path / "x.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: /etc/*\n\nThe agent answers.\n")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
+    def test_a_trace_is_never_mistaken_for_a_card(self, tmp_path: Path) -> None:
+        # `cards_under` walks `*.md` and traces are `.json`, so they were never
+        # candidates — the reason `_referenced` needed no change for `traces:`.
+        self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
+        assert [p.name for p in cards_under([tmp_path])] == ["x.md"]
+
+
 class TestWires:
     def test_a_wire_that_does_not_compile_is_an_error(self, tmp_path: Path) -> None:
         card = tmp_path / "x.md"
@@ -132,6 +206,47 @@ class TestWires:
             "wire:\n  - search: at_most 2\n  - search: at_most 2\n"
         )
         assert "redundant-wires" in rules(lint_card(card), Severity.WARNING)
+
+
+class TestRequestedVersusExecuted:
+    def _card(self, tmp_path: Path, *wires: str) -> Path:
+        card = tmp_path / "x.md"
+        lines = "".join(f"  - {wire}\n" for wire in wires)
+        card.write_text(f"# Scenario: x\nThe agent answers.\nwire:\n{lines}")
+        return card
+
+    def test_never_requested_with_a_budget_above_zero_contradicts(self, tmp_path: Path) -> None:
+        card = self._card(tmp_path, "search: never_requested", "search: at_most 1")
+        findings = lint_card(card)
+        assert "contradictory-wires" in rules(findings, Severity.ERROR)
+        assert any("never_requested" in f.message for f in findings)
+
+    def test_never_requested_beside_never_is_redundant_not_contradictory(
+        self, tmp_path: Path
+    ) -> None:
+        card = self._card(tmp_path, "search: never_requested", "search: never")
+        findings = lint_card(card)
+        assert rules(findings, Severity.ERROR) == []
+        assert "redundant-wires" in rules(findings, Severity.WARNING)
+
+    def test_never_requested_alone_reports_nothing(self, tmp_path: Path) -> None:
+        findings = lint_card(self._card(tmp_path, "search: never_requested"))
+        assert rules(findings, Severity.ERROR) == []
+        assert rules(findings, Severity.WARNING) == []
+
+    def test_both_spellings_of_never_on_one_tool_is_redundant(self, tmp_path: Path) -> None:
+        # They compile to one id, so nothing downstream would ever say it twice.
+        card = self._card(tmp_path, "search: never", "search: never_executed")
+        assert "redundant-wires" in rules(lint_card(card), Severity.WARNING)
+
+    def test_a_misspelled_tool_on_a_never_requested_wire_is_still_unknown(
+        self, tmp_path: Path
+    ) -> None:
+        # Without this the typo compiles to a wire that can never fire and lint says
+        # nothing — the exact failure `unknown-tool` exists to catch.
+        card = self._card(tmp_path, "cancel_reservtion: never_requested")
+        findings = lint_card(card, vocabulary=Vocabulary(tools={"cancel_reservation"}))
+        assert "unknown-tool" in rules(findings, Severity.ERROR)
 
 
 class TestVocabulary:
@@ -432,6 +547,11 @@ class TestTheRunnerAndLintAgreeOnTheKey:
         copy(source / "fixtures" / "airline_seed.json", nested / "fixtures")
         (nested / "policy").mkdir()
         copy(source / "policy" / "airline.md", nested / "policy")
+        # The card declares its own `traces:`, so a workspace without them is a card whose
+        # glob matches nothing — a `dead-path` error about the fixture, not about the key
+        # this class is here to check.
+        (nested / "traces").mkdir()
+        copy(source / "traces" / "basic-economy-return-change.otlp.json", nested / "traces")
         return tmp_path
 
     def _relock(self, tmp_path: Path) -> Path:

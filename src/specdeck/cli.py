@@ -8,6 +8,7 @@ import inspect
 from datetime import date
 from itertools import groupby
 from pathlib import Path
+from typing import NoReturn
 
 import typer
 from pydantic import BaseModel, ConfigDict
@@ -26,6 +27,8 @@ from specdeck.cell import (
     DEFAULT_N,
     Cell,
     CellError,
+    Suite,
+    SuiteError,
     run_cell,
     run_cell_async,
 )
@@ -40,7 +43,13 @@ from specdeck.matrix import Column, MatrixError, cell_key, columns, load_matrix
 from specdeck.matrix_run import DEFAULT_MATRIX_CONCURRENCY, MatrixResult, Status, run_matrix
 from specdeck.provider import ProviderError
 from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
-from specdeck.report import depth_line, render, render_coverage, render_matrix
+from specdeck.report import (
+    depth_line,
+    render,
+    render_coverage,
+    render_matrix,
+    render_suite,
+)
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
@@ -107,9 +116,12 @@ def main(
 
 @app.command()
 def run(
-    card_path: Path = typer.Argument(..., help="The card to run."),  # noqa: B008
+    card_path: Path = typer.Argument(..., help="The card to run, or a directory of cards."),  # noqa: B008
     trace: list[Path] = typer.Option(  # noqa: B008
-        None, "--trace", help="A recorded event log. Repeat once per run of the cell."
+        None,
+        "--trace",
+        help="A recorded event log. Repeat once per run of the cell. Overrides the card's "
+        "own `traces:`.",
     ),
     agent: str | None = typer.Option(
         None,
@@ -187,8 +199,37 @@ def run(
         help="Matrix columns in flight at once. Forced to 1 under --live.",
     ),
 ) -> None:
-    """Evaluate one card — against recorded traces, or by running the agent."""
+    """Evaluate a card, or a directory of them — from recorded traces, or by running the
+    agent."""
     console = Console()
+    if card_path.is_dir():
+        # A deck takes its own path from here rather than a per-card case inside the one
+        # below. Every flag that writes a file or varies what a cell runs against is
+        # refused with a directory, so nothing downstream has to decide which card wins.
+        _run_deck(
+            card_path,
+            console,
+            forbidden=(
+                ("--relock", relock),
+                ("--trace", bool(trace)),
+                ("--agent", agent is not None),
+                ("--matrix", matrix_path is not None),
+                ("--junit-xml", junit_xml is not None),
+                ("--update-baseline", update_baseline),
+            ),
+            lock_path=lock_path,
+            cassettes=cassettes,
+            baseline_path=baseline_path,
+            rates_path=rates_path,
+            runs=runs,
+            threshold=threshold,
+            latency_budget=latency_budget,
+            live=live,
+            concurrency=concurrency,
+            judge_model=judge_model,
+            simulator_model=simulator_model,
+            budget_usd=budget_usd,
+        )
     try:
         if matrix_path and trace:
             # A recorded trace was produced by one provider running one prompt. A column
@@ -199,7 +240,7 @@ def run(
         if budget_usd is not None and not matrix_path:
             # A cap with nothing to cap is dead surface that reads as protection.
             raise CardError("--budget-usd applies to --matrix, which was not given")
-        if bool(trace) == bool(agent):
+        if trace and agent:
             raise CardError("pass exactly one of --trace and --agent")
         if latency_budget <= 0:
             # Checked here rather than left to pydantic: a `ValidationError` is not a
@@ -212,13 +253,9 @@ def run(
                 f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
             )
         card = parse(card_path)
-        rates = _rates(rates_path, card_path, console)
-        recordings = [load_trace(path) for path in trace or []]
-        # A cell of five is the locked statistic, not a default that fits every invocation:
-        # one recorded trace with --runs unset would fail on arithmetic before anything ran.
-        # The statistic is untouched; what changes is guessing N when the input states it.
-        n = runs if runs is not None else (len(recordings) or DEFAULT_N)
-        k = threshold if threshold is not None else min(DEFAULT_K, n)
+        rates = _rates(rates_path, card_path.parent, console)
+        recordings = [load_trace(path) for path in _traces(card, card_path, trace, agent)]
+        n, k = _cell_size(runs, threshold, recordings)
         lock = _lock(
             card_path,
             lock_path,
@@ -373,6 +410,224 @@ def run(
             ),
         )
     raise typer.Exit(0 if cell.passed else 1)
+
+
+def _run_deck(
+    root: Path,
+    console: Console,
+    *,
+    forbidden: tuple[tuple[str, bool], ...],
+    lock_path: Path | None,
+    cassettes: Path | None,
+    baseline_path: Path | None,
+    rates_path: Path | None,
+    runs: int | None,
+    threshold: int | None,
+    latency_budget: float,
+    live: bool,
+    concurrency: int,
+    judge_model: str | None,
+    simulator_model: str | None,
+    budget_usd: float | None,
+) -> NoReturn:
+    """Run every card under `root` and exit on the worst thing that happened.
+
+    Rows, not a third axis: the traces a card declares are the N of its one cell, and the
+    provider x prompt matrix is what adds columns. They multiply without traces
+    participating in either, so a deck under `--matrix` is refused rather than half-built.
+
+    The whole deck is computed inside the funnel and rendered outside it, on `run`'s own
+    rule: `typer.Exit` subclasses `RuntimeError`, so an exit raised in the try would be
+    caught as exit 3, "specdeck itself broke".
+    """
+    try:
+        for flag, given in forbidden:
+            if given:
+                raise CardError(f"{flag} takes one card, not a directory — {_WHY_ONE_CARD[flag]}")
+        if budget_usd is not None:
+            # `--matrix` is refused above, so a cap here can never cap anything. The
+            # single-card path's own words, because it is the same fact: a cap with
+            # nothing to cap is dead surface that reads as protection.
+            raise CardError("--budget-usd applies to --matrix, which was not given")
+        if latency_budget <= 0:
+            # The single-card path's check, on the invocation and before any card runs.
+            # `BuiltinConfig` validates the number, and a `ValidationError` is not a
+            # `USER_ERROR` — left to `_deck_cell`, a flag the user typed would be scored
+            # as specdeck breaking, once, after the whole deck had already been read.
+            raise CardError(
+                f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
+            )
+        # Resolved before anything runs, purely to fail fast — `_matrix`'s rule. A deck
+        # under `--live` would otherwise make every judge call and then exit 2 on a
+        # mistyped `--rates` path.
+        rates = _rates(rates_path, root, console)
+        suite = _deck(
+            root,
+            lock_path=lock_path,
+            cassettes=cassettes,
+            baseline_path=baseline_path,
+            runs=runs,
+            threshold=threshold,
+            latency_budget=latency_budget,
+            live=live,
+            concurrency=concurrency,
+            judge_model=judge_model,
+            simulator_model=simulator_model,
+        )
+    except USER_ERRORS as error:
+        _fail(console, error)
+        raise typer.Exit(2) from None
+    except Exception as error:
+        console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
+        raise typer.Exit(3) from None
+
+    render_suite(suite, console, rates=rates)
+    raise typer.Exit(_suite_exit(suite))
+
+
+#: Why each one-card flag is refused over a deck. Stated rather than a bare "not
+#: supported": every one of these has an obvious next question, and a caller who reads the
+#: reason knows whether to loop over the cards themselves or wait for the feature.
+_WHY_ONE_CARD = {
+    "--relock": "it rewrites the lockfile's one semconv pin from the trace it was handed, "
+    "so the last card in the deck would silently win it",
+    "--trace": "it overrides one card's recordings; a deck resolves each card's own `traces:`",
+    "--agent": "a deck of generated runs is not covered by a test yet, and half-working is "
+    "worse than refused",
+    "--matrix": "a deck adds rows and a matrix adds columns; multiplying them is its own "
+    "decision, not a parameter",
+    "--junit-xml": "`junit.to_xml` writes one `<testsuites>` document for one cell, and "
+    "widening it is a mapping decision — see "
+    "https://github.com/jacquardlabs/specdeck/issues/85",
+    "--update-baseline": "it writes a cost keyed to one card, and which cards of a deck may "
+    "set a baseline from a run whose gate has not been judged is unanswered",
+}
+
+
+def _deck(
+    root: Path,
+    *,
+    lock_path: Path | None,
+    cassettes: Path | None,
+    baseline_path: Path | None,
+    runs: int | None,
+    threshold: int | None,
+    latency_budget: float,
+    live: bool,
+    concurrency: int,
+    judge_model: str | None,
+    simulator_model: str | None,
+) -> Suite:
+    """Every card under `root`, run against the traces it declares.
+
+    Discovery is `lint.cards_under`, never a second walk: two commands disagreeing about
+    whether `policy/airline.md` is a card is a discrepancy nobody would look for.
+
+    A card that cannot start is carried as a `SuiteError` and the deck goes on, the way
+    `run_matrix` carries a failed column. The first card that cannot start is not the only
+    one worth reading, and a deck that aborts on card one hides four results that were
+    free. It still exits 2 — the code has to say the deck did not answer.
+
+    The lockfile and the baseline both resolve from the deck root rather than from each
+    card's parent, so a card in a subdirectory verifies and is priced under the `sub/x.md`
+    key `lock_key` already writes for both files. Resolved per card, a nested card would
+    silently lose its `token_baseline` gate — the deck reporting green over a regression
+    the same card fails when it is run on its own.
+    """
+    paths = cards_under([root])
+    if not paths:
+        # Zero cards is not a green deck. "All zero of them passed" is exactly the empty
+        # report a suite exists to make impossible.
+        raise CardError(f"no cards under {root}")
+    lock_file = lock_path or root / LOCKFILE_NAME
+    baseline_file = baseline_path or root / BASELINE_NAME
+    cells: list[Cell] = []
+    errors: list[SuiteError] = []
+    for path in paths:
+        try:
+            cells.append(
+                _deck_cell(
+                    path,
+                    lock_file=lock_file,
+                    cassettes=cassettes,
+                    baseline_file=baseline_file,
+                    runs=runs,
+                    threshold=threshold,
+                    latency_budget=latency_budget,
+                    live=live,
+                    concurrency=concurrency,
+                    judge_model=judge_model,
+                    simulator_model=simulator_model,
+                )
+            )
+        except USER_ERRORS as error:
+            errors.append(SuiteError(card_path=str(path), message=str(error)))
+    return Suite(cells=cells, errors=errors)
+
+
+def _deck_cell(
+    path: Path,
+    *,
+    lock_file: Path,
+    cassettes: Path | None,
+    baseline_file: Path,
+    runs: int | None,
+    threshold: int | None,
+    latency_budget: float,
+    live: bool,
+    concurrency: int,
+    judge_model: str | None,
+    simulator_model: str | None,
+) -> Cell:
+    """One card of a deck, from the traces it declares. The single-card path's helpers.
+
+    Both pinned models are handed to `_lock`, not just the judge: the single-card path
+    refuses a `--simulator-model` that disagrees with the pin, and a deck that accepts a
+    flag a card rejects is a green run that verified nothing about the pin.
+    """
+    card = parse(path)
+    recordings = [load_trace(one) for one in _traces(card, path, [], None)]
+    n, k = _cell_size(runs, threshold, recordings)
+    lock = _lock(
+        path,
+        lock_file,
+        card,
+        semconv=recordings[0].semconv,
+        relock=False,
+        judge_model=judge_model,
+        simulator_model=simulator_model,
+    )
+    for one in recordings:
+        lock.verify_semconv(one.semconv)
+    builtin, _ = _builtin(
+        path, baseline_file, recordings, latency_budget=latency_budget, update=False
+    )
+    return run_cell(
+        card,
+        recordings,
+        cassettes=cassettes or path.parent / "cassettes",
+        n=n,
+        k=k,
+        judge_model=lock.judge_model,
+        # No simulated user spoke: a deck reads recordings, and naming a pinned model that
+        # did not run would be a claim about the run.
+        simulator_model="",
+        live=live,
+        concurrency=concurrency,
+        builtin=builtin,
+    )
+
+
+def _suite_exit(suite: Suite) -> int:
+    """One code for the whole deck, worst first, on the registry `run` already keeps.
+
+    A card that could not start outranks one that failed a gate, for the reason
+    `_matrix_exit` gives about an incomplete grid: a deck missing a card has not answered
+    the question that was asked, and a CI reading 1 would call that an eval regression.
+    """
+    if suite.errors:
+        return 2
+    return 0 if suite.passed else 1
 
 
 class _Invocation(BaseModel):
@@ -657,7 +912,49 @@ def _write_junit(path: Path | None, report: str | None, console: Console) -> Non
         raise typer.Exit(2) from None
 
 
-def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:
+def _traces(card: Card, card_path: Path, trace: list[Path], agent: str | None) -> list[Path]:
+    """Which recordings this run reads. `--trace` overrides, `--agent` replaces, the card
+    declares.
+
+    The binding lives in the card by default, which is the whole of #70: a card-to-trace
+    mapping kept in the shell history of whoever invoked the runner drifts from the specs
+    it runs, and nothing catches it.
+
+    A glob that matched nothing is refused rather than run empty. A card evaluating zero
+    traces passes every wire it has, so a deck of them reports green — the drift cards
+    exist to catch, arrived at through the runner instead of through the card.
+    """
+    if trace:
+        return list(trace)
+    if agent:
+        return []  # there is nothing to read; the agent is about to produce them
+    if not card.context.traces:
+        raise CardError(
+            f"{card_path}: no traces to run — declare `traces:` in the card's context "
+            "block, or pass --trace or --agent"
+        )
+    resolved = card.trace_paths
+    if not resolved:
+        raise CardError(
+            f"{card_path}: traces {card.context.traces!r} matches no file under "
+            f"{card_path.parent} — a card evaluating zero traces would report green"
+        )
+    return resolved
+
+
+def _cell_size(runs: int | None, threshold: int | None, recordings: list[Trace]) -> tuple[int, int]:
+    """N and k for this invocation. One rule, so a card run alone and the same card run in
+    a deck cannot disagree about how big its cell was.
+
+    A cell of five is the locked statistic, not a default that fits every invocation: one
+    recorded trace with --runs unset would fail on arithmetic before anything ran. The
+    statistic is untouched; what changes is guessing N when the input states it.
+    """
+    n = runs if runs is not None else (len(recordings) or DEFAULT_N)
+    return n, threshold if threshold is not None else min(DEFAULT_K, n)
+
+
+def _rates(rates_path: Path | None, beside: Path, console: Console) -> Rates:
     """The table that prices this run, resolved against the card, not the shell.
 
     Which table priced a run must not depend on where the runner was invoked from — the
@@ -670,7 +967,7 @@ def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:
     table carries its own `verified` date, so nothing here invents a rate.
     """
     try:
-        return load_rates(rates_path, beside=card_path.parent)
+        return load_rates(rates_path, beside=beside)
     except RateError as error:
         if rates_path is not None:
             raise
@@ -1033,8 +1330,13 @@ def _fail(console: Console, error: Exception) -> None:
     These messages quote what the user wrote — `[rates.openai]`, a card heading, a path —
     and Rich reads a bracket as a style tag, so an interpolated message loses exactly the
     part that says where to look.
+
+    Soft-wrapped for the second half of the same problem: Rich's word wrap breaks a token
+    that outruns the console width, so a quoted path came back as `abse\nnt.toml` at 120
+    columns. Whether it breaks depends on how long the reader's paths happen to be, so the
+    message that says where to look is the one the terminal is most likely to cut in half.
     """
-    console.print("[red]error[/red]", Text(str(error)))
+    console.print("[red]error[/red]", Text(str(error)), soft_wrap=True)
 
 
 #: Skipped is dim rather than absent: a rule that could not run is not a rule that passed.

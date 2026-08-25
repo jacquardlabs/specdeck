@@ -2,6 +2,7 @@
 context:
   fixture: fixtures/delay-compensation-budget.json
   policy: policy/airline.md
+  traces: traces/delay-compensation-budget.otlp.json
   simulator: "traveller is upset about delayed flight HAT039 from ATL to SEA, wants to know the reason for the delay, and wants compensation as either a voucher or a refund to the original payment method"
 
 The agent looks up the traveller, issues exactly one certificate for the delay at the

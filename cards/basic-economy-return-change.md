@@ -2,6 +2,7 @@
 context:
   fixture: fixtures/airline_seed.json
   policy: policy/airline.md
+  traces: traces/basic-economy-return-change.otlp.json
   simulator: "Newark traveller on a half-day Texas trip wants a later return flight home; reactive, will accept cancelling under travel insurance if the fare cannot be changed"
 
 The agent looks up the reservation, recognises it is basic economy, and refuses to

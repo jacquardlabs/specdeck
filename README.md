@@ -70,6 +70,26 @@ itself broke, `4` a matrix did not complete because its budget stopped it. A cal
 only the code should never route a malformed lockfile, or a matrix that ran out of money,
 to the SME as an eval regression.
 
+### The whole deck at once
+
+```console
+$ uv run specdeck run cards/
+```
+
+A card declares the traces it is evaluated against, in `context: traces:`, as one glob
+resolved against the card's own directory. Point `run` at a directory and it discovers
+every card under it, resolves each card's traces, runs every cell, and exits non-zero if
+any gate failed — so the card-to-trace binding lives in the card rather than in the shell
+history of whoever invoked it. `--trace` still works, as an override for an ad-hoc run
+against a fresh recording.
+
+A glob that matches nothing is an error, not an empty run. A suite reporting green over a
+card that never ran is the drift cards exist to catch.
+
+`--relock`, `--trace`, `--agent`, `--junit-xml` and `--update-baseline` each take one card
+and are refused with a directory: every one of them writes or varies something the last
+card in the deck would silently win.
+
 ### A card's first run
 
 A new card is unpinned and unrecorded, and specdeck refuses both rather than guessing.
@@ -245,8 +265,9 @@ is the one lint input that imports a module of yours; zero tokens and no network
 Runs in pre-commit and in CI, from the same command.
 
 Not yet: the prose-aware lint group, the OpenAI SDK, MCP and subagent introspectors behind
-`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
-and after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
+`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never_executed`
+(spelled `never` for short), `never_requested`, `at_most`, bounds, and
+after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
 only; they sit behind one `complete()` seam, and a second provider is
 [#60](https://github.com/jacquardlabs/specdeck/issues/60).
 
@@ -269,6 +290,7 @@ One markdown file per scenario, in your repo, reviewed in PRs.
 context:
   fixture: airline_seed.json
   policy: airline.md
+  traces: traces/refund-basic-economy.*.otlp.json
   simulator: "frustrated customer wants a refund on flight F1234"
 
 The agent refuses the change, clearly explains the basic economy

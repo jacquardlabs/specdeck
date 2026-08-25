@@ -17,7 +17,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 BLOCKS = ("context", "wire", "credit")
-CONTEXT_KEYS = ("fixture", "policy", "simulator")
+CONTEXT_KEYS = ("fixture", "policy", "simulator", "traces")
 
 
 class CardError(Exception):
@@ -37,6 +37,9 @@ class CardContext(BaseModel):
     fixture: str = ""
     policy: str = ""
     simulator: str = ""
+    #: One glob, not a list: the context block is a flat `key: value` mapping, and a list
+    #: buys parser surgery for a case a glob covers.
+    traces: str = ""
 
 
 class Card(BaseModel):
@@ -68,6 +71,39 @@ class Card(BaseModel):
         """The fixture data, resolved against the card that names it."""
         return self._contained(self.context.fixture, "fixture")
 
+    @property
+    def trace_paths(self) -> list[Path]:
+        """Every recording the card's `traces:` glob matches, sorted, resolved against it.
+
+        Total: a glob that matches nothing returns `[]` rather than raising, because the
+        two callers want different answers to that one fact — lint reports it as a
+        `dead-path` finding and the runner refuses to start — and neither is the parser's
+        to pick.
+
+        Containment is checked per match rather than on the pattern, because
+        `Path('cards').glob('../*.md')` really does escape.
+        """
+        if not self.context.traces:
+            return []
+        root = Path(self.path).parent.resolve()
+        try:
+            matches = sorted(root.glob(self.context.traces))
+        except (NotImplementedError, ValueError) as error:
+            # `Path.glob` rejects an absolute pattern, and which of the two it raises has
+            # moved across the versions the project supports. Neither is a `USER_ERROR`,
+            # so uncaught, a pattern the user typed would exit 3, "specdeck itself broke".
+            raise CardError(f"{self.path}: traces {self.context.traces!r}: {error}") from None
+        contained = [
+            self._contain(match.resolve(), self.context.traces, "traces") for match in matches
+        ]
+        # Only files are recordings. `traces/*` beside an `archive/` directory would
+        # otherwise hand `load_trace` a directory, and `IsADirectoryError` is not a
+        # `USER_ERROR`: exit 3, "specdeck itself broke", for a glob the user typed — and
+        # over a deck it escapes the per-card catch and takes the other cards' results
+        # with it. Filtered after containment, so a match that escapes is still refused by
+        # name rather than degrading to "matches no file".
+        return [path for path in contained if path.is_file()]
+
     def _contained(self, value: str, key: str) -> Path | None:
         """Resolve a card-declared path, refusing anything outside the card's directory.
 
@@ -78,7 +114,11 @@ class Card(BaseModel):
         if not value:
             return None
         root = Path(self.path).parent.resolve()
-        resolved = (root / value).resolve()
+        return self._contain((root / value).resolve(), value, key)
+
+    def _contain(self, resolved: Path, value: str, key: str) -> Path:
+        """The containment rule itself, so the single-path and glob forms share one."""
+        root = Path(self.path).parent.resolve()
         if resolved != root and root not in resolved.parents:
             raise CardError(f"{self.path}: {key} {value!r} resolves outside the card's directory")
         return resolved

@@ -21,6 +21,7 @@ from .ir import (
     Bound,
     Measure,
     Never,
+    NeverRequested,
     Operation,
     Property,
     Selector,
@@ -71,8 +72,19 @@ def compile_wire(text: str, *, tier: Tier = Tier.GATE, weight: int = 0) -> Prope
         )
 
     tool = Selector(operation=Operation.EXECUTE_TOOL, tool=subject)
-    if rule == "never":
+    if rule in ("never", "never_executed"):
+        # One property from two spellings, byte-identical down to the id. `wires_text`
+        # hashes the compiled IR, so the long spelling is not drift on a locked card.
         return Property(id=f"never:{subject}", tier=tier, weight=weight, rule=Never(selector=tool))
+    if rule == "never_requested":
+        return Property(
+            id=f"never_requested:{subject}",
+            tier=tier,
+            weight=weight,
+            # No `operation`: a request shows on a `chat` span as readily as on the
+            # `execute_tool` span that ran it or the denial span that refused it.
+            rule=NeverRequested(selector=Selector(tool=subject)),
+        )
     if match := _AFTER.match(rule):
         k, marker = match.groups()
         return Property(
@@ -126,7 +138,7 @@ def named_tools(properties: list[Property]) -> list[str]:
     tools: set[str] = set()
     for prop in properties:
         rule = prop.rule
-        if isinstance(rule, Never | AtMost) and rule.selector.tool:
+        if isinstance(rule, Never | NeverRequested | AtMost) and rule.selector.tool:
             tools.add(rule.selector.tool)
         elif isinstance(rule, AfterKThen) and rule.then.tool:
             tools.add(rule.then.tool)

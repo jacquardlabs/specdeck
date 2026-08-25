@@ -159,6 +159,11 @@ def render_transcript(trace: Trace) -> str:
     position, so it reached the judge in no form at all. A criterion phrased over turn
     sequence, like "without the traveller asking twice", would then have been graded on
     evidence that was not in the prompt.
+
+    A denial gets its own line kind for the same reason. Rendered as a plain `[tool]` line
+    it reads as an execution of the policy component, and left out it reads as a request
+    with no result — which is indistinguishable from a hang. Neither is gradable, and a
+    card whose whole assertion is "the runtime refused this" needs the judge to see it.
     """
     lines: list[str] = []
     seen: list[Message] = []
@@ -180,7 +185,10 @@ def render_transcript(trace: Trace) -> str:
             name = span.attributes.get(GenAI.TOOL_NAME)
             arguments = span.attributes.get(GenAI.TOOL_CALL_ARGUMENTS, "")
             result = span.attributes.get(GenAI.TOOL_CALL_RESULT, "")
-            lines.append(f"[tool] {name}({arguments}) -> {result}")
+            if span.denied_tool is not None:
+                lines.append(f"[denied] {span.denied_tool}({arguments}) -> {result}")
+            else:
+                lines.append(f"[tool] {name}({arguments}) -> {result}")
     return "\n".join(lines)
 
 

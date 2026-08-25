@@ -83,6 +83,38 @@ class TestSuiteShape:
         )
         assert result.exit_code == 0, result.stdout
 
+    def test_every_card_declares_the_traces_it_is_evaluated_against(self) -> None:
+        # The binding lives in the card, so `specdeck run cards/` needs no shell history.
+        for path in CARD_PATHS:
+            assert parse(path).context.traces, path.name
+
+    def test_every_declaration_resolves_to_at_least_one_recording(self) -> None:
+        for path in CARD_PATHS:
+            assert parse(path).trace_paths, path.name
+
+    def test_traces_reach_no_hash_so_the_migration_moved_no_lock(self) -> None:
+        """Only `context.simulator` reaches a pin, and this is what holds that.
+
+        If a later change pins traces, the five committed cards each need a --relock and
+        this test is where that lands rather than in a surprised reviewer.
+        """
+        lock = Lockfile.load(CARDS / "spec.lock.toml")
+        for path in CARD_PATHS:
+            card = parse(path)
+            stripped = card.model_copy(
+                update={"context": card.context.model_copy(update={"traces": ""})}
+            )
+            lock.verify(
+                path.name,
+                rubric=rubric_text(criteria_of(stripped)),
+                wires=wires_text(compile_wires(stripped)),
+                simulator=stripped.context.simulator,
+            )
+
+    def test_the_whole_deck_runs_green_from_its_own_declarations(self) -> None:
+        result = CliRunner().invoke(app, ["run", str(CARDS)])
+        assert result.exit_code == 0, result.stdout
+
     def test_every_card_is_locked_under_its_own_name(self) -> None:
         lock = Lockfile.load(CARDS / "spec.lock.toml")
         assert sorted(lock.cards) == sorted(p.name for p in CARD_PATHS)

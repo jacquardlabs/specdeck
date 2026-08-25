@@ -36,7 +36,7 @@ from pydantic import BaseModel
 
 from .card import Card, CardError, parse
 from .introspect import STRUCTURAL, Depth, Introspection, bounding_tools
-from .ir import AtMost, Bound, Measure, Never, Property
+from .ir import AtMost, Bound, Measure, Never, NeverRequested, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
 from .wires import WireError, compile_wires, named_markers, named_tools, wires_text
@@ -230,6 +230,31 @@ def _dead_paths(card: Card, name: str) -> list[Finding]:
                     message=f"{key} {value!r} does not exist (looked in {resolved.parent})",
                 )
             )
+    if card.context.traces:
+        # Caught rather than allowed to propagate: `trace_paths` raises for a glob that
+        # escapes the card's directory or names an absolute path, and one such card in a
+        # deck would otherwise abort the whole lint run with zero findings for its four
+        # neighbours. A rule that cannot read one card is a finding about that card.
+        try:
+            resolved = card.trace_paths
+            reason = (
+                ""
+                if resolved
+                else (
+                    f"traces {card.context.traces!r} matches no file (looked under "
+                    f"{Path(card.path).parent}); a card evaluating zero traces reports green"
+                )
+            )
+        except CardError as error:
+            reason = str(error)
+        if reason:
+            # ERROR, not a warning: a card whose glob resolves to nothing runs zero
+            # traces, and a suite reporting green over a card that never ran is exactly
+            # the drift the deck exists to catch. Machine-verifiable, so the severity rule
+            # settles it too.
+            findings.append(
+                Finding(rule="dead-path", severity=Severity.ERROR, card=name, message=reason)
+            )
     return findings
 
 
@@ -250,7 +275,7 @@ def _consistency(properties: list[Property], name: str) -> list[Finding]:
     by_measure: dict[str, list[Property]] = {}
     for prop in properties:
         rule = prop.rule
-        if isinstance(rule, Never | AtMost) and rule.selector.tool:
+        if isinstance(rule, Never | NeverRequested | AtMost) and rule.selector.tool:
             by_tool.setdefault(rule.selector.tool, []).append(prop)
         elif isinstance(rule, Bound):
             by_measure.setdefault(rule.measure.value, []).append(prop)
@@ -258,6 +283,45 @@ def _consistency(properties: list[Property], name: str) -> list[Finding]:
     for tool, props in by_tool.items():
         nevers = [p for p in props if isinstance(p.rule, Never)]
         budgets = [p for p in props if isinstance(p.rule, AtMost)]
+        requested = [p for p in props if isinstance(p.rule, NeverRequested)]
+        if requested and any(p.rule.n > 0 for p in budgets):
+            findings.append(
+                Finding(
+                    rule="contradictory-wires",
+                    severity=Severity.ERROR,
+                    card=name,
+                    message=(
+                        f"{tool}: `never_requested` and `at_most` with a budget above zero "
+                        "cannot both hold"
+                    ),
+                )
+            )
+        if requested and nevers:
+            findings.append(
+                Finding(
+                    rule="redundant-wires",
+                    severity=Severity.WARNING,
+                    card=name,
+                    message=(
+                        f"{tool}: `never_requested` already forbids executing it, which is "
+                        "all `never` says"
+                    ),
+                )
+            )
+        if len(nevers) > 1:
+            # Two spellings of one wire compile to one id, so the merge and the report show
+            # a single property and nothing else would ever say the card states it twice.
+            findings.append(
+                Finding(
+                    rule="redundant-wires",
+                    severity=Severity.WARNING,
+                    card=name,
+                    message=(
+                        f"{tool}: `never` and `never_executed` are the same wire, stated "
+                        f"{len(nevers)} times"
+                    ),
+                )
+            )
         if nevers and any(p.rule.n > 0 for p in budgets):
             findings.append(
                 Finding(
@@ -452,8 +516,10 @@ def _cassettes(cards: list[Path]) -> list[Finding]:
                 card=CASSETTE_DIR,
                 message=(
                     "a cassette whose card still exists but whose prompt has moved cannot "
-                    "be detected without the trace that produced it. Traces are declared "
-                    "per card in #70; until then this rule sees ownership, not staleness."
+                    "be detected without the trace the cassette itself was keyed on, which "
+                    "nothing records. A card's `traces:` names what it reads now, not what "
+                    "a recording was made from, so this rule still sees ownership, not "
+                    "staleness."
                 ),
             )
         )
