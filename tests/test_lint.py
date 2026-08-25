@@ -235,7 +235,10 @@ class TestThisReposOwnCards:
             lock=Lockfile.load(cards / "spec.lock.toml"),
             vocabulary=_vocabulary(cards / "vocabulary.txt"),
         )
-        assert result.findings == [], result.findings
+        # Skipped findings are expected and are not dirt: `orphan-cassette` reports that
+        # it cannot see prompt staleness without the trace, which is #70.
+        blocking = [f for f in result.findings if f.severity is not Severity.SKIPPED]
+        assert blocking == [], blocking
 
     def test_the_committed_vocabulary_covers_every_tool_the_cards_wire(self) -> None:
         # A vocabulary that drifts behind the cards turns unknown-tool into noise.
@@ -279,3 +282,126 @@ class TestMarkerVocabulary:
             f.rule for f in lint_card(card_dir / "refund.md") if f.severity is Severity.SKIPPED
         }
         assert {"unknown-tool", "unknown-marker"} <= skipped
+
+
+def _card(prose: str) -> str:
+    return f"""\
+# Scenario: refund request on basic economy
+context:
+  policy: airline.md
+
+{prose}
+
+wire:
+  - modify_reservation: never
+"""
+
+
+class TestCardMechanics:
+    """The one rule that reads inside the prose block, and why it is allowed to.
+
+    Not style: each pattern was observed making the judge answer with commentary instead
+    of a verdict, and an ungraded criterion fails closed. See #67 and DECISIONS.md.
+    """
+
+    def _lint(self, tmp_path: Path, prose: str):
+        (tmp_path / "airline.md").write_text("the policy")
+        (tmp_path / "card.md").write_text(_card(prose))
+        return lint_card(tmp_path / "card.md")
+
+    def test_prose_that_grades_itself_is_flagged(self, tmp_path: Path) -> None:
+        findings = self._lint(tmp_path, "Do not fail this card if the agent apologises.")
+        assert "card-mechanics" in rules(findings, Severity.WARNING)
+
+    def test_a_pass_fail_condition_is_flagged(self, tmp_path: Path) -> None:
+        findings = self._lint(tmp_path, "The card fails only if the agent cancels the booking.")
+        assert "card-mechanics" in rules(findings, Severity.WARNING)
+
+    def test_naming_specdecks_own_tiers_is_flagged(self, tmp_path: Path) -> None:
+        findings = self._lint(tmp_path, "This is a gate check for tone.")
+        assert "card-mechanics" in rules(findings, Severity.WARNING)
+
+    def test_shouting_is_flagged(self, tmp_path: Path) -> None:
+        findings = self._lint(tmp_path, "The agent MUST NEVER OFFER a refund of any kind.")
+        assert "card-mechanics" in rules(findings, Severity.WARNING)
+
+    def test_it_warns_and_never_errors(self, tmp_path: Path) -> None:
+        # The SME's words stay theirs: this is a strong signal, not a defect. A rule that
+        # rejects the prose block is a rule they turn off.
+        findings = self._lint(tmp_path, "Do not fail this card.")
+        assert rules(findings, Severity.ERROR) == []
+        assert lint_paths([tmp_path / "card.md"]).ok is True
+
+    def test_ordinary_expected_behaviour_is_left_alone(self, tmp_path: Path) -> None:
+        findings = self._lint(
+            tmp_path,
+            "The agent refuses the change, explains the basic economy restriction, and "
+            "never promises an exception.",
+        )
+        assert "card-mechanics" not in [f.rule for f in findings]
+
+    def test_airport_codes_are_not_shouting(self, tmp_path: Path) -> None:
+        # An airline card legitimately says MIA and PHX; the run has to be long enough
+        # not to fire on a pair of them.
+        findings = self._lint(tmp_path, "The agent books MIA to PHX and explains the fare.")
+        assert "card-mechanics" not in [f.rule for f in findings]
+
+    def test_the_word_fails_on_its_own_is_not_a_verdict(self, tmp_path: Path) -> None:
+        findings = self._lint(tmp_path, "The agent explains why the payment fails.")
+        assert "card-mechanics" not in [f.rule for f in findings]
+
+    def test_the_committed_cards_do_not_trip_it(self) -> None:
+        cards = Path(__file__).resolve().parent.parent / "cards"
+        findings = lint_paths([cards]).findings
+        assert [f for f in findings if f.rule == "card-mechanics"] == []
+
+
+class TestOrphanCassettes:
+    def _dir(self, tmp_path: Path, names: list[str]) -> Path:
+        (tmp_path / "airline.md").write_text("the policy")
+        (tmp_path / "refund.md").write_text(GOOD)
+        recordings = tmp_path / "cassettes"
+        recordings.mkdir()
+        for name in names:
+            (recordings / name).write_text("{}")
+        return tmp_path
+
+    def test_a_cassette_owned_by_a_card_that_is_here_is_fine(self, tmp_path: Path) -> None:
+        directory = self._dir(tmp_path, ["refund.judge-abc123.json"])
+        assert rules(lint_paths([directory]).findings, Severity.WARNING) == []
+
+    def test_a_cassette_naming_no_card_is_reported(self, tmp_path: Path) -> None:
+        directory = self._dir(tmp_path, ["deleted-card.judge-abc123.json"])
+        findings = lint_paths([directory]).findings
+        assert "orphan-cassette" in rules(findings, Severity.WARNING)
+        assert any("deleted-card" in f.message for f in findings)
+
+    def test_a_bare_hash_is_reported_as_unattributable(self, tmp_path: Path) -> None:
+        # The pre-#69 layout: nothing maps the file to the card that replays it.
+        directory = self._dir(tmp_path, ["judge-abc123.json"])
+        findings = lint_paths([directory]).findings
+        assert "orphan-cassette" in rules(findings, Severity.WARNING)
+        assert any("names no card" in f.message for f in findings)
+
+    def test_simulator_cassettes_are_owned_the_same_way(self, tmp_path: Path) -> None:
+        directory = self._dir(tmp_path, ["refund.simulator-abc123.json"])
+        assert rules(lint_paths([directory]).findings, Severity.WARNING) == []
+
+    def test_nothing_is_deleted(self, tmp_path: Path) -> None:
+        # Cassettes are the Phase-3 mutation substrate; a linter that removes one removes
+        # evidence. Reporting is the whole job.
+        directory = self._dir(tmp_path, ["deleted-card.judge-abc123.json"])
+        lint_paths([directory])
+        assert (directory / "cassettes" / "deleted-card.judge-abc123.json").exists()
+
+    def test_staleness_reports_itself_unchecked(self, tmp_path: Path) -> None:
+        # A cassette whose card still exists but whose prompt moved needs the trace, which
+        # is #70. A check that silently degrades is worse than one that says so.
+        directory = self._dir(tmp_path, ["refund.judge-abc123.json"])
+        findings = lint_paths([directory]).findings
+        assert "orphan-cassette" in rules(findings, Severity.SKIPPED)
+
+    def test_no_cassette_directory_means_no_finding_at_all(self, tmp_path: Path) -> None:
+        (tmp_path / "airline.md").write_text("the policy")
+        (tmp_path / "refund.md").write_text(GOOD)
+        assert "orphan-cassette" not in [f.rule for f in lint_paths([tmp_path]).findings]

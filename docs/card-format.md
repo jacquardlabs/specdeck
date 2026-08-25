@@ -138,7 +138,7 @@ data source they need.
 
 | Group | Phase | Rules |
 |---|---|---|
-| **Static** | 1 | Zone structure. Dead fixture and policy paths. Lockfile freshness. Contradictory wires. Credit weight validity. Judge and agent sharing a model family (warning). |
+| **Static** | 1 | Zone structure. Dead fixture and policy paths. Lockfile freshness. Contradictory wires. Credit weight validity. Card-mechanics language in prose (warning). Cassettes no card owns (warning). Judge and agent sharing a model family (warning). |
 | **Vocabulary-fed** | 1–2 | Wires referencing unknown tools. Invalid pattern × scope combinations. |
 
 | **Definition-fed** | 2 | Introspect the agent definition — a LangGraph graph, OpenAI SDK hand-offs, MCP configs, Claude Code subagent files. Obligations below. |
@@ -159,6 +159,12 @@ that silently degrades is worse than one that reports its own blindness.
 
 Machine-verifiable violations are errors. Anything about the content of prose is a
 suggestion. Never style-police the SME zone.
+
+One carve-out, recorded 2026-08-24: **card-mechanics language warns.** Prose that
+describes the card's own pass/fail machinery — "do not fail this card", "fails only if",
+ALL-CAPS emphasis — makes the judge answer with commentary instead of a verdict, and an
+ungraded criterion fails closed. That is not a style opinion; the card does not grade at
+all. It warns rather than errors, because the SME's words stay theirs.
 
 A rule may also warn, when a violation is machine-verifiable but not definitively wrong —
 a card with no prose block, or a wire that restates another. And a rule reports itself

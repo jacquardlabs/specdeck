@@ -49,7 +49,7 @@ def record(directory: Path, card, turns: list[dict], *, model: str = MODEL) -> N
     replaying the same growth — which is also what proves the loop feeds the simulator the
     conversation rather than just the intent.
     """
-    cassette = Cassette(directory, kind="simulator")
+    cassette = Cassette(directory, kind="simulator", slug=card.slug)
     messages: list[dict] = []
     for turn in turns:
         prompt = build_prompt(card.context.simulator, messages, MARKERS)
@@ -313,7 +313,7 @@ credit:
         # of the clock. A live run would record this instead.
         criteria = criteria_of(card)
         prompt = judge_prompt(criteria, trace, policy="")
-        Cassette(tmp_path).write(
+        Cassette(tmp_path, slug=card.slug).write(
             prompt,
             MODEL,
             json.dumps({"verdicts": {c.id: True for c in criteria}}),

@@ -197,7 +197,13 @@ class TestEveryCardRuns:
         assert cell.results[0].judged.replayed
         assert cell.credit_score == cell.credit_total, path.name
 
+    @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
+    def test_every_cassette_names_the_card_that_owns_it(self, path: Path) -> None:
+        # A hash alone is unattributable: finding which cassette a card replays otherwise
+        # means moving them all aside and re-running to see which one goes missing (#69).
+        owned = list((CARDS / "cassettes").glob(f"{path.stem}.judge-*.json"))
+        assert len(owned) == 1, [p.name for p in owned]
+
     def test_no_cassette_is_orphaned(self) -> None:
-        # Every prose edit re-keys the prompt and strands the old recording. Until #69
-        # teaches lint to say so, the count is the check.
-        assert len(list((CARDS / "cassettes").glob("judge-*.json"))) == len(CARD_PATHS)
+        # Every prose edit re-keys the prompt and strands the old recording.
+        assert len(list((CARDS / "cassettes").glob("*.json"))) == len(CARD_PATHS)

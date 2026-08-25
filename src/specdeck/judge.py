@@ -218,17 +218,22 @@ def parse_response(
 class Cassette:
     """A recorded call, keyed on the prompt and the model it was made with.
 
-    `kind` separates the judge's recordings from the simulator's in one directory. It is
-    not part of the key: two callers cannot collide on a prompt they did not both send.
+    `kind` separates the judge's recordings from the simulator's, and `slug` names the card
+    that owns them. Neither is part of the key — the key is still the prompt and the model,
+    so two callers cannot collide on a prompt they did not both send. They are in the
+    filename because a hash alone is unattributable: finding which cassette a card replays
+    otherwise means moving them all aside and re-running to see which one goes missing (#69).
     """
 
-    def __init__(self, directory: Path | str, kind: str = "judge") -> None:
+    def __init__(self, directory: Path | str, kind: str = "judge", slug: str = "") -> None:
         self.directory = Path(directory)
         self.kind = kind
+        self.slug = slug
 
     def path(self, prompt: str, model: str) -> Path:
         key = fingerprint(f"{model}\n{prompt}").removeprefix("sha256:")[:24]
-        return self.directory / f"{self.kind}-{key}.json"
+        stem = f"{self.slug}." if self.slug else ""
+        return self.directory / f"{stem}{self.kind}-{key}.json"
 
     def read(self, prompt: str, model: str) -> str | None:
         path = self.path(prompt, model)
@@ -269,9 +274,10 @@ async def judge(
     cassettes: Path | str,
     model: str = DEFAULT_JUDGE_MODEL,
     live: bool = False,
+    slug: str = "",
 ) -> JudgeResult:
     prompt = build_prompt(criteria, trace, policy=policy)
-    cassette = Cassette(cassettes)
+    cassette = Cassette(cassettes, slug=slug)
     recorded = cassette.read(prompt, model)
 
     if recorded is None and not live:
