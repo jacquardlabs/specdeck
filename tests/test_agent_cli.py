@@ -266,7 +266,7 @@ class TestTheAgentDefinitionFlag:
 
     def _deck(self, tmp_path: Path) -> Path:
         (tmp_path / "a.md").write_text(
-            "# Scenario: a\nThe agent answers.\n\nwire:\n  - tools: at_most 3\n"
+            "# Scenario: a\nThe agent answers.\n\nwire:\n  - cancel_reservation: at_most 3\n"
         )
         return tmp_path
 

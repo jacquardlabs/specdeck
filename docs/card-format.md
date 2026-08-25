@@ -216,11 +216,24 @@ data source they need.
 Both are checked over the whole deck, not per card: there is one agent behind every card,
 so a tool wired anywhere is wired and a cycle bounded anywhere is bounded.
 
-**A cycle is bounded by a wire that names a node in it** — `<tool>: never`, `<tool>:
-at_most <n>`, or an escalation `<tool>: after <k> <marker>` whose follow-up tool is in the
-cycle. A trace-level bound does not count: `latency: under 120s` and `response_tokens under
-400` bound a run, not a loop, and the example card above carries one, so counting them
-would ship this error unreachable on any deck that bounds latency. Recorded 2026-08-25.
+**A cycle is bounded by a wire naming a tool the cycle can call** — `<tool>: never`,
+`<tool>: at_most <n>`, or an escalation `<tool>: after <k> <marker>` whose follow-up tool
+is one of them. "A tool the cycle can call" is the tools bound to the cycle's own nodes,
+plus a node that is itself a tool, which is the raw-SDK shape. The error names them.
+
+A wire naming the graph *node* does not bound anything: a wire matches `execute_tool`
+spans by tool name, so `tools: at_most 3` on a LangGraph node compiles to a check no trace
+can ever satisfy — and the tool vocabulary rejects the name besides, so the two errors
+would have no state that clears both. A trace-level bound does not count either:
+`latency: under 120s` and `response_tokens under 400` bound a run, not a loop, and the
+example card above carries one, so counting them would ship this error unreachable on any
+deck that bounds latency. Recorded 2026-08-25.
+
+A cycle running only through nodes that bind no tool — routers, chat steps, hand-offs — is
+reported **skipped** rather than as an error: no wire can name anything inside it, so an
+error there would instruct the impossible. Stamping graph-node identity into the trace
+([#89](https://github.com/jacquardlabs/specdeck/issues/89)) is what would make it
+checkable.
 
 A binding counts as referenced when a wire on any card names it, or when its name appears
 as a whole word in a card's `context` values. Nothing here reads the prose block.

@@ -3,12 +3,13 @@ from pathlib import Path
 
 import pytest
 
-from specdeck.introspect import Depth, introspect
+from specdeck.agent import AgentDescription
+from specdeck.introspect import Depth, Introspection, introspect
 from specdeck.lint import AGENT_DEF, Severity, Vocabulary, lint_card, lint_paths
 from specdeck.lockfile import Lockfile
 
 from .fake_agent import BareAgent, FakeAgent
-from .fake_graph import acyclic_graph, refund_graph
+from .fake_graph import acyclic_graph, nodeless_graph, refund_graph, side_tool_graph
 
 GOOD = """\
 # Scenario: refund request on basic economy
@@ -572,44 +573,88 @@ class TestAgentDefinition:
         assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
 
     def test_a_wire_naming_a_tool_outside_the_cycle_does_not_clear_it(self, tmp_path: Path) -> None:
-        """Only a wire on a node *in* the cycle counts.
+        """Only a wire on a tool the cycle can call counts.
 
-        `cancel_reservation` is a real tool of this graph and a real wire subject, but it
-        is not a node the loop passes through, so bounding it says nothing about the loop.
+        `send_certificate` is a real tool of this graph and a real wire subject, but it
+        hangs off a node the loop never reaches, so bounding it says nothing about the loop.
         """
-        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: never\n")
+        deck = self._deck(tmp_path, "\nwire:\n  - send_certificate: never\n")
+        result = lint_paths([deck], agent_def=introspect(side_tool_graph(), reference="x:y"))
+        assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
+
+    def test_an_at_most_on_a_tool_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: at_most 3\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_a_never_on_a_tool_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
+        # A tool that can never be called cannot spin.
+        deck = self._deck(tmp_path, "\nwire:\n  - get_reservation_details: never\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_a_wire_naming_the_graph_node_itself_does_not_clear_it(self, tmp_path: Path) -> None:
+        """`tools: at_most 3` is not a check. `wires.compile_wire` matches `execute_tool`
+        spans by tool name, so a wire on a node compiles to a property no trace can ever
+        satisfy — and `unknown-tool` rejects the name besides. See DECISIONS.md,
+        2026-08-25."""
+        deck = self._deck(tmp_path, "\nwire:\n  - tools: at_most 3\n  - agent: never\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
 
-    def test_an_at_most_on_a_node_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
-        deck = self._deck(tmp_path, "\nwire:\n  - tools: at_most 3\n")
-        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
-        assert rules(result.findings, Severity.ERROR) == []
+    def test_a_cycle_through_nodes_that_bind_no_tool_is_skipped_not_errored(
+        self, tmp_path: Path
+    ) -> None:
+        """No wire can name anything inside it, so an ERROR would instruct the impossible."""
+        deck = self._deck(tmp_path, "")
+        result = lint_paths([deck], agent_def=introspect(nodeless_graph(), reference="x:y"))
+        found = [f for f in result.findings if f.rule == "unbounded-cycle"]
+        assert [f.severity for f in found] == [Severity.SKIPPED]
+        assert "binds a tool" in found[0].message
 
-    def test_a_never_on_a_node_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
-        # A tool that can never be called cannot spin.
-        deck = self._deck(tmp_path, "\nwire:\n  - agent: never\n")
-        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
-        assert rules(result.findings, Severity.ERROR) == []
+    def test_a_declared_cycle_is_checked_even_with_no_edges_to_derive_it_from(
+        self, tmp_path: Path
+    ) -> None:
+        """#21(c): the gate is the data, not the label. A raw-SDK `describe()` that names
+        its own loop gets the obligation, rather than a skip claiming none was found."""
+        deck = self._deck(tmp_path, "\nwire:\n  - latency: under 30s\n")
+        declared = Introspection(
+            source="describe()",
+            depth=Depth.TOOLS,
+            description=AgentDescription(tools=["do_thing"], cycles=[["do_thing"]]),
+        )
+        result = lint_paths([deck], agent_def=declared)
+        assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
+        other = tmp_path / "other"
+        other.mkdir()
+        cleared = lint_paths(
+            [self._deck(other, "\nwire:\n  - do_thing: at_most 2\n")], agent_def=declared
+        )
+        assert rules(cleared.findings, Severity.ERROR) == []
 
-    def test_an_escalation_whose_follow_up_is_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
-        deck = self._deck(tmp_path, "\nwire:\n  - tools: after 3 non_agreement\n")
+    def test_an_escalation_whose_follow_up_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: after 3 non_agreement\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
 
     def test_the_obligation_is_deck_wide_not_per_card(self, tmp_path: Path) -> None:
         # One card bounds the loop; the card beside it does not, and the deck is clear.
         deck = self._deck(
-            tmp_path, "\nwire:\n  - latency: under 30s\n", "\nwire:\n  - tools: never\n"
+            tmp_path,
+            "\nwire:\n  - latency: under 30s\n",
+            "\nwire:\n  - cancel_reservation: never\n",
         )
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
 
-    def test_the_error_names_the_cycle_and_what_would_satisfy_it(self, tmp_path: Path) -> None:
+    def test_the_error_names_the_cycle_and_the_tools_that_would_satisfy_it(
+        self, tmp_path: Path
+    ) -> None:
         deck = self._deck(tmp_path, "")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         message = next(f.message for f in result.findings if f.rule == "unbounded-cycle")
         assert "agent" in message and "tools" in message
+        assert "cancel_reservation" in message and "get_reservation_details" in message
         assert "at_most" in message and "after" in message
 
     def test_nothing_is_ever_written_to_a_card(self, tmp_path: Path) -> None:
@@ -693,7 +738,7 @@ class TestAgentDefinition:
     def test_a_card_that_does_not_compile_does_not_stop_the_obligations(
         self, tmp_path: Path
     ) -> None:
-        self._deck(tmp_path, "\nwire:\n  - tools: never\n")
+        self._deck(tmp_path, "\nwire:\n  - cancel_reservation: never\n")
         (tmp_path / "bad.md").write_text("# Scenario: bad\nx\n\nwire:\n  - a: eventually b\n")
         result = lint_paths([tmp_path], agent_def=introspect(refund_graph()))
         assert "unbounded-cycle" not in rules(result.findings, Severity.ERROR)

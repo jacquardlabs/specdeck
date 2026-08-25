@@ -137,6 +137,23 @@ def cycles(edges: list[tuple[str, str]]) -> list[list[str]]:
     return sorted(found)
 
 
+def bounding_tools(description: AgentDescription, cycle: list[str]) -> set[str]:
+    """The tools a wire could name to bound this cycle. Empty when no wire can.
+
+    A cycle is a list of *node* names and a wire names a *tool*: `wires.compile_wire`
+    turns `<subject>: at_most n` into a selector matching `execute_tool` spans by
+    `gen_ai.tool.name`, so a wire naming a graph node compiles to a check no trace can
+    ever match — vacuously true, and rejected by `unknown-tool` besides. The bounding
+    handle is therefore the tools the cycle's own nodes bind, plus a node name that is
+    itself a declared tool, which is the raw-SDK shape where the tool is the node.
+
+    Public because two rules read it — `lint._unbounded_cycles` to decide the obligation,
+    and its message to say which tools would satisfy it — and they must not disagree.
+    """
+    bound = {tool for node in cycle for tool in description.node_tools.get(node, [])}
+    return bound | (set(cycle) & set(description.tools))
+
+
 def _depth(description: AgentDescription) -> Depth:
     """From what came back, never from what was asked."""
     if description.edges:
@@ -174,7 +191,9 @@ def _from_langgraph(target: object) -> Introspection | None:
       - `target.get_graph()` returns an object carrying `.nodes` (a mapping of name to
         node) and `.edges` (objects with `.source`/`.target`, or plain 2-tuples);
       - a tool node is any node whose value — or its `.data`, or its `.runnable` — carries
-        `tools_by_name` (a mapping) or `tools` (objects with `.name`);
+        `tools_by_name` (a mapping) or `tools` (objects with `.name`), and which node bound
+        which is kept in `node_tools` rather than only flattened into `tools`: the cycle
+        obligation needs the mapping to turn a node in a loop into a wireable tool name;
       - HITL points are the node names in `interrupt_before` / `interrupt_after` on the
         compiled object, and nothing else is inferred. LangGraph's newer `interrupt()`
         inside a node body is invisible to static reading, so a graph using it reaches
@@ -195,7 +214,9 @@ def _from_langgraph(target: object) -> Introspection | None:
     if nodes is None and not edges:
         return None
 
-    tools = sorted({name for node in (nodes or {}).values() for name in _tools_of(node)})
+    node_tools = {name: _tools_of(node) for name, node in (nodes or {}).items()}
+    node_tools = {name: bound for name, bound in node_tools.items() if bound}
+    tools = sorted({name for bound in node_tools.values() for name in bound})
     hitl = sorted(
         {
             str(name)
@@ -204,7 +225,13 @@ def _from_langgraph(target: object) -> Introspection | None:
             if str(name) not in STRUCTURAL
         }
     )
-    description = AgentDescription(tools=tools, edges=edges, cycles=cycles(edges), hitl_points=hitl)
+    description = AgentDescription(
+        tools=tools,
+        edges=edges,
+        cycles=cycles(edges),
+        hitl_points=hitl,
+        node_tools=node_tools,
+    )
     notes = []
     if not tools:
         notes.append("no node exposes a tool binding, so tool names were not visible")

@@ -137,6 +137,28 @@ def acyclic_graph() -> FakeCompiled:
     return FakeCompiled(FakeGraph(nodes, edges))
 
 
+def side_tool_graph() -> FakeCompiled:
+    """A loop whose tool node binds one tool, beside a tool node the loop never reaches.
+
+    The shape that separates "a tool this cycle can call" from "a tool of this agent":
+    `send_certificate` hangs off `audit`, outside the `agent -> tools -> agent` loop, so
+    bounding it says nothing about the loop.
+    """
+    nodes: dict[str, object] = {
+        "agent": FakePlainNode(),
+        "tools": FakeToolNode(["cancel_reservation"]),
+        "audit": FakeToolNode(["send_certificate"]),
+    }
+    edges = [
+        FakeEdge("__start__", "agent"),
+        FakeEdge("agent", "tools"),
+        FakeEdge("tools", "agent"),
+        FakeEdge("agent", "audit"),
+        FakeEdge("audit", "__end__"),
+    ]
+    return FakeCompiled(FakeGraph(nodes, edges))
+
+
 def nodeless_graph() -> FakeCompiled:
     """Edges but no readable node mapping — topology without tool names."""
     return FakeCompiled(FakeGraph({}, [FakeEdge("a", "b"), FakeEdge("b", "a")]))

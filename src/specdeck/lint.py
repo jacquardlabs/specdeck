@@ -35,7 +35,7 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card, CardError, parse
-from .introspect import STRUCTURAL, Depth, Introspection
+from .introspect import STRUCTURAL, Depth, Introspection, bounding_tools
 from .ir import AtMost, Bound, Measure, Never, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
@@ -505,14 +505,23 @@ def _agent_definition(cards: list[Path], introspection: Introspection | None) ->
 def _unbounded_cycles(introspection: Introspection, properties: list[Property]) -> list[Finding]:
     """Every cycle has a bounded or escalation wire. **Error.**
 
-    What satisfies it is exactly a wire naming a node *in* the cycle: `never` or `at_most`
-    on that tool, or an `after K` escalation whose follow-up tool is in it — which is
-    precisely the set `wires.named_tools` returns. A trace-level bound does not count.
+    What satisfies it is a wire naming a tool the cycle can call — `never` or `at_most` on
+    one of them, or an `after K` escalation whose follow-up tool is one of them — where
+    "can call" is `introspect.bounding_tools`: the tools the cycle's own nodes bind, plus a
+    node that is itself a tool. A wire naming the *node* does not, because it is not a
+    check: wires match `execute_tool` spans by tool name, so `tools: at_most 3` compiles to
+    a property no trace can satisfy. A trace-level bound does not count either —
     `latency: under 120s` terminates a run, not a loop, and the format's own example card
     carries one, so counting it would ship this ERROR unreachable on any deck that bounds
     latency. See DECISIONS.md, 2026-08-25.
+
+    The gate is the cycle list rather than the depth: a description that declares its own
+    cycles and no edges is below TOPOLOGY and still has the thing this rule checks.
     """
-    if introspection.depth is not Depth.TOPOLOGY:
+    description = introspection.description
+    if not description.cycles:
+        if introspection.depth is Depth.TOPOLOGY:
+            return []
         return [
             Finding(
                 rule="unbounded-cycle",
@@ -525,22 +534,43 @@ def _unbounded_cycles(introspection: Introspection, properties: list[Property]) 
             )
         ]
     bounded = set(named_tools(properties))
-    return [
-        Finding(
-            rule="unbounded-cycle",
-            severity=Severity.ERROR,
-            card=AGENT_DEF,
-            message=(
-                f"the cycle through {', '.join(cycle)} has no wire on any card in this "
-                "deck. "
-                "Bound a node in it with `<tool>: never` or `<tool>: at_most <n>`, or "
-                "escalate out of it with `<tool>: after <k> <marker>`. A trace-level "
-                "bound such as `latency: under 120s` does not bound a loop."
-            ),
-        )
-        for cycle in introspection.description.cycles
-        if not bounded & set(cycle)
-    ]
+    findings = []
+    for cycle in description.cycles:
+        wireable = bounding_tools(description, cycle)
+        if not wireable:
+            # Every wire subject is a tool name, so a loop through routers and chat steps
+            # alone is one no card can bound. Reported as blindness rather than as an
+            # ERROR whose instruction nobody could follow.
+            findings.append(
+                Finding(
+                    rule="unbounded-cycle",
+                    severity=Severity.SKIPPED,
+                    card=AGENT_DEF,
+                    message=(
+                        f"the cycle through {', '.join(cycle)} passes no node that binds a "
+                        "tool, so no wire can name anything inside it and whether it is "
+                        "bounded could not be checked"
+                    ),
+                )
+            )
+        elif not bounded & wireable:
+            findings.append(
+                Finding(
+                    rule="unbounded-cycle",
+                    severity=Severity.ERROR,
+                    card=AGENT_DEF,
+                    message=(
+                        f"the cycle through {', '.join(cycle)} has no wire on any card in "
+                        f"this deck. Bound a tool it calls — {', '.join(sorted(wireable))} "
+                        "— with `<tool>: never` or `<tool>: at_most <n>`, or escalate out "
+                        "of it with `<tool>: after <k> <marker>`. A wire naming the node "
+                        "rather than the tool is not one: wires match tool names. Nor is a "
+                        "trace-level bound such as `latency: under 120s`, which bounds a "
+                        "run and not a loop."
+                    ),
+                )
+            )
+    return findings
 
 
 def _unreferenced_bindings(
