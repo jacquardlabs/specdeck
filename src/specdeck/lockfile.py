@@ -37,7 +37,9 @@ class StaleLock(Exception):
 def lock_key(card_path: Path | str, lock_path: Path | str) -> str:
     """A card's key in the lockfile: its path relative to the lockfile, forward-slashed.
 
-    One derivation, imported by both the runner and lint. Keying on the path as typed made
+    One derivation, imported by the runner, by lint, and by `spec.baseline.toml`, which
+    sits beside this file and keys its cards the same way so the two cannot disagree about
+    which card is which. Keying on the path as typed made
     `cards/x.md` and `/abs/cards/x.md` two different cards; keying on the bare filename —
     which lint did — made `cards/airline/refund.md` verify clean in the runner and report
     `not in the lockfile` in lint, at the same commit, with a `--relock` hint that fixed
@@ -127,27 +129,31 @@ class Lockfile(BaseModel):
     def to_toml(self) -> str:
         lines = [
             "# Written by specdeck. Refresh with --relock; do not hand-edit.",
-            f"semconv = {_quote(self.semconv)}",
+            f"semconv = {quote(self.semconv)}",
             "",
             "[judge]",
-            f"model = {_quote(self.judge_model)}",
+            f"model = {quote(self.judge_model)}",
             "",
             "[simulator]",
-            f"model = {_quote(self.simulator_model)}",
+            f"model = {quote(self.simulator_model)}",
         ]
         for path in sorted(self.cards):
             entry = self.cards[path]
             lines += [
                 "",
-                f"[cards.{_quote(path)}]",
-                f"rubric_hash = {_quote(entry.rubric_hash)}",
-                f"wires_hash = {_quote(entry.wires_hash)}",
-                f"simulator_hash = {_quote(entry.simulator_hash)}",
+                f"[cards.{quote(path)}]",
+                f"rubric_hash = {quote(entry.rubric_hash)}",
+                f"wires_hash = {quote(entry.wires_hash)}",
+                f"simulator_hash = {quote(entry.simulator_hash)}",
             ]
         return "\n".join(lines) + "\n"
 
 
-def _quote(value: str) -> str:
-    """A TOML basic string. Card paths carry dots, so keys are always quoted."""
+def quote(value: str) -> str:
+    """A TOML basic string. Card paths carry dots, so keys are always quoted.
+
+    Public because the baseline file writes the same keys by hand, and one card path
+    escaped two ways is a key that reads back as two cards.
+    """
     escaped = value.replace("\\", "\\\\").replace('"', '\\"')
     return f'"{escaped}"'

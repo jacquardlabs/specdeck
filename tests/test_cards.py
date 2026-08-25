@@ -14,6 +14,8 @@ from pathlib import Path
 
 import pytest
 
+from specdeck.baseline import observed
+from specdeck.builtin import BuiltinConfig, builtin_properties, merge_wires
 from specdeck.card import parse
 from specdeck.cell import run_cell
 from specdeck.cli import _vocabulary
@@ -208,3 +210,54 @@ class TestEveryCardRuns:
     def test_no_cassette_is_orphaned(self) -> None:
         # Every prose edit re-keys the prompt and strands the old recording.
         assert len(list((CARDS / "cassettes").glob("*.json"))) == len(CARD_PATHS)
+
+
+class TestTheFreeWiresChangeNothingHere:
+    """Every committed card authors both a latency wire and `stop_reason`, so both
+    built-ins dedup away and the suite's verdicts are what they were before #17.
+
+    Four of the five author `latency: under 180s` and one `under 120s`; what matters is
+    that each authors *a* latency wire, not which limit it chose.
+    """
+
+    @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
+    def test_every_card_authors_the_two_wires_it_would_otherwise_be_given(self, path: Path) -> None:
+        authored = {p.id for p in compile_wires(parse(path))}
+        assert {"latency", "stop_reason"} <= authored, path.name
+
+    @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
+    def test_no_free_wire_is_evaluated_twice(self, path: Path) -> None:
+        card = parse(path)
+        merged = merge_wires(compile_wires(card), builtin_properties(BuiltinConfig()))
+        assert [p.id for p in merged] == [p.id for p in compile_wires(card)], path.name
+
+    @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
+    def test_the_card_still_passes_against_a_baseline_of_its_own_cost(
+        self, path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Recording what a card cost and then running it must not fail it. This is the
+        # `--update-baseline` round trip, without the CLI.
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        card = parse(path)
+        trace = load_trace(CARDS / "traces" / f"{path.stem}.otlp.json")
+        cell = run_cell(
+            card,
+            [trace],
+            cassettes=CARDS / "cassettes",
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(token_baseline=observed([trace])),
+        )
+        assert cell.passed, path.name
+        assert "token_baseline" in [w.id for w in cell.results[0].wires]
+
+    def test_the_wire_hashes_are_untouched_by_the_free_wires(self) -> None:
+        # The load-bearing one. `compile_wires` feeds `wires_hash`, so a built-in leaking
+        # into it would stale every lock in every user repo on a specdeck upgrade with no
+        # card change. If this fails, the merge landed in the compiler.
+        lock = Lockfile.load(CARDS / "spec.lock.toml")
+        for path in CARD_PATHS:
+            card = parse(path)
+            assert lock.cards[path.name].wires_hash == fingerprint(
+                wires_text(compile_wires(card))
+            ), path.name

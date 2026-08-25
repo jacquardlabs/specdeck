@@ -2,6 +2,7 @@ from pathlib import Path
 
 import pytest
 
+from specdeck.builtin import BuiltinConfig
 from specdeck.card import parse, parse_text
 from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, Run, run_cell
 from specdeck.judge import Cassette, build_prompt, criteria_of
@@ -349,3 +350,169 @@ class TestWasteUnitsAreNotSummed:
         totals = run_cell(card, traces, cassettes=tmp_path, n=1, k=1).waste_tokens
         assert set(totals) == {Kind.RETRY_LOOP, Kind.STALE_CONTEXT}
         assert totals[Kind.RETRY_LOOP] != totals[Kind.STALE_CONTEXT]
+
+
+class TestTheFreeWiresAreEvaluated:
+    """Three wires no card authored, merged in here and nowhere else. See builtin.py."""
+
+    PROSE_ONLY = "# Scenario: x\nThe agent answers.\n"
+
+    def _prose_card(self):
+        return parse_text(self.PROSE_ONLY, path="cards/x.md")
+
+    def test_a_card_authoring_nothing_still_evaluates_two_wires(self, tmp_path: Path, card) -> None:
+        prose = self._prose_card()
+        traces = [conversation()]
+        record(tmp_path, prose, traces, {"prose": True})
+        cell = run_cell(prose, traces, cassettes=tmp_path, n=1, k=1)
+        assert [w.id for w in cell.results[0].wires] == ["stop_reason", "latency"]
+
+    def test_a_truncated_run_fails_a_card_that_never_asked_about_truncation(
+        self, tmp_path: Path
+    ) -> None:
+        # The headline behaviour of #17: the card says nothing about stop_reason, and a
+        # run that ran out of room still fails rather than being graded on a cut-off answer.
+        prose = self._prose_card()
+        one = conversation()
+        chat = next(s for s in one.spans if s.operation is Operation.CHAT)
+        chat.attributes[GenAI.RESPONSE_FINISH_REASONS] = ["max_tokens"]
+        cell = run_cell(prose, [one], cassettes=tmp_path, n=1, k=1)
+        assert cell.passed is False
+        failed = [w.id for w in cell.results[0].wires if not w.passed]
+        assert failed == ["stop_reason"]
+
+    def test_a_free_gate_short_circuits_the_judge_like_an_authored_one(
+        self, tmp_path: Path
+    ) -> None:
+        # No cassette is recorded, so a judge call here would raise rather than replay.
+        prose = self._prose_card()
+        one = conversation()
+        chat = next(s for s in one.spans if s.operation is Operation.CHAT)
+        chat.attributes[GenAI.RESPONSE_FINISH_REASONS] = ["max_tokens"]
+        cell = run_cell(prose, [one], cassettes=tmp_path, n=1, k=1)
+        assert cell.judge_calls == 0
+        assert cell.results[0].judged is None
+
+    def test_the_budget_reaches_the_run(self, tmp_path: Path) -> None:
+        prose = self._prose_card()
+        cell = run_cell(
+            prose,
+            [conversation(seconds=200.0)],
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(latency_budget_s=120.0),
+        )
+        assert cell.passed is False
+        assert [w.id for w in cell.results[0].wires if not w.passed] == ["latency"]
+
+    def test_an_authored_latency_wire_wins_over_the_default(self, tmp_path: Path, card) -> None:
+        # The card says 120s; the default here is one second and must not apply.
+        traces = [conversation(seconds=5.0)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(
+            card,
+            traces,
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(latency_budget_s=1.0),
+        )
+        assert cell.passed is True
+        assert [w.id for w in cell.results[0].wires].count("latency") == 1
+
+    def test_a_free_wire_never_appears_twice(self, tmp_path: Path, card) -> None:
+        traces = [conversation()]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
+        ids = [w.id for w in cell.results[0].wires]
+        assert len(ids) == len(set(ids))
+
+    def test_the_free_wires_add_nothing_to_the_credit_denominator(
+        self, tmp_path: Path, card
+    ) -> None:
+        # They are gate tier and carry no weight, so the card's own total is unchanged.
+        traces = [conversation()]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        assert run_cell(card, traces, cassettes=tmp_path, n=1, k=1).credit_total == 3
+
+
+class TestTheTokenRegression:
+    def _card(self):
+        return parse_text("# Scenario: x\nThe agent answers.\n", path="cards/x.md")
+
+    def test_no_baseline_recorded_is_no_regression_wire(self, tmp_path: Path) -> None:
+        # A first install must not go red for a number nobody has written down.
+        traces = [conversation(tokens=100_000)]
+        record(tmp_path, self._card(), traces, {"prose": True})
+        cell = run_cell(self._card(), traces, cassettes=tmp_path, n=1, k=1)
+        assert cell.passed is True
+        assert "token_baseline" not in [w.id for w in cell.results[0].wires]
+
+    def test_a_run_inside_the_tolerance_passes(self, tmp_path: Path) -> None:
+        traces = [conversation(tokens=105)]
+        record(tmp_path, self._card(), traces, {"prose": True})
+        cell = run_cell(
+            self._card(),
+            traces,
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(token_baseline=100, tolerance=0.1),
+        )
+        assert cell.passed is True
+
+    def test_a_run_past_the_tolerance_fails_the_cell(self, tmp_path: Path) -> None:
+        cell = run_cell(
+            self._card(),
+            [conversation(tokens=200)],
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(token_baseline=100, tolerance=0.1),
+        )
+        assert cell.passed is False
+        failed = [(w.id, w.detail) for w in cell.results[0].wires if not w.passed]
+        assert failed == [("token_baseline", "200, under 111")]
+
+    def test_a_trace_that_reports_no_usage_fails_closed_once_a_baseline_exists(
+        self, tmp_path: Path
+    ) -> None:
+        # Documented rather than discovered: an emitter that stops reporting usage reds
+        # the card, and the detail names the attribute rather than a cost.
+        silent = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=1.0),
+            span("chat-0", Operation.CHAT),
+        )
+        cell = run_cell(
+            self._card(),
+            [silent],
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(token_baseline=100),
+        )
+        assert cell.passed is False
+        detail = next(w.detail for w in cell.results[0].wires if w.id == "token_baseline")
+        assert GenAI.USAGE_OUTPUT_TOKENS in detail
+
+    def test_a_cards_own_token_cap_and_the_regression_both_evaluate(
+        self, tmp_path: Path, card
+    ) -> None:
+        # An absolute ceiling and a comparison against what this card used to cost are
+        # different assertions, so both are checked. Lint never sees this list.
+        traces = [conversation(tokens=105)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(
+            card,
+            traces,
+            cassettes=tmp_path,
+            n=1,
+            k=1,
+            builtin=BuiltinConfig(token_baseline=100),
+        )
+        assert cell.passed is True
+        # The regression is a gate wire on the run; the card's own cap is a credit wire
+        # and still earns its weight beside the criterion's two.
+        assert "token_baseline" in [w.id for w in cell.results[0].wires]
+        assert cell.credit_mean == 3.0

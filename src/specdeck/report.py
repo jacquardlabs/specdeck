@@ -27,6 +27,7 @@ from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
+from .judge import JudgeResult
 from .rates import Rates
 from .tier import Tier
 from .waste import UNITS, Finding, Level
@@ -78,7 +79,7 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
             line = _verdict_line(criterion.passed)
             # The SME's own sentence, not the slug: the primary persona has to recognise
             # their own words in the report for their own card.
-            line.append(_headline(criterion.text))
+            line.append(headline(criterion.text))
             if criterion.tier is Tier.CREDIT:
                 line.append(f"  (credit {criterion.weight})", style="dim")
             console.print(line)
@@ -89,7 +90,7 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
 
     judged = [r.judged for r in cell.results if r.judged]
     console.print(
-        f"\n  [dim]judge {cell.judge_model} ({_source(judged)}), "
+        f"\n  [dim]judge {cell.judge_model} ({judge_source(judged)}), "
         f"{cell.judge_calls} call{'' if cell.judge_calls == 1 else 's'} "
         f"over {cell.runs} run{'' if cell.runs == 1 else 's'}[/dim]"
     )
@@ -236,13 +237,18 @@ def _detail_run(cell: Cell) -> tuple[Run, int]:
     return cell.results[0], 0
 
 
-def _headline(text: str) -> str:
-    """One line of the criterion, so a multi-paragraph prose block stays readable."""
+def headline(text: str) -> str:
+    """One line of the criterion, so a multi-paragraph prose block stays readable.
+
+    Public: a JUnit failure names the criterion the same way the console does, and the SME
+    has to recognise their own sentence in either one.
+    """
     first = text.strip().splitlines()[0] if text.strip() else "(empty)"
     return first if len(first) <= 72 else f"{first[:71]}…"
 
 
-def _source(judged: list) -> str:
+def judge_source(judged: list[JudgeResult]) -> str:
+    """Where the cell's judge verdicts came from. Public: the JUnit report says it too."""
     if not judged:
         return "not called"
     if all(j.replayed for j in judged):

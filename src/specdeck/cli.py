@@ -14,9 +14,12 @@ from rich.text import Text
 
 from specdeck import __version__
 from specdeck.agent import AgentAdapter
+from specdeck.baseline import BASELINE_NAME, Baseline, BaselineError, observed
+from specdeck.builtin import DEFAULT_LATENCY_BUDGET_S, BuiltinConfig
 from specdeck.card import Card, CardError, parse
-from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
+from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, Cell, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
+from specdeck.junit import to_xml
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
@@ -35,7 +38,19 @@ app = typer.Typer(
     add_completion=False,
 )
 
+#: The exit-code registry. A caller that reads only the code routes on it, so a code means
+#: one thing forever and a genuinely new state takes a new number rather than sharing one.
+#: 4 is reserved, unissued: "the matrix did not complete: budget" (#15). A run that could
+#: not start and a run that answered are different facts, which is why 2 and 3 exist.
+EXIT_CODES = {
+    0: "the cell passed",
+    1: "the cell failed its gate",
+    2: "the run could not start — a user error, one of USER_ERRORS below",
+    3: "specdeck itself broke",
+}
+
 USER_ERRORS = (
+    BaselineError,
     CardError,
     CellError,
     JudgeError,
@@ -118,6 +133,22 @@ def run(
     rates_path: Path | None = typer.Option(  # noqa: B008
         None, "--rates", help=f"A {RATES_FILE} to merge over the built-in table."
     ),
+    latency_budget: float = typer.Option(
+        DEFAULT_LATENCY_BUDGET_S,
+        "--latency-budget",
+        help="Seconds the built-in latency wire allows, for a card that authors none.",
+    ),
+    baseline_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--baseline",
+        help=f"Recorded token costs (default: {BASELINE_NAME} beside the card).",
+    ),
+    update_baseline: bool = typer.Option(
+        False, "--update-baseline", help="Record this run's token cost and continue."
+    ),
+    junit_xml: Path | None = typer.Option(  # noqa: B008
+        None, "--junit-xml", help="Write a JUnit XML report here, for CI to render."
+    ),
 ) -> None:
     """Evaluate one card — against recorded traces, or by running the agent."""
     console = Console()
@@ -154,6 +185,13 @@ def run(
             max_turns=max_turns,
             live=live,
         )
+        builtin = _builtin(
+            card_path,
+            baseline_path,
+            traces,
+            latency_budget=latency_budget,
+            update=update_baseline,
+        )
         cell = run_cell(
             card,
             traces,
@@ -168,6 +206,7 @@ def run(
             simulator_model=lock.simulator_model if agent else "",
             live=live,
             concurrency=concurrency,
+            builtin=builtin,
         )
     except USER_ERRORS as error:
         _fail(console, error)
@@ -180,7 +219,61 @@ def run(
         raise typer.Exit(3) from None
 
     render(cell, console, rates=rates)
+    _write_junit(junit_xml, cell, console)
     raise typer.Exit(0 if cell.passed else 1)
+
+
+def _builtin(
+    card_path: Path,
+    baseline_path: Path | None,
+    traces: list[Trace],
+    *,
+    latency_budget: float,
+    update: bool,
+) -> BuiltinConfig:
+    """What the free wires are configured with, resolved against the card.
+
+    The baseline file sits beside the card like the lockfile and the cassettes, so where
+    the runner was invoked from cannot change which costs a card is compared against.
+
+    A repo with no baseline recorded runs green and simply gets no regression wire. The
+    free gates exist to catch a card getting worse; there is nothing yet to be worse than,
+    and a first install must not go red for a number nobody has written down.
+    """
+    if latency_budget <= 0:
+        # Checked here rather than left to pydantic: a `ValidationError` is not a
+        # `USER_ERROR`, so a number the user typed would exit 3, "specdeck itself broke".
+        raise CellError(
+            f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
+        )
+    path = baseline_path or card_path.parent / BASELINE_NAME
+    key = lock_key(card_path, path)
+    recorded = Baseline.load(path)
+    if update:
+        # `observed` refuses before anything is written, so a run that cannot honestly be
+        # recorded leaves no file behind claiming it was.
+        recorded = recorded.record(key, observed(traces))
+        recorded.save(path)
+    return BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key))
+
+
+def _write_junit(path: Path | None, cell: Cell, console: Console) -> None:
+    """The CI report, when one was asked for.
+
+    Written on pass and on fail alike — a cell that failed is exactly what CI needs to
+    render. Reported here rather than through the funnel above, because the cell has
+    already run and its report is already on screen: this is not "the run could not
+    start". It exits 2 all the same, on the rule `--rates` already follows — a file named
+    on the invocation is part of it, and CI silently receiving no report is worse than a
+    loud refusal.
+    """
+    if path is None:
+        return
+    try:
+        path.write_text(to_xml(cell))
+    except OSError as error:
+        console.print("[red]error[/red]", Text(f"cannot write the JUnit report to {path}: {error}"))
+        raise typer.Exit(2) from None
 
 
 def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:

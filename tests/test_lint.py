@@ -458,3 +458,25 @@ class TestTheRunnerAndLintAgreeOnTheKey:
         lock = self._relock(workspace)
         findings = lint_paths([workspace], lock=Lockfile.load(lock), lock_path=lock).findings
         assert rules(findings, Severity.ERROR) == [], findings
+
+
+class TestLintSeesAuthoredWiresOnly:
+    """Lint reads the card, never the runner's free wires.
+
+    If a built-in reached `_consistency`, every committed card would gain a
+    `contradictory-wires` error for a measure it bounds exactly once.
+    """
+
+    def _card(self, tmp_path: Path, body: str) -> Path:
+        path = tmp_path / "x.md"
+        path.write_text(f"# Scenario: x\nThe agent answers.\n{body}")
+        return path
+
+    def test_a_card_bounding_a_measure_once_reports_no_contradiction(self, tmp_path: Path) -> None:
+        # The runner also bounds `agent_duration_s` here, from the built-in latency wire.
+        path = self._card(tmp_path, "\nwire:\n  - latency: under 30s\n")
+        assert "contradictory-wires" not in rules(lint_card(path))
+
+    def test_a_card_with_no_wires_at_all_reports_no_wire_finding(self, tmp_path: Path) -> None:
+        path = self._card(tmp_path, "")
+        assert rules(lint_card(path), Severity.ERROR) == []

@@ -182,3 +182,21 @@ class TestLockKey:
     def test_it_is_forward_slashed(self, tmp_path: Path) -> None:
         # The lockfile is committed and read on every platform.
         assert "\\" not in lock_key(tmp_path / "a" / "b.md", tmp_path / "spec.lock.toml")
+
+
+class TestTheFingerprintOfANoWireCard:
+    """A card with no wires hashes an empty compiled list, and must keep doing so.
+
+    Pinned to the literal string rather than recomputed: the whole point is that a future
+    change folding runner-owned defaults into the pinned derivation fails here loudly,
+    rather than quietly re-keying every `wires_hash` in every repo that uses specdeck.
+    """
+
+    EMPTY = "sha256:4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+
+    def test_an_empty_wire_set_has_a_stable_fingerprint(self) -> None:
+        from specdeck.card import parse_text
+        from specdeck.wires import compile_wires, wires_text
+
+        card = parse_text("# Scenario: x\nThe agent answers.\n")
+        assert fingerprint(wires_text(compile_wires(card))) == self.EMPTY
