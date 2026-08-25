@@ -9,6 +9,12 @@ blockers, one of which is that intersecting the *old* side of a hunk needs the b
 that a unified diff does not carry. Hunk ranges are therefore not parsed at all: a range
 nothing reads is a range that drifts.
 
+Two known holes sit outside that edge set on purpose, so neither reads as an oversight:
+the replayed cassette and `spec.baseline.toml` each decide a verdict and neither is an
+edge, because the set above is ratified and enumerated and widening it is a decision rather
+than a fix (#96); and a deleted recording that leaves a card's glob still matching others
+selects nothing (#97).
+
 Two failures that look alike and must never be conflated:
 
 * a **malformed** diff — non-empty input that yields no change — raises `DiffError`. A
