@@ -144,11 +144,11 @@ class TestPolicyCoverage:
         path.write_text(body)
         return path
 
-    def test_the_committed_deck_groups_five_cards_onto_one_document(self) -> None:
+    def test_the_committed_deck_groups_six_cards_onto_one_document(self) -> None:
         found = policy_coverage(deck())
         assert len(found) == 1
         assert Path(found[0].path).name == "airline.md"
-        assert len(found[0].cards) == 5
+        assert len(found[0].cards) == 6
         assert len(found[0].clauses) == 26
 
     def test_a_card_with_no_policy_contributes_nothing(self, tmp_path: Path) -> None:

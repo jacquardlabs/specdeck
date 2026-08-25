@@ -20,7 +20,7 @@ from specdeck.builtin import BuiltinConfig, builtin_properties, merge_wires
 from specdeck.card import parse
 from specdeck.cell import run_cell
 from specdeck.cli import _vocabulary, app
-from specdeck.ir import AfterKThen, AtMost, Bound, Never
+from specdeck.ir import AfterKThen, AtMost, Bound, Never, NeverRequested
 from specdeck.judge import criteria_of, rubric_text
 from specdeck.lint import Severity, lint_paths
 from specdeck.lockfile import Lockfile, fingerprint
@@ -44,8 +44,8 @@ def ids(paths: list[Path]) -> list[str]:
 
 
 class TestSuiteShape:
-    def test_five_cards_ship(self) -> None:
-        assert len(CARD_PATHS) == 5, ids(CARD_PATHS)
+    def test_six_cards_ship(self) -> None:
+        assert len(CARD_PATHS) == 6, ids(CARD_PATHS)
 
     def test_every_card_parses(self) -> None:
         for path in CARD_PATHS:
@@ -138,8 +138,14 @@ class TestCoverage:
         return [p.rule for path in CARD_PATHS for p in compile_wires(parse(path))]
 
     def test_every_shipped_pattern_appears_somewhere(self) -> None:
+        """#92: equality, not a subset.
+
+        As a subset check this passed while `NeverRequested` was absent from every card,
+        which is how a shipped pattern went unexercised by the deck for a whole milestone.
+        Equality makes the next added pattern fail here until a card carries it.
+        """
         kinds = {type(rule) for rule in self._rules()}
-        assert {Never, AtMost, Bound, AfterKThen} <= kinds
+        assert kinds == {Never, NeverRequested, AtMost, Bound, AfterKThen}
 
     def test_exactly_one_card_carries_the_escalation_wire(self) -> None:
         carrying = [
