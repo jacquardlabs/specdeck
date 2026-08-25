@@ -846,6 +846,20 @@ class TestTheWholeDeck:
         assert result.exit_code == 0, result.stdout
         assert "5 cards, 5 passed" in " ".join(result.stdout.split())
 
+    def test_the_baseline_resolves_from_the_deck_root_too(self, tmp_path: Path) -> None:
+        # Resolved from the nested card's own parent instead, there is no baseline beside
+        # it, the regression wire is never built, and the deck reports green over a
+        # regression the same card fails when it is run on its own.
+        cards = self._nested(tmp_path)
+        (cards / "spec.baseline.toml").write_text(
+            f'[cards."sub/{CARD.name}".default]\noutput_tokens = 1\n'
+        )
+        result = invoke(str(cards), "--cassettes", str(cards / "cassettes"))
+        assert result.exit_code == 1, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "5 cards, 4 passed" in unwrapped
+        assert "token_baseline" in unwrapped
+
     def test_a_nested_card_keyed_under_its_bare_name_is_stale(self, tmp_path: Path) -> None:
         # The other side of the same key: the bare name is not what the runner writes for
         # a card in a subdirectory, so the deck must not accept it.
@@ -894,6 +908,33 @@ class TestTheWholeDeck:
         result = invoke(str(CARDS), "--rates", str(tmp_path / "absent.toml"))
         assert result.exit_code == 2, result.stdout
         assert "PASS" not in result.stdout and "FAIL" not in result.stdout
+
+    def test_a_glob_matching_only_a_directory_is_one_error_among_five(self, tmp_path: Path) -> None:
+        # `IsADirectoryError` is not a `USER_ERROR`, so a directory reaching `load_trace`
+        # escapes the per-card catch: exit 3, "specdeck itself broke", and four healthy
+        # cards produce no result at all.
+        cards = _copy_cards(tmp_path)
+        (cards / "traces" / "archive").mkdir()
+        card = cards / CARD.name
+        card.write_text(
+            card.read_text().replace(
+                "traces: traces/basic-economy-return-change.otlp.json", "traces: traces/arch*"
+            )
+        )
+        result = invoke(str(cards))
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "internal error" not in unwrapped
+        assert "4 cards, 4 passed, 1 could not run" in unwrapped
+
+    def test_a_simulator_model_disagreeing_with_the_pin_is_refused_over_a_deck_too(self) -> None:
+        # `--judge-model`'s sibling in the lock, and the one live in replay mode. A deck
+        # that silently accepts a flag a card rejects is a green run that verified nothing
+        # about the pin.
+        result = invoke(str(CARDS), "--simulator-model", "gpt-4o")
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "--simulator-model gpt-4o disagrees with the pinned" in unwrapped
 
     def test_a_cap_with_no_matrix_to_cap_is_refused_over_a_deck_too(self) -> None:
         # `--matrix` is refused with a directory, so a cap here can never cap anything.

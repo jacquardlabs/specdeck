@@ -170,7 +170,9 @@ class TestDeclaredTraces:
     """`traces:` is one glob, resolved against the card's own directory."""
 
     def _card(self, tmp_path: Path, pattern: str, *names: str) -> Path:
-        (tmp_path / "traces").mkdir(exist_ok=True)
+        # An `archive/` beside the recordings, because a subdirectory there is ordinary
+        # and a fixture holding only regular files is why a directory match went unseen.
+        (tmp_path / "traces" / "archive").mkdir(parents=True, exist_ok=True)
         for name in names:
             (tmp_path / "traces" / name).write_text("{}")
         card = tmp_path / "refund.md"
@@ -206,6 +208,29 @@ class TestDeclaredTraces:
         # The emptiness decision belongs to the caller: lint reports a finding and the
         # runner refuses to start, and those are different answers to one fact.
         assert parse(self._card(tmp_path, "traces/*.otlp.json")).trace_paths == []
+
+    def test_a_directory_the_glob_matches_is_not_a_recording(self, tmp_path: Path) -> None:
+        # `load_trace` raises `IsADirectoryError` on one, which is not a `USER_ERROR`, so
+        # a directory reaching it exits 3 — "specdeck itself broke" — for a glob the user
+        # typed, and over a deck it takes the other cards' results with it.
+        path = self._card(tmp_path, "traces/*", "a.otlp.json")
+        assert [p.name for p in parse(path).trace_paths] == ["a.otlp.json"]
+
+    def test_a_glob_matching_only_a_directory_matches_nothing(self, tmp_path: Path) -> None:
+        # Which is the answer the two callers already handle: lint reports `dead-path`
+        # and the runner refuses to start.
+        assert parse(self._card(tmp_path, "traces/arch*")).trace_paths == []
+
+    def test_an_escaping_directory_match_is_still_refused_by_name(self, tmp_path: Path) -> None:
+        # Containment runs before the file filter, so a match outside the card's directory
+        # is refused as an escape rather than degrading to "matches no file".
+        (tmp_path / "archive").mkdir()
+        inner = tmp_path / "deck"
+        inner.mkdir()
+        card = inner / "refund.md"
+        card.write_text("# Scenario: x\ncontext:\n  traces: ../arch*\n\nThe agent answers.\n")
+        with pytest.raises(CardError, match=r"outside the card's directory"):
+            _ = parse(card).trace_paths
 
     def test_a_glob_escaping_the_card_directory_is_rejected(self, tmp_path: Path) -> None:
         # `Path('cards').glob('../*.md')` really does escape, so containment has to run

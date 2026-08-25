@@ -56,6 +56,11 @@ invoked it. `--trace` overrides it for an ad-hoc run against a fresh recording, 
 nothing is an error in both the runner and lint, never an empty run: a card that silently
 evaluates zero traces reports green, which is the drift cards exist to catch.
 
+Only files are matches. A directory the glob catches — an `archive/` beside the recordings
+— is not a recording and is dropped, so `traces/*` reads the files beside it rather than
+failing on the directory, and a glob catching nothing but directories matches nothing and
+is the same error.
+
 Matches are sorted, so run order in the report is filename order and is stable — which
 means `run-10` sorts before `run-2`. Zero-pad the index if the order matters to you.
 

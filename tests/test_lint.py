@@ -118,6 +118,13 @@ class TestDeclaredTraces:
         card = self._card(tmp_path, "traces/*.otlp.json", "a.otlp.json")
         assert [f for f in lint_card(card) if f.rule == "dead-path"] == []
 
+    def test_a_glob_matching_only_a_directory_is_a_dead_path_error(self, tmp_path: Path) -> None:
+        # Lint is the pre-flight for a bad `traces:` value. A directory is not a
+        # recording, so this card evaluates zero traces and must not lint clean.
+        (tmp_path / "traces" / "archive").mkdir(parents=True)
+        card = self._card(tmp_path, "traces/arch*")
+        assert "dead-path" in rules(lint_card(card), Severity.ERROR)
+
     def test_a_card_declaring_no_traces_reports_nothing(self, tmp_path: Path) -> None:
         card = tmp_path / "x.md"
         card.write_text("# Scenario: x\n\nThe agent answers.\n")

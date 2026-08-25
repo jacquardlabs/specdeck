@@ -227,6 +227,7 @@ def run(
             live=live,
             concurrency=concurrency,
             judge_model=judge_model,
+            simulator_model=simulator_model,
             budget_usd=budget_usd,
         )
     try:
@@ -426,6 +427,7 @@ def _run_deck(
     live: bool,
     concurrency: int,
     judge_model: str | None,
+    simulator_model: str | None,
     budget_usd: float | None,
 ) -> NoReturn:
     """Run every card under `root` and exit on the worst thing that happened.
@@ -470,6 +472,7 @@ def _run_deck(
             live=live,
             concurrency=concurrency,
             judge_model=judge_model,
+            simulator_model=simulator_model,
         )
     except USER_ERRORS as error:
         _fail(console, error)
@@ -513,6 +516,7 @@ def _deck(
     live: bool,
     concurrency: int,
     judge_model: str | None,
+    simulator_model: str | None,
 ) -> Suite:
     """Every card under `root`, run against the traces it declares.
 
@@ -524,8 +528,11 @@ def _deck(
     one worth reading, and a deck that aborts on card one hides four results that were
     free. It still exits 2 — the code has to say the deck did not answer.
 
-    The lockfile resolves from the deck root rather than from each card's parent, so a
-    card in a subdirectory verifies under the `sub/x.md` key `lock_key` already writes.
+    The lockfile and the baseline both resolve from the deck root rather than from each
+    card's parent, so a card in a subdirectory verifies and is priced under the `sub/x.md`
+    key `lock_key` already writes for both files. Resolved per card, a nested card would
+    silently lose its `token_baseline` gate — the deck reporting green over a regression
+    the same card fails when it is run on its own.
     """
     paths = cards_under([root])
     if not paths:
@@ -533,6 +540,7 @@ def _deck(
         # report a suite exists to make impossible.
         raise CardError(f"no cards under {root}")
     lock_file = lock_path or root / LOCKFILE_NAME
+    baseline_file = baseline_path or root / BASELINE_NAME
     cells: list[Cell] = []
     errors: list[SuiteError] = []
     for path in paths:
@@ -542,13 +550,14 @@ def _deck(
                     path,
                     lock_file=lock_file,
                     cassettes=cassettes,
-                    baseline_path=baseline_path,
+                    baseline_file=baseline_file,
                     runs=runs,
                     threshold=threshold,
                     latency_budget=latency_budget,
                     live=live,
                     concurrency=concurrency,
                     judge_model=judge_model,
+                    simulator_model=simulator_model,
                 )
             )
         except USER_ERRORS as error:
@@ -561,15 +570,21 @@ def _deck_cell(
     *,
     lock_file: Path,
     cassettes: Path | None,
-    baseline_path: Path | None,
+    baseline_file: Path,
     runs: int | None,
     threshold: int | None,
     latency_budget: float,
     live: bool,
     concurrency: int,
     judge_model: str | None,
+    simulator_model: str | None,
 ) -> Cell:
-    """One card of a deck, from the traces it declares. The single-card path's helpers."""
+    """One card of a deck, from the traces it declares. The single-card path's helpers.
+
+    Both pinned models are handed to `_lock`, not just the judge: the single-card path
+    refuses a `--simulator-model` that disagrees with the pin, and a deck that accepts a
+    flag a card rejects is a green run that verified nothing about the pin.
+    """
     card = parse(path)
     recordings = [load_trace(one) for one in _traces(card, path, [], None)]
     n, k = _cell_size(runs, threshold, recordings)
@@ -580,11 +595,12 @@ def _deck_cell(
         semconv=recordings[0].semconv,
         relock=False,
         judge_model=judge_model,
+        simulator_model=simulator_model,
     )
     for one in recordings:
         lock.verify_semconv(one.semconv)
     builtin, _ = _builtin(
-        path, baseline_path, recordings, latency_budget=latency_budget, update=False
+        path, baseline_file, recordings, latency_budget=latency_budget, update=False
     )
     return run_cell(
         card,

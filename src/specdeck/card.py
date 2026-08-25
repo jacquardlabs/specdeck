@@ -93,7 +93,16 @@ class Card(BaseModel):
             # moved across the versions the project supports. Neither is a `USER_ERROR`,
             # so uncaught, a pattern the user typed would exit 3, "specdeck itself broke".
             raise CardError(f"{self.path}: traces {self.context.traces!r}: {error}") from None
-        return [self._contain(match.resolve(), self.context.traces, "traces") for match in matches]
+        contained = [
+            self._contain(match.resolve(), self.context.traces, "traces") for match in matches
+        ]
+        # Only files are recordings. `traces/*` beside an `archive/` directory would
+        # otherwise hand `load_trace` a directory, and `IsADirectoryError` is not a
+        # `USER_ERROR`: exit 3, "specdeck itself broke", for a glob the user typed — and
+        # over a deck it escapes the per-card catch and takes the other cards' results
+        # with it. Filtered after containment, so a match that escapes is still refused by
+        # name rather than degrading to "matches no file".
+        return [path for path in contained if path.is_file()]
 
     def _contained(self, value: str, key: str) -> Path | None:
         """Resolve a card-declared path, refusing anything outside the card's directory.
