@@ -388,6 +388,11 @@ def _matrix(
         )
         matrix_concurrency = 1
 
+    # Resolved once before anything runs, purely to fail fast: each column builds its own
+    # adapter for isolation, so a bad --agent would otherwise arrive as one identical
+    # CardError per column in the grid rather than one refusal before the grid exists.
+    _adapter(invocation.reference)
+
     baseline_file = baseline_path or invocation.card_path.parent / BASELINE_NAME
     key = lock_key(invocation.card_path, baseline_file)
     recorded = Baseline.load(baseline_file)

@@ -355,6 +355,46 @@ class TestTheBudget:
         flat = " ".join(result.stdout.split())
         assert "cannot recall work in flight" in flat, flat
 
+    def test_a_cap_reached_on_the_last_charge_did_not_stop_anything(self, workspace: Path) -> None:
+        # The distinction `stopped_early` exists for: this matrix overspent by a factor of
+        # a thousand and still ran every column it was asked for, so it completed. Exit 4
+        # would claim a column is missing; the overshoot is stated instead.
+        result = self._capped(
+            workspace,
+            "--budget-usd",
+            "0.01",
+            sonnet={"model": "claude-sonnet-5", "reply": REPLY, "output_tokens": 1_000_000},
+        )
+        assert result.exit_code == 0, result.stdout
+        flat = " ".join(result.stdout.split())
+        assert "skipped" not in flat
+        assert "cannot recall work in flight" in flat
+
+    def test_a_bad_agent_is_one_refusal_not_one_per_column(self, workspace: Path) -> None:
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                str(workspace / "refused.md"),
+                "--agent",
+                "tests.fake_agent:not_a_thing",
+                "--vocabulary",
+                str(workspace / "vocabulary.txt"),
+                "--matrix",
+                str(workspace / "matrix.toml"),
+                "--runs",
+                "1",
+                "--pass-threshold",
+                "1",
+                "--relock",
+                "--simulator-model",
+                MODEL,
+            ],
+        )
+        assert result.exit_code == 2, result.stdout
+        # One refusal, before the grid exists — not one identical CardError per column.
+        assert result.stdout.count("has no") == 1, result.stdout
+
     def test_a_matrix_with_no_cap_still_reports_what_it_spent(self, workspace: Path) -> None:
         result = run(workspace)
         assert result.exit_code == 0, result.stdout

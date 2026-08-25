@@ -113,6 +113,70 @@ Simulator turns record into the same `cassettes/` directory as the judge, under 
 `simulator-` prefix, so a conversation replays without a key once recorded. Later runs
 need none of the three flags above.
 
+### The provider x prompt matrix
+
+```console
+$ specdeck run cards/your-card.md --agent yourpkg.adapter:Agent \
+    --vocabulary cards/vocabulary.txt --matrix cards/matrix.toml --budget-usd 5.00
+```
+
+The matrix lives in its own file, never in the card: a card names what the behaviour must
+be, and a roster of providers is the developer's zone, not the SME's.
+
+```toml
+[budget]
+usd = 5.00              # a hard cap; --budget-usd overrides it
+
+[[provider]]
+name = "sonnet"
+model = "claude-sonnet-5"          # specdeck reads this, only to price the column
+config = { endpoint = "..." }      # specdeck never reads inside `config`
+
+[[prompt]]
+name = "terse"
+config = { system_prompt_path = "prompts/terse.md" }
+```
+
+The columns are the product of the two axes, named `<provider>/<prompt>`, and each one's
+`config` — the prompt table merged over the provider table — is handed verbatim to your
+adapter's `run(messages, tools, config)`. specdeck never looks inside it. An axis may be
+left out entirely, in which case the columns are the other axis alone.
+
+Columns run in parallel, `--matrix-concurrency` at a time (default 2, on top of
+`--concurrency` runs within each column). **`--live` forces one column at a time** and says
+so: the simulator's first turn builds the identical prompt in every column, so two live
+columns would race one cassette. Parallelism therefore pays on replay, which is every run
+after the first.
+
+**What the cap counts, and where it can actually prevent anything.** It counts everything —
+specdeck's own judge and simulator calls, and your agent's own model calls read back off
+the trace — but the two are not symmetric, and the report says so rather than implying a
+guarantee it cannot give:
+
+- specdeck's own spend is genuinely prevented. Each call is checked against the cap before
+  it is made, and every call costs nothing at all in replay.
+- your agent's spend is only ever reactive. Its model calls happen inside `adapter.run`,
+  which spends the money and reports it afterwards through the optional `input_tokens` and
+  `output_tokens` on the `Chat` events it returns. **A single agent run can exceed the whole
+  remaining budget before specdeck sees a token count.**
+- when the cap trips, work already in flight is allowed to finish so the cassette it paid
+  for is recorded. Only new work is refused, so the overshoot is bounded by
+  `--matrix-concurrency` x `--concurrency` calls, and it is printed rather than glossed.
+
+The cap fails closed rather than charging zero for a run nobody can price. Under a cap, a
+column whose `model` has no entry in the rate table refuses the whole matrix before
+anything starts, naming the model; and a run whose trace reports no `gen_ai.usage` or names
+no model at all aborts the remaining columns, naming your adapter. Without a cap none of
+those fire and the run is only measured.
+
+A stopped matrix exits `4`, never `1`: the columns that did not run neither passed nor
+failed, and a CI reading `1` would be told the card regressed. The grid reports every
+column that was asked for, as **PASS**, **FAIL**, **skipped**, **stopped** or **error** —
+never fewer columns than were declared. `--update-baseline` records a token baseline per
+column rather than one for the card, so a cheap provider is not gated at an expensive
+one's cost; a baseline recorded by a single-cell run sits in the `default` slot and the
+run says out loud that no column inherits it.
+
 ### Lint
 
 ```console
