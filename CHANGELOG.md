@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.7.0 (2026-08-25)
+
+### Features
+
+- An example tau-bench airline agent, so --agent is demonstrable
+  ([`e9d5cf6`](https://github.com/jacquardlabs/specdeck/commit/e9d5cf67560df12aff4ffae1dbdfba8495df98f3))
+
+
 ## v0.6.0 (2026-08-25)
 
 ### Features
