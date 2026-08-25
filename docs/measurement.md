@@ -204,7 +204,15 @@ coverage of a five-card deck.
 
 Every table names what it could not see rather than reporting 0% or 0 of 0: no vocabulary
 means no denominator, no traces means exercising was not checked, and a policy document
-written as paragraphs has no clauses to count.
+written as paragraphs has no clauses to count. A file under the deck that does not read as
+a card is listed above the tables and does not stop them — `specdeck lint` owns the `parse`
+error and the exit code it carries.
+
+**A document no card names** is found by looking beside the ones cards do name: every other
+`.md` in a directory holding a named policy. A card there is skipped only when the
+directory also holds a card that names a policy — the layout where the two genuinely live
+together. So a deck keeping policies in their own directory gets the signal, and one
+keeping them beside the cards gets no rows rather than a row per card.
 
 **Path coverage understates, and says so on every line that carries a figure.** The
 denominator comes from introspection and never from the trace — a trace records what

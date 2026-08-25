@@ -127,6 +127,13 @@ def render_coverage(coverage: Coverage, console: Console) -> None:
     check" and "we checked and found nothing" are the two facts a reader must never have to
     guess between.
     """
+    if coverage.unreadable:
+        # Above the tables it thinned: every figure below was taken over the cards that
+        # could be read, and this says which ones could not.
+        console.print("\n  [dim]not read as cards[/dim]")
+        for reason in coverage.unreadable:
+            # A parser message quoting a user's file. Text, never markup.
+            console.print(Text(f"    {reason}", style="yellow"))
     if coverage.policy is not None:
         _policy_coverage(coverage.policy, console)
     if coverage.vocabulary is not None:

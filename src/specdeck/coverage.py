@@ -134,6 +134,10 @@ class Coverage(BaseModel):
     policy: list[PolicyDocument] | None = None
     vocabulary: VocabularyTable | None = None
     path: PathCoverage | None = None
+    #: Files under the deck that did not read as cards, each with the reason. Blindness in
+    #: the *input* rather than in any one table: it thins all three at once, and a table
+    #: cannot report what was never parsed. Never a severity — `lint` owns that.
+    unreadable: list[str] = Field(default_factory=list)
 
 
 def extract_clauses(text: str, *, document: str = "") -> list[Clause]:
@@ -250,18 +254,30 @@ def unnamed_policies(documents: list[PolicyDocument], cards: list[Card]) -> list
     answer: a document nobody names is uncovered by the whole suite, and saying so needs no
     per-clause predicate at all.
 
-    Candidates are the other `.md` files in the directories the named documents live in,
-    minus the cards themselves. Discovery cannot help here — `lint.cards_under` excludes
-    what a card *points at*, so a policy document nobody points at looks exactly like a
-    card to it, and `cards/policy/airline.md` parses as one. Siblings-of-a-named-policy is
-    the narrowest rule that finds the real case without walking the whole deck.
+    Candidates are the other `.md` files in the directories the named documents live in.
+    Discovery cannot help narrow that — `lint.cards_under` excludes what a card *points
+    at*, so a policy document nobody points at looks exactly like a card to it, and
+    `cards/policy/airline.md` parses as one. Siblings-of-a-named-policy is the narrowest
+    rule that finds the real case without walking the whole deck.
 
-    The cost, stated: a repo that keeps its policies in the same directory as its cards
-    gets any other markdown file there reported as an unnamed policy. Report-only, so the
-    failure mode is a line to ignore rather than a red build.
+    **A card is excluded from candidacy only in a directory that also holds a card naming a
+    policy** — a repo that genuinely keeps the two together. Excluding every card the
+    caller passed cannot work: `cli.coverage` parses each walked `.md` as a card, so an
+    orphan under `cards/policy/` arrives here *as* a card and filters itself out, and the
+    signal had no input that could ever produce a row. In a directory holding a named
+    policy and no card that names one, everything beside it is a policy document whatever
+    it parses as. See DECISIONS.md, 2026-08-25.
+
+    The cost, stated: a genuine card kept in a policy directory is reported as an unnamed
+    policy, and an orphan policy sharing a directory with the cards is not reported at all
+    — nothing there tells the two apart. Report-only either way, so the failure mode is a
+    line to ignore rather than a red build.
     """
     named = {Path(one.path).resolve() for one in documents}
-    excluded = named | {Path(card.path).resolve() for card in cards}
+    shared = {Path(card.path).resolve().parent for card in cards if card.context.policy}
+    excluded = named | {
+        resolved for card in cards if (resolved := Path(card.path).resolve()).parent in shared
+    }
     candidates = sorted(
         {
             found
@@ -425,11 +441,19 @@ def collect(
     vocabulary: Vocabulary | None,
     traces: list[Trace],
     introspection: Introspection | None = None,
+    unreadable: list[str] | None = None,
 ) -> Coverage:
-    """Every table, in one call. The only entry point the CLI uses."""
+    """Every table, in one call. The only entry point the CLI uses.
+
+    `unreadable` is carried, not diagnosed: `specdeck lint` owns the `parse` rule and the
+    exit code that goes with it. It rides on the model rather than being printed beside it
+    so the tables cannot be read as complete when a file under the deck was not read at
+    all.
+    """
     documents = policy_coverage(cards)
     documents += unnamed_policies(documents, cards)
     return Coverage(
+        unreadable=sorted(unreadable or []),
         policy=sorted(documents, key=lambda one: one.path),
         vocabulary=vocabulary_coverage(cards, vocabulary, traces),
         path=path_coverage(introspection, traces),

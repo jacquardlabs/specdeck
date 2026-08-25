@@ -949,12 +949,21 @@ def coverage(
     # they live behind `specdeck lint`, which does gate.
     console = Console()
     try:
-        cards = [parse(path) for path in cards_under(paths or [Path("cards")])]
+        cards, unreadable = [], []
+        for path in cards_under(paths or [Path("cards")]):
+            # A file under the deck that is not a card does not stop the count. `lint`
+            # owns the `parse` rule and the exit code it carries; here it is one more
+            # thing this report could not see, printed above the tables it thinned.
+            try:
+                cards.append(parse(path))
+            except CardError as error:
+                unreadable.append(str(error))
         found = collect(
             cards,
             vocabulary=_vocabulary(vocabulary_path),
             traces=[load_trace(path) for path in trace or []],
             introspection=_introspected(agent_def),
+            unreadable=unreadable,
         )
     except USER_ERRORS as error:
         _fail(console, error)

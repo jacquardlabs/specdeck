@@ -77,6 +77,41 @@ class TestTheCoverageCommand:
         assert result.exit_code == 2
         assert "policy.md" in " ".join(result.stdout.split())
 
+    def _policy_deck(self, tmp_path: Path, orphan: str) -> Path:
+        """The repo's own layout: cards in the deck root, policies in `policy/`."""
+        (tmp_path / "policy").mkdir()
+        (tmp_path / "policy" / "airline.md").write_text("# Airline Policy\n\n- confirm first\n")
+        (tmp_path / "policy" / "refunds.md").write_text(orphan)
+        (tmp_path / "card.md").write_text(
+            "# Scenario: x\ncontext:\n  policy: policy/airline.md\n\nThe agent answers.\n"
+        )
+        return tmp_path
+
+    def test_a_policy_document_no_card_names_is_reported_through_the_command(
+        self, tmp_path: Path
+    ) -> None:
+        """#19(a)'s one deterministic signal, over the walk the command actually does.
+
+        The orphan parses as a card — an `# ` heading and nothing else is a legal card —
+        so it arrives in the card list and used to filter itself out of its own report.
+        """
+        deck = self._policy_deck(tmp_path, "# Refund Policy\n\n- refunds go to the card\n")
+        result = runner.invoke(app, ["coverage", str(deck)])
+        assert result.exit_code == 0
+        text = " ".join(result.stdout.split())
+        assert "refunds.md" in text and "named by no card" in text
+
+    def test_a_policy_document_that_is_not_a_card_is_reported_rather_than_aborting(
+        self, tmp_path: Path
+    ) -> None:
+        """`lint` reports a `parse` finding and carries on; the denominators do too."""
+        deck = self._policy_deck(tmp_path, "## Refund Policy\n\n- refunds go to the card\n")
+        result = runner.invoke(app, ["coverage", str(deck)])
+        assert result.exit_code == 0
+        text = " ".join(result.stdout.split())
+        assert "not read as cards" in text
+        assert "refunds.md" in text and "named by no card" in text
+
     def test_a_trace_marks_a_tool_exercised(self, tmp_path: Path) -> None:
         deck = self._deck(tmp_path, self.CARD)
         (tmp_path / "vocabulary.txt").write_text("[tools]\nget_reservation_details\n")
