@@ -181,6 +181,33 @@ column rather than one for the card, so a cheap provider is not gated at an expe
 one's cost; a baseline recorded by a single-cell run sits in the `default` slot and the
 run says out loud that no column inherits it.
 
+### Coverage
+
+```console
+$ uv run specdeck coverage cards --vocabulary cards/vocabulary.txt \
+    --agent-def yourpkg.graph:app --trace run.otlp.json
+```
+
+Three denominators, printed as three tables and never blended into one percentage:
+**policy** (clauses per document and per section, and any policy document no card names),
+**vocabulary** (declared tools with no wire and no exercising run), and **path** (agent-graph
+edges no run traversed). Every table names what it could not see rather than reporting 0%:
+no `--vocabulary` means no denominator at all, no `--trace` means exercising was not
+checked. `specdeck run` prints the path table for the run it just did.
+
+**Coverage never gates.** `specdeck coverage` exits 0 on any computed result — `2` for a
+broken input, `3` if specdeck itself breaks, never a code derived from a figure — and
+there is deliberately no `--fail-under`. The one exception is the definition-fed
+obligations, which are binary and live in `specdeck lint`, which does gate.
+
+Two limits the report states on every run rather than leaving to be found. The policy table
+is an **inventory**, not the clauses × cards matrix: a card's `context` names a document,
+not clauses, so no per-clause predicate exists yet
+([#88](https://github.com/jacquardlabs/specdeck/issues/88)). And an edge counts as hit only
+when two consecutive `execute_tool` spans carry its node names, so edges through router,
+chat and hand-off nodes can never be marked hit and the path figure **understates** what
+ran ([#89](https://github.com/jacquardlabs/specdeck/issues/89)).
+
 ### Lint
 
 ```console
@@ -215,7 +242,7 @@ is the one lint input that imports a module of yours; zero tokens and no network
 Runs in pre-commit and in CI, from the same command.
 
 Not yet: the prose-aware lint group, the OpenAI SDK, MCP and subagent introspectors behind
-`--agent-def`, and the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
+`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
 and after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
 only; they sit behind one `complete()` seam, and a second provider is
 [#60](https://github.com/jacquardlabs/specdeck/issues/60).

@@ -191,7 +191,7 @@ Runtime denominators, each landing in its own phase:
 |---|---|---|
 | **Policy** | 2 | Clauses extracted from the policy documents named in `context`, reported as an **inventory** — count per document, count per section, and any document no card names. Not clauses × cards: see below. |
 | **Vocabulary** | 2 | Tools with no wire and no exercising scenario, against the declared vocabulary. |
-| **Path** | 2 | Agent-graph edges no run has ever hit, at the introspection depth actually reached. |
+| **Path** | 2 | Agent-graph edges no run hit, at the introspection depth actually reached. |
 | **Production intent** | 4–5 | Clusters over ingested OTLP production traces, mapped to cards. Uncovered intents feed the `specdeck draft` queue. |
 
 `specdeck coverage [PATHS] --vocabulary <file> --trace <file>` prints all three, each as
@@ -206,11 +206,24 @@ Every table names what it could not see rather than reporting 0% or 0 of 0: no v
 means no denominator, no traces means exercising was not checked, and a policy document
 written as paragraphs has no clauses to count.
 
+**Path coverage understates, and says so on every line that carries a figure.** The
+denominator comes from introspection and never from the trace — a trace records what
+happened, so edges derived from it would make denominator equal numerator and read 100%
+forever. The numerator is a recorded interim, in the same spirit as `bound` in the property
+IR: nothing in the trace schema carries graph-node identity, so a node is matched to a tool
+name and an edge counts as hit when two consecutive `execute_tool` spans carry its two
+names. A graph whose nodes are routers, chat steps or hand-offs therefore declares edges no
+trace can ever mark hit. The eventual fix is a reserved `specdeck.node` attribute the
+agent's own instrumentation stamps, exactly as `specdeck.marker` already is
+([#89](https://github.com/jacquardlabs/specdeck/issues/89)); it is deferred because every
+existing trace lacks it. Recorded 2026-08-25.
+
 **The policy table is an inventory, not a matrix.** The shape above once read "clauses ×
 cards", and no predicate exists that decides a card exercises a *clause*: a card's `context`
 names a document. The only attribution available today is document-level, which would put
 an identical mark in every cell of a document's rows and be misread as per-clause
-attribution. The matrix is deferred until a predicate exists, and the clause count is a
+attribution. The matrix is deferred until a predicate exists
+([#88](https://github.com/jacquardlabs/specdeck/issues/88)), and the clause count is a
 denominator you read rather than a matrix you fill. Recorded 2026-08-25.
 
 **Coverage percentages never gate CI.** The one exception is the per-feature definition

@@ -19,18 +19,21 @@ matrix docs/measurement.md describes. There is no clause-to-card predicate: a ca
 attribution available today is document-level. Rendered as a matrix that would put an
 identical mark in every cell of a document's rows and read as per-clause attribution —
 precisely the silent degradation the blindness rule exists to prevent. See DECISIONS.md,
-2026-08-25.
+2026-08-25, and https://github.com/jacquardlabs/specdeck/issues/88 for the predicate that
+would unblock it.
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter
+from itertools import pairwise
 from pathlib import Path
 
 from pydantic import BaseModel, Field
 
 from .card import Card
+from .introspect import Depth, Introspection
 from .judge import slug
 from .lint import Vocabulary
 from .trace import GenAI, Operation, Trace
@@ -87,6 +90,38 @@ class VocabularyTable(BaseModel):
     traces_blind: str = ""
 
 
+class PathCoverage(BaseModel):
+    """Declared graph edges, against the edges any run actually traversed.
+
+    The denominator comes from introspection and never from the trace. A trace records
+    what happened; "never hit" is a claim about what *could* have happened, so edges
+    derived from the trace would make denominator equal numerator and the figure would
+    read 100% forever.
+
+    No `passed`, no `ok`, nothing a caller could route an exit code on.
+    """
+
+    depth: Depth = Depth.NONE
+    source: str = "none"
+    reference: str = ""
+    edges: list[tuple[str, str]] = Field(default_factory=list)
+    hit: list[tuple[str, str]] = Field(default_factory=list)
+    runs: int = 0
+    blind: str = ""
+
+    @property
+    def missed(self) -> list[tuple[str, str]]:
+        return sorted(set(self.edges) - set(self.hit))
+
+    @property
+    def total(self) -> int:
+        return len(self.edges)
+
+    @property
+    def covered(self) -> int:
+        return len(self.hit)
+
+
 class Coverage(BaseModel):
     """The three tables, each optional.
 
@@ -98,6 +133,7 @@ class Coverage(BaseModel):
 
     policy: list[PolicyDocument] | None = None
     vocabulary: VocabularyTable | None = None
+    path: PathCoverage | None = None
 
 
 def extract_clauses(text: str, *, document: str = "") -> list[Clause]:
@@ -311,11 +347,90 @@ def vocabulary_coverage(
     )
 
 
-def collect(cards: list[Card], *, vocabulary: Vocabulary | None, traces: list[Trace]) -> Coverage:
+#: Said on every path-coverage line that reports a figure, and repeated in the docs and in
+#: DECISIONS.md. `_hit_edges` maps a graph node onto a tool name, which is the only handle
+#: the trace schema carries today — so a graph whose nodes are routers, chat steps or
+#: hand-offs declares edges no trace can ever mark hit, and the figure understates reality.
+UNDERSTATED = (
+    "an edge counts as hit only when two consecutive execute_tool spans carry its node "
+    "names, so edges through router, chat and hand-off nodes can never be marked hit and "
+    "this figure understates what ran"
+)
+
+
+def path_coverage(
+    introspection: Introspection | None, traces: list[Trace], *, runs: int | None = None
+) -> PathCoverage:
+    """Declared edges against traversed ones, at whatever depth introspection reached.
+
+    Below TOPOLOGY there is no denominator, and the table says which depth it saw in
+    `introspect`'s own words rather than reporting a hollow 0 of 0. A recorded-trace run
+    has no agent definition at all and says that instead.
+
+    `hit` is intersected with the declared edges: a transition the trace shows and the
+    graph never declared is ignored here rather than inflating the numerator. Noticing an
+    undeclared edge is the obligation check's job, not a denominator's.
+    """
+    seen = len(traces) if runs is None else runs
+    if introspection is None:
+        return PathCoverage(
+            runs=seen,
+            blind="these runs came from recorded traces, so there is no agent definition "
+            "and no edge denominator; run with --agent, or pass --agent-def",
+        )
+    common = {
+        "depth": introspection.depth,
+        "source": introspection.source,
+        "reference": introspection.reference,
+        "runs": seen,
+    }
+    if introspection.depth is not Depth.TOPOLOGY:
+        return PathCoverage(
+            **common,
+            blind=f"the agent definition was read at '{introspection.depth.value}' depth, "
+            "which carries no edges, so there is no path denominator",
+        )
+    declared = sorted(set(introspection.description.edges))
+    traversed = {edge for trace in traces for edge in _hit_edges(trace)}
+    return PathCoverage(**common, edges=declared, hit=sorted(traversed & set(declared)), blind="")
+
+
+def _hit_edges(trace: Trace) -> set[tuple[str, str]]:
+    """Edges one run traversed. **A recorded interim, in `ir.bound`'s spirit.**
+
+    Nothing in the trace schema carries graph-node identity, so this maps a node onto a
+    tool name: an edge is hit when two `execute_tool` spans carrying those names are
+    consecutive in `trace.ordered`. The consequence is stated wherever the figure is
+    printed — see `UNDERSTATED`.
+
+    Temporal order, never the span tree: `loop.py` parents every tool span under the last
+    chat span, so the tree gives no tool-to-tool adjacency at all.
+
+    Kept to one function on purpose. The eventual fix is a reserved `specdeck.node`
+    attribute the agent's own instrumentation stamps, the way `specdeck.marker` already is
+    (https://github.com/jacquardlabs/specdeck/issues/89); replacing this is then a
+    one-function change.
+    """
+    names = [
+        str(span.attributes.get(GenAI.TOOL_NAME))
+        for span in trace.ordered
+        if span.operation is Operation.EXECUTE_TOOL
+    ]
+    return set(pairwise(names))
+
+
+def collect(
+    cards: list[Card],
+    *,
+    vocabulary: Vocabulary | None,
+    traces: list[Trace],
+    introspection: Introspection | None = None,
+) -> Coverage:
     """Every table, in one call. The only entry point the CLI uses."""
     documents = policy_coverage(cards)
     documents += unnamed_policies(documents, cards)
     return Coverage(
         policy=sorted(documents, key=lambda one: one.path),
         vocabulary=vocabulary_coverage(cards, vocabulary, traces),
+        path=path_coverage(introspection, traces),
     )

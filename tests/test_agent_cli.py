@@ -340,3 +340,52 @@ class TestResolvingAReferenceNeverRunsIt:
     def test_the_flag_name_reaches_the_message(self) -> None:
         with pytest.raises(CardError, match="--agent-def"):
             _resolve("nope.nothing:here", flag="--agent-def")
+
+
+class TestPathCoverageInTheRunReport:
+    """Report-only, and the regression guard that it stays that way."""
+
+    def test_it_names_the_edge_the_agent_declared_and_never_traversed(
+        self, workspace: Path
+    ) -> None:
+        # `refuses()` executes `get_reservation_details` and stops, so the declared
+        # `-> cancel_reservation` edge is genuinely unreachable in this script.
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        text = flat(result.stdout)
+        assert "path coverage" in text
+        assert "0 of 1 declared edge hit" in text
+        assert "never hit get_reservation_details -> cancel_reservation" in text
+
+    def test_an_uncovered_edge_never_moves_the_exit_code(self, workspace: Path) -> None:
+        """DECISIONS.md, 2026-08-15: coverage never gates CI.
+
+        Asserted in the same test as the missed edge, so the two cannot drift apart.
+        """
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        assert result.exit_code == 0
+        assert "never hit get_reservation_details -> cancel_reservation" in flat(result.stdout)
+
+    def test_the_understatement_is_stated_on_the_run_that_reports_it(self, workspace: Path) -> None:
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        assert "understates what ran" in flat(result.stdout)
+
+    def test_a_recorded_trace_run_reports_its_blindness_and_no_fraction(self) -> None:
+        """A `--trace` run has no adapter at all, so there is no denominator to report.
+
+        Against the committed card and its committed trace, read-only: no `--relock`, so
+        nothing here writes to the repo.
+        """
+        repo = Path(__file__).resolve().parent.parent
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                str(repo / "cards" / "basic-economy-return-change.md"),
+                "--trace",
+                str(repo / "cards" / "traces" / "basic-economy-return-change.otlp.json"),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        text = flat(result.stdout)
+        assert "no agent definition" in text
+        assert "declared edge hit" not in text

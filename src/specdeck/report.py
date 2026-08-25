@@ -28,7 +28,7 @@ from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
-from .coverage import Coverage, PolicyDocument, VocabularyTable
+from .coverage import UNDERSTATED, Coverage, PathCoverage, PolicyDocument, VocabularyTable
 from .introspect import Introspection
 from .judge import JudgeResult
 from .matrix_run import ColumnResult, MatrixResult, Status
@@ -131,6 +131,8 @@ def render_coverage(coverage: Coverage, console: Console) -> None:
         _policy_coverage(coverage.policy, console)
     if coverage.vocabulary is not None:
         _vocabulary_coverage(coverage.vocabulary, console)
+    if coverage.path is not None:
+        _path_coverage(coverage.path, console)
 
 
 def _policy_coverage(documents: list[PolicyDocument], console: Console) -> None:
@@ -200,6 +202,44 @@ def _vocabulary_coverage(table: VocabularyTable, console: Console) -> None:
     )
     if table.traces_blind:
         console.print(_figure("", table.traces_blind))
+
+
+def _path_coverage(path: PathCoverage, console: Console) -> None:
+    """Declared graph edges against the ones runs actually traversed.
+
+    A figure is printed even at 100%, so "fully covered" cannot be mistaken for "not
+    measured", and the depth is always named — at every depth, including none.
+    """
+    console.print("\n  [dim]path coverage[/dim]")
+    if path.reference:
+        # A user-supplied reference, so Text rather than markup.
+        console.print(
+            Text(
+                f"    {path.reference} via {path.source} — {path.depth.value} depth",
+                style="dim",
+            )
+        )
+    if path.blind:
+        console.print(_figure("", path.blind))
+        return
+    console.print(
+        _figure(
+            "",
+            f"{path.covered} of {_plural(path.total, 'declared edge')} hit "
+            f"over {_plural(path.runs, 'run')}",
+        )
+    )
+    for source, target in path.missed:
+        # A node name is agent-authored, so it reaches the console as Text. `[/tmp]` in one
+        # would raise MarkupError and discard a report already paid for.
+        line = Text("      ")
+        line.append("never hit  ", style="yellow")
+        line.append(f"{source} -> {target}")
+        console.print(line)
+    console.print(_figure("", UNDERSTATED))
+    # "No run has ever hit it" is a suite claim, and neither path here makes one: `run`
+    # sees one card's runs, `coverage` sees whatever traces were handed to it.
+    console.print(_figure("", "over the traces seen here — a suite-wide 'no run ever' needs #70"))
 
 
 def _plural(n: int, noun: str) -> str:

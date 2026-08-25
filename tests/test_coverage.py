@@ -11,12 +11,19 @@ from specdeck import coverage as coverage_module
 from specdeck.card import parse, parse_text
 from specdeck.coverage import (
     CoverageError,
+    PathCoverage,
     collect,
     extract_clauses,
+    path_coverage,
     policy_coverage,
     vocabulary_coverage,
 )
+from specdeck.introspect import Depth, introspect
 from specdeck.lint import Vocabulary, cards_under
+from specdeck.trace import GenAI, Operation, Trace
+
+from .fake_agent import BareAgent, FakeAgent
+from .test_trace import span, trace
 
 REPO = Path(__file__).resolve().parent.parent
 AIRLINE = REPO / "cards" / "policy" / "airline.md"
@@ -256,3 +263,93 @@ def _recorded():
     from specdeck.traceio import load_trace
 
     return load_trace(REPO / "cards" / "traces" / "basic-economy-return-change.otlp.json")
+
+
+class TestPathCoverage:
+    """The denominator comes from introspection, never from the trace."""
+
+    def _trace(self, *tools: str) -> Trace:
+        """A run that executed these tools in this order, all under one chat span.
+
+        Parented the way `loop` parents them — every tool under the same chat — so a
+        reading that used the span tree instead of temporal order would find no adjacency.
+        """
+        spans = [
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=60.0),
+            span("chat-0", Operation.CHAT),
+        ]
+        spans += [
+            span(f"tool-{index}", Operation.EXECUTE_TOOL, parent="chat-0", offset=1.0 + index)
+            for index in range(len(tools))
+        ]
+        for one, name in zip(spans[2:], tools, strict=True):
+            one.attributes[GenAI.TOOL_NAME] = name
+        return trace(*spans)
+
+    def test_a_recorded_trace_run_has_no_denominator_and_says_so(self) -> None:
+        found = path_coverage(None, [self._trace("a")])
+        assert found.depth is Depth.NONE
+        assert found.total == 0
+        assert "recorded traces" in found.blind
+
+    def test_an_adapter_with_no_describe_reports_no_depth(self) -> None:
+        found = path_coverage(introspect(BareAgent()), [])
+        assert found.depth is Depth.NONE
+        assert found.blind
+
+    def test_tools_depth_states_the_graph_was_not_seen_rather_than_reporting_zero(self) -> None:
+        found = path_coverage(introspect(FakeAgent([], tools=["a", "b"])), [])
+        assert found.depth is Depth.TOOLS
+        assert found.edges == []
+        assert "'tools' depth" in found.blind
+
+    def test_one_declared_edge_of_two_traversed_is_the_headline(self) -> None:
+        agent = FakeAgent([], edges=[("a", "b"), ("b", "c")])
+        found = path_coverage(introspect(agent), [self._trace("a", "b")])
+        assert found.depth is Depth.TOPOLOGY
+        assert found.covered == 1
+        assert found.total == 2
+        assert found.missed == [("b", "c")]
+
+    def test_coverage_is_the_union_across_runs_not_a_per_run_intersection(self) -> None:
+        agent = FakeAgent([], edges=[("a", "b"), ("b", "c")])
+        traces = [self._trace("a", "b"), self._trace("x"), self._trace("b", "c")]
+        assert path_coverage(introspect(agent), traces).covered == 2
+
+    def test_an_observed_transition_the_graph_never_declared_does_not_inflate_anything(
+        self,
+    ) -> None:
+        agent = FakeAgent([], edges=[("a", "b")])
+        found = path_coverage(introspect(agent), [self._trace("q", "r", "a", "b")])
+        assert found.total == 1
+        assert found.hit == [("a", "b")]
+
+    def test_the_evidence_is_temporal_order_never_the_span_tree(self) -> None:
+        """`loop` parents every tool span under the last chat span, so the tree gives no
+        tool-to-tool adjacency at all — reading it would find nothing."""
+        agent = FakeAgent([], edges=[("a", "b")])
+        trace = self._trace("a", "b")
+        parents = {span.parent_span_id for span in trace.of(Operation.EXECUTE_TOOL)}
+        assert len(parents) == 1  # one shared parent, so adjacency must come from time
+        assert path_coverage(introspect(agent), [trace]).covered == 1
+
+    def test_one_tool_span_is_not_an_edge(self) -> None:
+        agent = FakeAgent([], edges=[("a", "b")])
+        assert path_coverage(introspect(agent), [self._trace("a")]).covered == 0
+
+    def test_a_trace_with_no_tool_spans_yields_nothing(self) -> None:
+        agent = FakeAgent([], edges=[("a", "b")])
+        assert path_coverage(introspect(agent), [self._trace()]).covered == 0
+
+    def test_it_round_trips_as_json_with_its_tuples_intact(self) -> None:
+        agent = FakeAgent([], edges=[("a", "b")])
+        found = path_coverage(introspect(agent), [self._trace("a", "b")])
+        assert PathCoverage.model_validate_json(found.model_dump_json()) == found
+
+    def test_a_full_graph_still_reports_a_figure(self) -> None:
+        # "Fully covered" must be distinguishable from "not measured".
+        agent = FakeAgent([], edges=[("a", "b")])
+        found = path_coverage(introspect(agent), [self._trace("a", "b")])
+        assert found.total == 1
+        assert found.missed == []
+        assert found.blind == ""

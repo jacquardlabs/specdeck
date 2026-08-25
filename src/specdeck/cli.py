@@ -29,7 +29,7 @@ from specdeck.cell import (
     run_cell,
     run_cell_async,
 )
-from specdeck.coverage import CoverageError, collect
+from specdeck.coverage import Coverage, CoverageError, collect, path_coverage
 from specdeck.introspect import Introspection, introspect
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
@@ -265,15 +265,25 @@ def run(
             )
         else:
             matrix, pending, unproven = None, None, []
-            traces = recordings or _drive(
-                card,
-                agent or "",
-                cassettes=cassette_dir,
-                lock=lock,
-                runs=n,
-                markers=_markers(vocabulary_path),
-                max_turns=max_turns,
-                live=live,
+            # Resolved once, here rather than inside `_drive`, because the same object is
+            # both what runs and what the path denominator is read off. Introspecting a
+            # second resolution would build a second adapter of the user's just to look
+            # at it.
+            adapter = _adapter(agent) if agent else None
+            introspection = introspect(adapter, reference=agent or "") if adapter else None
+            traces = (
+                _drive(
+                    card,
+                    adapter,
+                    cassettes=cassette_dir,
+                    lock=lock,
+                    runs=n,
+                    markers=_markers(vocabulary_path),
+                    max_turns=max_turns,
+                    live=live,
+                )
+                if adapter is not None
+                else recordings
             )
             builtin, pending = _builtin(
                 card_path,
@@ -336,6 +346,11 @@ def run(
         raise typer.Exit(_matrix_exit(matrix))
 
     render(cell, console, rates=rates)
+    # Printed after the cell report, never inside it. Coverage is not a scored figure and
+    # must not sit beside the two that are. Only the path table: policy and vocabulary are
+    # suite-level denominators, and one card answering "1 of 14 tools wired" would read as
+    # 7% coverage of a deck it never looked at. `specdeck coverage` asks all three.
+    render_coverage(Coverage(path=path_coverage(introspection, traces)), console)
     # The JUnit report first: an unwritable --baseline path must not also deny CI the file
     # it asked for, and the two failures are independent.
     _write_junit(junit_xml, report, console)
@@ -662,7 +677,7 @@ def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:
 
 def _drive(
     card: Card,
-    reference: str,
+    adapter: AgentAdapter,
     *,
     cassettes: Path,
     lock: Lockfile,
@@ -680,7 +695,7 @@ def _drive(
     return asyncio.run(
         _drive_async(
             card,
-            _adapter(reference),
+            adapter,
             cassettes=cassettes,
             lock=lock,
             runs=runs,
@@ -913,6 +928,12 @@ def coverage(
     trace: list[Path] = typer.Option(  # noqa: B008
         None, "--trace", help="A recorded event log. Repeat; traces are pooled across the deck."
     ),
+    agent_def: str | None = typer.Option(
+        None,
+        "--agent-def",
+        help="Agent definition to introspect, as `module:attribute`. Without it the path "
+        "table has no denominator and says so.",
+    ),
 ) -> None:
     """Report the coverage denominators. Zero tokens, no network, always exits 0."""
     # The exit code carries no coverage information at all, in either direction — this
@@ -928,6 +949,7 @@ def coverage(
             cards,
             vocabulary=_vocabulary(vocabulary_path),
             traces=[load_trace(path) for path in trace or []],
+            introspection=_introspected(agent_def),
         )
     except USER_ERRORS as error:
         _fail(console, error)
