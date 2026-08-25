@@ -9,7 +9,10 @@ every gate held, and the cell passes at >=k of N. Credit score is the weighted s
 binary credit verdicts over the passing runs only — credit never offsets a failed gate, so
 a run that failed a gate contributes nothing rather than contributing its credit.
 
-Variance, latency percentiles, and the dollar estimate are #52.
+Beneath those two it reports three secondary figures — the spread of credit over the
+passing runs, latency p50/p95, and a dollar estimate over the agent's traced tokens — and
+any waste the run's trace shows. None of them moves the verdict: a card that passed while
+burning four times the tokens is a finding, not a failure.
 """
 
 from __future__ import annotations
@@ -17,13 +20,15 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from .card import Card
 from .ir import Property, Verdict, evaluate_all
 from .judge import DEFAULT_JUDGE_MODEL, Criterion, JudgeResult, criteria_of, judge
+from .stats import RunMeasures, measure
 from .tier import Tier
-from .trace import Trace
+from .trace import Trace, reported_sum
+from .waste import Finding, classify
 from .wires import compile_wires, gates_pass
 
 DEFAULT_N = 5
@@ -45,6 +50,13 @@ class Run(BaseModel):
     wires: list[Verdict]
     judged: JudgeResult | None
     credit_earned: int
+    #: Time and tokens. Required rather than defaulted: a run nobody measured would
+    #: otherwise contribute a 0.0 second duration to the cell's p50 as if it were timed.
+    #: `RunMeasures.nothing()` is how a hand-built run says it measured nothing.
+    measured: RunMeasures
+    #: What the run spent and did not need to. Defaulted, because a run built without it
+    #: is a run nothing classified, not a run that was found clean.
+    waste: list[Finding] = Field(default_factory=list)
 
     @property
     def judge_called(self) -> bool:
@@ -76,6 +88,16 @@ class Cell(BaseModel):
     @property
     def passed(self) -> bool:
         return self.passes >= self.threshold
+
+    @property
+    def waste(self) -> list[Finding]:
+        """Every run's findings, in one list. Derived, like `passed`, so nothing syncs it."""
+        return [finding for run in self.results for finding in run.waste]
+
+    @property
+    def waste_tokens(self) -> int | None:
+        """Tokens the cell spent on waste, or None when no finding could size itself."""
+        return reported_sum(*(finding.waste_tokens for finding in self.waste))
 
 
 def run_cell(
@@ -196,10 +218,22 @@ async def _run(
     live: bool,
     slug: str = "",
 ) -> Run:
+    # Measured before anything can return: a run that failed a gate wire still took time,
+    # still burned tokens, and still shows whatever it wasted doing it.
+    measured = measure(trace)
+    waste = classify(trace)
+
     # 1. Gate wires. Free, and a failure here means the judge is never called.
     wire_verdicts = evaluate_all(gate_wires, trace)
     if not gates_pass(wire_verdicts):
-        return Run(passed=False, wires=wire_verdicts, judged=None, credit_earned=0)
+        return Run(
+            passed=False,
+            wires=wire_verdicts,
+            judged=None,
+            credit_earned=0,
+            measured=measured,
+            waste=waste,
+        )
 
     # 2. Gate criteria.
     judged = await judge(
@@ -212,9 +246,23 @@ async def _run(
         slug=slug,
     )
     if not judged.gate_passed:
-        return Run(passed=False, wires=wire_verdicts, judged=judged, credit_earned=0)
+        return Run(
+            passed=False,
+            wires=wire_verdicts,
+            judged=judged,
+            credit_earned=0,
+            measured=measured,
+            waste=waste,
+        )
 
     # 3. Credit, only once every gate has held.
     credit = sum(v.weight for v in evaluate_all(credit_wires, trace) if v.passed)
     credit += sum(v.weight for v in judged.verdicts if v.tier is Tier.CREDIT and v.passed)
-    return Run(passed=True, wires=wire_verdicts, judged=judged, credit_earned=credit)
+    return Run(
+        passed=True,
+        wires=wire_verdicts,
+        judged=judged,
+        credit_earned=credit,
+        measured=measured,
+        waste=waste,
+    )

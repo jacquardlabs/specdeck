@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 
 from specdeck.card import parse, parse_text
-from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, run_cell
+from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, Run, run_cell
 from specdeck.judge import Cassette, build_prompt, criteria_of
+from specdeck.stats import RunMeasures
 from specdeck.trace import GenAI, Operation, SpanEvent
 
 from .test_trace import span, trace
@@ -39,6 +40,41 @@ def conversation(*, forbidden: bool = False, tokens: int = 120, seconds: float =
         tool = span("tool-0", Operation.EXECUTE_TOOL, offset=1.0)
         tool.attributes[GenAI.TOOL_NAME] = "modify_reservation"
         spans.append(tool)
+    return trace(*spans)
+
+
+def run_stub(**overrides) -> Run:
+    """A `Run` built by hand, for tests about the report rather than about running a cell.
+
+    One constructor, so a field added to `Run` is filled here instead of at every site that
+    hand-builds one. `measured` has no default on the model itself on purpose.
+    """
+    fields: dict = {
+        "passed": True,
+        "wires": [],
+        "judged": None,
+        "credit_earned": 0,
+        "measured": RunMeasures.nothing(),
+    }
+    return Run(**(fields | overrides))
+
+
+def retries(one, *, tokens: int | None = 120):
+    """The same failing tool call twice, appended to a conversation.
+
+    `get_reservation_details`, not the card's forbidden `modify_reservation`: the point is
+    a run that wastes tokens while every gate still holds.
+    """
+    spans = list(one.spans)
+    for index in (0, 1):
+        call = span(f"retry-{index}", Operation.EXECUTE_TOOL, offset=2.0 + index)
+        call.attributes[GenAI.TOOL_CALL_ARGUMENTS] = '{"id": "abc"}'
+        call.attributes[GenAI.TOOL_CALL_RESULT] = "Error: reservation not found"
+        spans.append(call)
+    if tokens is None:
+        spans = [s for s in spans if GenAI.USAGE_OUTPUT_TOKENS not in s.attributes] + [
+            span("chat-1", Operation.CHAT, offset=0.5)
+        ]
     return trace(*spans)
 
 
@@ -231,3 +267,66 @@ class TestConcurrency:
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=3, k=1, concurrency=3)
         assert [r.passed for r in cell.results] == [True, False, True]
+
+
+class TestEveryRunIsMeasured:
+    def test_a_run_carries_the_root_spans_duration(self, tmp_path: Path, card) -> None:
+        traces = [conversation(seconds=6.0)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
+        assert cell.results[0].measured.duration_s == 6.0
+
+    def test_a_run_that_failed_a_gate_wire_is_measured_all_the_same(
+        self, tmp_path: Path, card
+    ) -> None:
+        # It took just as long and burned just as many tokens; dropping it would make the
+        # cell's latency and cost describe only the runs that went well.
+        cell = run_cell(card, [conversation(forbidden=True)], cassettes=tmp_path, n=1, k=1)
+        assert cell.passed is False
+        assert cell.results[0].measured.duration_s == 5.0
+        assert cell.results[0].measured.usage == {"claude-sonnet-5": (None, 120)}
+
+    def test_usage_is_what_the_trace_reported_not_a_zero(self, tmp_path: Path, card) -> None:
+        traces = [conversation(tokens=120)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
+        assert cell.results[0].measured.usage == {"claude-sonnet-5": (None, 120)}
+
+
+class TestWasteIsNeverAGate:
+    def test_a_passing_run_still_reports_its_waste(self, tmp_path: Path, card) -> None:
+        traces = [retries(conversation())]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
+        assert cell.passed is True
+        assert [f.kind.value for f in cell.waste] == ["retry_loop"]
+
+    def test_a_run_that_failed_a_gate_wire_reports_its_waste(self, tmp_path: Path, card) -> None:
+        cell = run_cell(card, [retries(conversation(forbidden=True))], cassettes=tmp_path, n=1, k=1)
+        assert cell.passed is False
+        assert cell.results[0].waste  # the early return still carries the findings
+
+    def test_the_verdict_is_the_same_with_and_without_waste(self, tmp_path: Path, card) -> None:
+        clean = [conversation()]
+        wasteful = [retries(conversation())]
+        record(tmp_path, card, clean, {"prose": True, "tone_remains_professional": True})
+        record(tmp_path, card, wasteful, {"prose": True, "tone_remains_professional": True})
+        one = run_cell(card, clean, cassettes=tmp_path, n=1, k=1)
+        other = run_cell(card, wasteful, cassettes=tmp_path, n=1, k=1)
+        assert one.waste == [] and other.waste != []
+        assert (one.passed, one.credit_mean) == (other.passed, other.credit_mean)
+
+    def test_the_cell_flattens_the_findings_of_every_run(self, tmp_path: Path, card) -> None:
+        traces = [retries(conversation()), retries(conversation())]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=2, k=2)
+        assert len(cell.waste) == 2
+        # 120 output tokens on the chat that issued each repeat attempt.
+        assert cell.waste_tokens == 240
+
+    def test_waste_tokens_is_none_when_no_trace_reported_usage(self, tmp_path: Path, card) -> None:
+        traces = [retries(conversation(), tokens=None)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
+        assert cell.waste
+        assert cell.waste_tokens is None

@@ -58,6 +58,25 @@ class TestTheCardRunsGreen:
     def test_the_judge_is_replayed_not_called(self) -> None:
         assert "replayed" in demo().stdout
 
+    def test_it_prints_the_three_secondary_figures(self) -> None:
+        stdout = " ".join(demo().stdout.split())
+        # 3.87s is the recorded root span's own duration, the same number the `latency`
+        # wire prints one block further down.
+        assert "latency p50 3.87s, p95 3.87s over 1 run" in stdout
+        assert "variance n/a — 1 passing run" in stdout
+
+    def test_the_dollar_figure_is_an_estimate_and_says_whose_tokens(self) -> None:
+        # 241 input and 95 output tokens of claude-sonnet-5, off the recorded trace, at
+        # the built-in table's rate. No key, no network: the figure is arithmetic.
+        stdout = " ".join(demo().stdout.split())
+        assert "cost ~$0.0014 estimate (rates as of" in stdout
+        assert "agent tokens only" in stdout
+        for billing in ("billed", "charged", "invoice"):
+            assert billing not in stdout
+
+    def test_a_clean_run_prints_no_waste_block(self) -> None:
+        assert "waste" not in demo().stdout
+
     def test_every_wire_holds(self) -> None:
         stdout = demo().stdout
         for wire in ("never:update_reservation_flights", "at_most:search_direct_flight"):

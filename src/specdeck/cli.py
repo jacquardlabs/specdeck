@@ -115,6 +115,9 @@ def run(
     vocabulary_path: Path | None = typer.Option(  # noqa: B008
         None, "--vocabulary", help="Declared tools and markers, needed by --agent."
     ),
+    rates_path: Path | None = typer.Option(  # noqa: B008
+        None, "--rates", help=f"A {RATES_FILE} to merge over the built-in table."
+    ),
 ) -> None:
     """Evaluate one card — against recorded traces, or by running the agent."""
     console = Console()
@@ -122,6 +125,9 @@ def run(
         if bool(trace) == bool(agent):
             raise CardError("pass exactly one of --trace and --agent")
         card = parse(card_path)
+        # Resolved against the card, like the lockfile and the cassettes: which table
+        # priced a run must not depend on where the runner was invoked from.
+        rates = load_rates(rates_path, beside=card_path.parent)
         recordings = [load_trace(path) for path in trace or []]
         # A cell of five is the locked statistic, not a default that fits every invocation:
         # one recorded trace with --runs unset would fail on arithmetic before anything ran.
@@ -175,7 +181,7 @@ def run(
         console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
         raise typer.Exit(3) from None
 
-    render(cell, console)
+    render(cell, console, rates=rates)
     raise typer.Exit(0 if cell.passed else 1)
 
 
