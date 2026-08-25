@@ -164,11 +164,28 @@ def _depth(description: AgentDescription) -> Depth:
 def _from_describe(target: object) -> Introspection | None:
     """Any object implementing the optional half of the adapter protocol.
 
-    `isinstance(target, Describable)` is the whole check — agent.py says so.
+    `isinstance(target, Describable)` is the whole check — agent.py says so. It is a
+    presence check and nothing more: a `runtime_checkable` Protocol accepts an object whose
+    `describe` is a string, and a real one can raise or answer with a dict. So the call is
+    guarded on `_from_langgraph`'s rule — a probe never crashes lint — and a definition we
+    cannot read is a depth to report with the reason in `note`, not an exit-3 traceback
+    claiming specdeck broke.
     """
     if not isinstance(target, Describable):
         return None
-    description = target.describe()
+    try:
+        description = target.describe()
+    except Exception as error:
+        return Introspection(
+            source="describe()",
+            note=f"describe() raised {type(error).__name__}: {error}",
+        )
+    if not isinstance(description, AgentDescription):
+        return Introspection(
+            source="describe()",
+            note=f"describe() answered with {type(description).__name__}, not an "
+            "AgentDescription, so nothing could be read out of it",
+        )
     if not description.cycles and description.edges:
         # A declared cycle list is the author's claim about their own graph and is taken
         # as it stands. Deriving one over data they already stated would silently replace

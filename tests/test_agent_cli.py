@@ -306,6 +306,21 @@ class TestTheAgentDefinitionFlag:
         assert result.exit_code == 0
         assert "via none — none depth" in flat(result.stdout)
 
+    def test_a_describe_that_raises_is_blindness_too_never_exit_3(self, tmp_path: Path) -> None:
+        # Exit 3 is "specdeck itself broke". A user definition that raises is neither that
+        # nor a clean read: it is a depth to state, with the exception in the line.
+        result = runner.invoke(
+            app,
+            [
+                "lint",
+                str(self._deck(tmp_path)),
+                "--agent-def",
+                "tests.fake_agent:BrokenDescribeAgent",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "RuntimeError" in flat(result.stdout)
+
     def test_an_unbounded_cycle_reds_the_lint(self, tmp_path: Path) -> None:
         (tmp_path / "a.md").write_text("# Scenario: a\nThe agent answers.\n")
         result = runner.invoke(

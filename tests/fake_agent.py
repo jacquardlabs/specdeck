@@ -44,6 +44,26 @@ class BareAgent:
         return [Chat(content="I can help with that.", model="fake-1")]
 
 
+class BrokenDescribeAgent:
+    """`describe()` raises. A probe never crashes lint, so this is a depth to report."""
+
+    async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
+        return [Chat(content="I can help with that.", model="fake-1")]
+
+    def describe(self) -> AgentDescription:
+        raise RuntimeError("the graph is built at request time")
+
+
+class DictDescribeAgent:
+    """`describe()` answers with a plain dict. `runtime_checkable` only checks presence."""
+
+    async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
+        return [Chat(content="I can help with that.", model="fake-1")]
+
+    def describe(self) -> dict:
+        return {"tools": ["do_thing"]}
+
+
 def refuses(reservation: str = "SI5UKW") -> list[list]:
     """An agent that looks the reservation up, then refuses three times."""
     refusal = "I'm sorry, that fare cannot be cancelled and I cannot offer a credit."

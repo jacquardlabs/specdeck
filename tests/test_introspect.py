@@ -5,9 +5,15 @@ from __future__ import annotations
 import random
 
 from specdeck.agent import AgentDescription
-from specdeck.introspect import Depth, Introspection, cycles, introspect
+from specdeck.introspect import Depth, Introspection, bounding_tools, cycles, introspect
 
-from .fake_agent import BareAgent, FakeAgent, refusing_agent
+from .fake_agent import (
+    BareAgent,
+    BrokenDescribeAgent,
+    DictDescribeAgent,
+    FakeAgent,
+    refusing_agent,
+)
 from .fake_graph import (
     BrokenCompiled,
     FakeCompiled,
@@ -132,6 +138,27 @@ class TestTheLangGraphProbe:
     def test_the_cycle_is_derived_from_the_edges(self) -> None:
         assert introspect(refund_graph()).description.cycles == [["agent", "tools"]]
 
+    def test_which_node_bound_which_tool_survives_the_flattening(self) -> None:
+        """`tools` is a union and loses the mapping the cycle obligation needs: a cycle
+        names nodes, a wire names a tool, and `node_tools` is where the two meet."""
+        found = introspect(refund_graph())
+        assert found.description.node_tools == {
+            "tools": ["cancel_reservation", "get_reservation_details"]
+        }
+        assert bounding_tools(found.description, ["agent", "tools"]) == {
+            "cancel_reservation",
+            "get_reservation_details",
+        }
+
+    def test_a_cycle_through_nodes_that_bind_nothing_has_no_bounding_tool(self) -> None:
+        found = introspect(nodeless_graph())
+        assert bounding_tools(found.description, ["a", "b"]) == set()
+
+    def test_a_node_that_is_itself_a_tool_bounds_its_own_cycle(self) -> None:
+        # The raw-SDK shape: `describe()` names a loop over the tool, and there is no node.
+        declared = AgentDescription(tools=["do_thing"], cycles=[["do_thing"]])
+        assert bounding_tools(declared, ["do_thing"]) == {"do_thing"}
+
     def test_edges_given_as_plain_tuples_read_the_same(self) -> None:
         found = introspect(tuple_graph())
         assert found.depth is Depth.TOPOLOGY
@@ -187,6 +214,23 @@ class TestDeclaredCyclesAreTheAuthors:
 
     def test_a_describable_with_no_edges_gets_no_invented_cycles(self) -> None:
         assert introspect(refusing_agent()).description.cycles == []
+
+
+class TestADescribeThatMisbehaves:
+    """A probe never crashes lint, and a user's broken definition is not specdeck breaking."""
+
+    def test_a_describe_that_raises_degrades_and_says_what_it_raised(self) -> None:
+        found = introspect(BrokenDescribeAgent(), reference="m:a")
+        assert found.depth is Depth.NONE
+        assert found.source == "describe()"
+        assert "RuntimeError" in found.note and "request time" in found.note
+
+    def test_a_describe_answering_with_a_dict_degrades_rather_than_being_trusted(self) -> None:
+        # `runtime_checkable` checks attribute presence, so this object is Describable.
+        found = introspect(DictDescribeAgent(), reference="m:a")
+        assert found.depth is Depth.NONE
+        assert found.description == AgentDescription()
+        assert "dict" in found.note
 
 
 class TestTheReferenceIsRecorded:
