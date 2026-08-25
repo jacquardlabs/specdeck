@@ -21,9 +21,16 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+from .provider import DEFAULT_PROVIDER
+
 #: The semconv version specdeck's own loop emits. A recorded trace declares its own and is
 #: read as it stands; this is only what `loop.run_agent` stamps on a trace it just built.
 SEMCONV = "semantic-conventions-genai@1.38.0"
+
+#: What `loop.run_agent` writes to `gen_ai.provider.name` when the adapter named none. Not
+#: a semconv value — the well-known set has no "unknown" — so it is a placeholder to read
+#: past rather than a provider to key a rate table on.
+UNKNOWN_PROVIDER = "unknown"
 
 #: OTel's general-purpose span attribute, not a `gen_ai.*` one, which is why it sits
 #: outside `GenAI`. An adapter sets it to mark a tool call that failed; nothing specdeck
@@ -209,9 +216,8 @@ class Trace(BaseModel):
 
         The one place a token count is read off a trace: the cost estimate, the token
         baseline and the budget cap all group the same way, so they cannot disagree about
-        which model spent what. Keyed on `gen_ai.response.model` and falling back to
-        `gen_ai.request.model`, because the response names what actually served the call
-        while only the request is Required.
+        which model spent what. Keyed by `qualified_model`, so the provider the span named
+        survives into the key and a rate table can price a model the default never serves.
 
         A half stays `None` when no span of that model reported it — `reports_output_tokens`
         keeps "used none" and "did not say" apart, and summing an absent count to 0 here
@@ -219,9 +225,7 @@ class Trace(BaseModel):
         """
         totals: dict[str, tuple[int | None, int | None]] = {}
         for span in self.of(Operation.CHAT):
-            model = str(
-                span.attributes.get(GenAI.RESPONSE_MODEL) or span.attributes[GenAI.REQUEST_MODEL]
-            )
+            model = qualified_model(span)
             seen_input, seen_output = totals.get(model, (None, None))
             totals[model] = (
                 reported_sum(seen_input, span.attributes.get(GenAI.USAGE_INPUT_TOKENS)),
@@ -237,6 +241,25 @@ class Trace(BaseModel):
                 if message.get("role") == "assistant" and message.get("content"):
                     return str(message["content"])
         return ""
+
+
+def qualified_model(span: Span) -> str:
+    """What a `chat` span served, prefixed with its provider when it names a real one.
+
+    `gen_ai.response.model` first, falling back to `gen_ai.request.model`: the response
+    names what actually served the call, and only the request is Required.
+
+    A bare id is Anthropic's everywhere in specdeck (`provider.split_model`), so the prefix
+    marks a departure from that default and `anthropic/x` stays `x`. Carrying it is what
+    lets a rate table price a model the default provider never serves: without it a span
+    naming `openai` and `gpt-4o` reads as Anthropic's `gpt-4o` and reports n/a against a
+    `[rates.openai]` section that prices it.
+    """
+    name = str(span.attributes.get(GenAI.RESPONSE_MODEL) or span.attributes[GenAI.REQUEST_MODEL])
+    provider = str(span.attributes.get(GenAI.PROVIDER_NAME) or "")
+    if "/" in name or provider in ("", UNKNOWN_PROVIDER, DEFAULT_PROVIDER):
+        return name
+    return f"{provider}/{name}"
 
 
 def reported_sum(*counts: Any) -> int | None:

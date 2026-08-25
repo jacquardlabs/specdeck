@@ -32,13 +32,17 @@ RATES = Rates(
         "anthropic": {
             "claude-sonnet-5": ModelRate(input=2.0, output=10.0),
             "claude-haiku-4-5": ModelRate(input=1.0, output=5.0),
-        }
+        },
+        # The documented way a user adds a provider the built-in table does not carry.
+        "openai": {"gpt-4o": ModelRate(input=2.5, output=10.0)},
     },
 )
 
 
-def chat(span_id: str, *, model: str = "claude-sonnet-5", **usage: object):
+def chat(span_id: str, *, model: str = "claude-sonnet-5", provider: str | None = None, **usage):
     attributes: dict[str, object] = {GenAI.RESPONSE_MODEL: model, GenAI.REQUEST_MODEL: model}
+    if provider is not None:
+        attributes[GenAI.PROVIDER_NAME] = provider
     if "input_tokens" in usage:
         attributes[GenAI.USAGE_INPUT_TOKENS] = usage["input_tokens"]
     if "output_tokens" in usage:
@@ -120,6 +124,37 @@ class TestUsageByModel:
             span("t0", Operation.EXECUTE_TOOL, offset=1.0),
         )
         assert one.usage_by_model == {}
+
+    def test_a_provider_the_default_does_not_serve_survives_into_the_key(self) -> None:
+        # Without the prefix `gpt-4o` reads as Anthropic's, and the rate table's own
+        # [rates.openai] section — the documented way to add a provider — never resolves.
+        one = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None),
+            chat("c0", provider="openai", model="gpt-4o", input_tokens=1_000_000, output_tokens=0),
+        )
+        assert one.usage_by_model == {"openai/gpt-4o": (1_000_000, 0)}
+        estimate = cost_estimate(one.usage_by_model, RATES)
+        assert estimate is not None
+        assert estimate.usd == pytest.approx(2.5)
+
+    def test_the_loops_placeholder_provider_leaves_the_id_bare(self) -> None:
+        # `loop._chat` writes "unknown" whenever the adapter named no provider. Qualifying
+        # on it would send every trace specdeck generates to a [rates.unknown] nobody has.
+        one = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None),
+            chat("c0", provider="unknown", input_tokens=1_000_000, output_tokens=0),
+        )
+        assert one.usage_by_model == {"claude-sonnet-5": (1_000_000, 0)}
+        estimate = cost_estimate(one.usage_by_model, RATES)
+        assert estimate is not None
+        assert estimate.usd == pytest.approx(2.0)
+
+    def test_an_id_that_already_names_its_provider_is_not_prefixed_twice(self) -> None:
+        one = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None),
+            chat("c0", provider="openai", model="openai/gpt-4o", input_tokens=1),
+        )
+        assert list(one.usage_by_model) == ["openai/gpt-4o"]
 
     def test_reported_sum_keeps_did_not_say_out_of_the_arithmetic(self) -> None:
         assert reported_sum(None, None) is None
