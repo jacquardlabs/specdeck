@@ -111,6 +111,39 @@ def gates_pass(verdicts: list[Verdict]) -> bool:
     return all(v.passed for v in verdicts if v.tier is Tier.GATE)
 
 
+def named_tools(properties: list[Property]) -> list[str]:
+    """Every tool a compiled wire names, whether it bounds it or escalates to it.
+
+    A function of the property IR rather than of any one caller: lint reads it to catch a
+    wire naming a tool nobody declared, coverage reads it to say which tools no card
+    wires, and the definition-fed cycle obligation reads it to say which cycles are
+    bounded. Three readers of one derivation, so they cannot disagree about what "a wire
+    names this tool" means.
+
+    The `AfterKThen.then` branch is load-bearing: without it an escalation target reads as
+    a tool no wire ever mentions.
+    """
+    tools: set[str] = set()
+    for prop in properties:
+        rule = prop.rule
+        if isinstance(rule, Never | AtMost) and rule.selector.tool:
+            tools.add(rule.selector.tool)
+        elif isinstance(rule, AfterKThen) and rule.then.tool:
+            tools.add(rule.then.tool)
+    return sorted(tools)
+
+
+def named_markers(properties: list[Property]) -> list[str]:
+    """Every `specdeck.*` domain event a compiled wire triggers on."""
+    return sorted(
+        {
+            p.rule.trigger.marker
+            for p in properties
+            if isinstance(p.rule, AfterKThen) and p.rule.trigger.marker
+        }
+    )
+
+
 def _split(text: str) -> tuple[str, str]:
     """`subject: rule`, or `subject rule` for the credit form written without a colon."""
     subject, separator, rule = text.partition(":")

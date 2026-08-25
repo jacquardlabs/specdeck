@@ -6,9 +6,19 @@ from rich.console import Console
 
 from specdeck.card import parse_text
 from specdeck.cell import Cell, run_cell
+from specdeck.coverage import (
+    Clause,
+    Coverage,
+    PathCoverage,
+    PolicyDocument,
+    SectionCount,
+    ToolRow,
+    VocabularyTable,
+)
+from specdeck.introspect import Depth
 from specdeck.ir import Verdict
 from specdeck.rates import ModelRate, Rates
-from specdeck.report import render
+from specdeck.report import render, render_coverage
 from specdeck.stats import RunMeasures
 from specdeck.tier import Tier
 from specdeck.waste import Finding, Kind, Level
@@ -338,3 +348,144 @@ class TestWasteBlock:
         text = rendered(cell_of(run))
         assert "~120 tokens, estimated" in text
         assert "~74,880 token-turns, estimated" in text
+
+
+def coverage_text(found: Coverage) -> str:
+    console = Console(record=True, width=100, force_terminal=False)
+    render_coverage(found, console)
+    return " ".join(console.export_text().split())
+
+
+class TestTheCoverageBlock:
+    """One block for every denominator, never blended, and never a verdict."""
+
+    def _document(self, **overrides) -> PolicyDocument:
+        fields: dict = {
+            "path": "cards/policy/airline.md",
+            "clauses": [
+                Clause(
+                    id="refund/1",
+                    document="cards/policy/airline.md",
+                    section="Refund",
+                    text="the agent must not write to [/tmp]",
+                    line=3,
+                )
+            ],
+            "sections": [SectionCount(section="Refund", clauses=1)],
+            "cards": ["cards/refund.md"],
+        }
+        return PolicyDocument(**(fields | overrides))
+
+    def test_a_policy_document_prints_its_path_its_count_and_its_sections(self) -> None:
+        text = coverage_text(Coverage(policy=[self._document()]))
+        assert "cards/policy/airline.md" in text
+        assert "1 clause" in text
+        assert "Refund" in text
+
+    def test_clause_text_containing_markup_renders_literally(self) -> None:
+        # The clause comes out of a user-supplied file, exactly like a judge's reason.
+        text = coverage_text(Coverage(policy=[self._document()]))
+        assert "MarkupError" not in text
+
+    def test_no_clauses_by_cards_matrix_is_drawn(self) -> None:
+        """The matrix is deferred, not shipped half-answered — see coverage.py."""
+        text = coverage_text(Coverage(policy=[self._document()]))
+        assert "clause-to-card attribution is not reported" in text
+        assert "cards/refund.md" not in text
+
+    def test_a_document_named_by_no_card_is_called_out(self) -> None:
+        text = coverage_text(Coverage(policy=[self._document(cards=[])]))
+        assert "named by no card" in text
+
+    def test_a_blind_document_says_so_instead_of_showing_zero(self) -> None:
+        blind = self._document(clauses=[], sections=[], blind="no column-zero markdown list items")
+        text = coverage_text(Coverage(policy=[blind]))
+        assert "no column-zero markdown list items" in text
+        assert "0%" not in text
+
+    def test_the_vocabulary_table_prints_one_row_per_tool(self) -> None:
+        table = VocabularyTable(
+            rows=[
+                ToolRow(tool="cancel_reservation", wired_by=["cards/a.md"], exercised=True),
+                ToolRow(tool="list_all_airports"),
+            ]
+        )
+        text = coverage_text(Coverage(vocabulary=table))
+        assert "cancel_reservation wired by 1, exercised" in text
+        assert "list_all_airports no wire, not exercised" in text
+        assert "1 of 2 declared tools have neither" in text
+
+    def test_no_vocabulary_prints_the_blindness_rather_than_a_percentage(self) -> None:
+        text = coverage_text(Coverage(vocabulary=VocabularyTable(blind="pass --vocabulary")))
+        assert "pass --vocabulary" in text
+        assert "0 of 0" not in text
+
+    def test_no_traces_says_exercising_was_not_checked(self) -> None:
+        table = VocabularyTable(rows=[ToolRow(tool="calculate")], traces_blind="no traces supplied")
+        assert "no traces supplied" in coverage_text(Coverage(vocabulary=table))
+
+    def test_a_table_that_was_not_asked_for_is_not_printed_at_all(self) -> None:
+        """`None` and an empty table are different facts and read differently."""
+        text = coverage_text(Coverage(vocabulary=VocabularyTable(blind="x")))
+        assert "policy coverage" not in text
+        assert "vocabulary coverage" in text
+
+    def test_nothing_in_the_block_reads_as_a_verdict(self) -> None:
+        text = coverage_text(
+            Coverage(policy=[self._document()], vocabulary=VocabularyTable(blind="x"))
+        )
+        assert "PASS" not in text and "FAIL" not in text
+
+    def test_the_cell_report_is_untouched_by_any_of_this(self) -> None:
+        # `render` gained no coverage argument: the two blocks are printed separately, so
+        # a coverage figure can never sit beside the two scored numbers.
+        assert "coverage" not in rendered(cell_of(run_stub()))
+
+
+class TestThePathCoverageBlock:
+    def _path(self, **overrides) -> PathCoverage:
+        fields: dict = {
+            "depth": Depth.TOPOLOGY,
+            "source": "langgraph",
+            "reference": "pkg:graph",
+            "edges": [("a", "b"), ("b", "c")],
+            "hit": [("a", "b")],
+            "runs": 5,
+        }
+        return PathCoverage(**(fields | overrides))
+
+    def test_it_prints_the_figure_and_names_every_unhit_edge(self) -> None:
+        text = coverage_text(Coverage(path=self._path()))
+        assert "1 of 2 declared edges hit over 5 runs" in text
+        assert "never hit b -> c" in text
+
+    def test_it_prints_no_verdict_token_for_coverage(self) -> None:
+        text = coverage_text(Coverage(path=self._path()))
+        assert "PASS" not in text and "FAIL" not in text
+
+    def test_no_depth_names_what_was_missing_rather_than_printing_zero_of_zero(self) -> None:
+        blind = self._path(
+            depth=Depth.NONE, source="none", reference="", edges=[], hit=[], blind="no definition"
+        )
+        text = coverage_text(Coverage(path=blind))
+        assert "no definition" in text
+        assert "0 of 0" not in text
+
+    def test_tools_depth_reads_differently_from_no_depth(self) -> None:
+        tools = self._path(depth=Depth.TOOLS, edges=[], hit=[], blind="read at 'tools' depth")
+        assert "tools' depth" in coverage_text(Coverage(path=tools))
+
+    def test_an_edge_name_containing_markup_renders_literally(self) -> None:
+        markup = self._path(edges=[("[bold]", "[/tmp]")], hit=[])
+        assert "[/tmp]" in coverage_text(Coverage(path=markup))
+
+    def test_full_coverage_still_prints_a_line(self) -> None:
+        # "Fully covered" must be distinguishable from "not measured".
+        text = coverage_text(Coverage(path=self._path(hit=[("a", "b"), ("b", "c")])))
+        assert "2 of 2 declared edges hit" in text
+
+    def test_the_figure_never_claims_more_than_it_measured(self) -> None:
+        """The tool-name interim understates, and the line that carries it says so."""
+        text = coverage_text(Coverage(path=self._path()))
+        assert "understates what ran" in text
+        assert "a suite-wide 'no run ever' needs #70" in text

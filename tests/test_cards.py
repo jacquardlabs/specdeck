@@ -13,12 +13,13 @@ import sys
 from pathlib import Path
 
 import pytest
+from typer.testing import CliRunner
 
 from specdeck.baseline import observed
 from specdeck.builtin import BuiltinConfig, builtin_properties, merge_wires
 from specdeck.card import parse
 from specdeck.cell import run_cell
-from specdeck.cli import _vocabulary
+from specdeck.cli import _vocabulary, app
 from specdeck.ir import AfterKThen, AtMost, Bound, Never
 from specdeck.judge import criteria_of, rubric_text
 from specdeck.lint import Severity, lint_paths
@@ -57,6 +58,30 @@ class TestSuiteShape:
             vocabulary=_vocabulary(CARDS / "vocabulary.txt"),
         )
         assert [f for f in result.findings if f.severity is not Severity.SKIPPED] == []
+
+    def test_the_deck_lints_clean_with_the_vocabulary_and_an_agent_definition_together(
+        self,
+    ) -> None:
+        """The two ERROR rules have to be satisfiable at the same time.
+
+        `unbounded-cycle` and `unknown-tool` shipped mutually unsatisfiable because
+        nothing ran them together: the cycle rule intersected graph *node* names against
+        wire *tool* names, so the only wire that cleared it was one `unknown-tool` then
+        rejected. Both flags, on the committed deck, through the CLI. See DECISIONS.md,
+        2026-08-25.
+        """
+        result = CliRunner().invoke(
+            app,
+            [
+                "lint",
+                str(CARDS),
+                "--vocabulary",
+                str(CARDS / "vocabulary.txt"),
+                "--agent-def",
+                "tests.fake_graph:refund_graph",
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
 
     def test_every_card_is_locked_under_its_own_name(self) -> None:
         lock = Lockfile.load(CARDS / "spec.lock.toml")

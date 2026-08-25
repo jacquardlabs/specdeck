@@ -28,6 +28,8 @@ from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
+from .coverage import UNDERSTATED, Coverage, PathCoverage, PolicyDocument, VocabularyTable
+from .introspect import Introspection
 from .judge import JudgeResult
 from .matrix_run import ColumnResult, MatrixResult, Status
 from .rates import Rates
@@ -111,6 +113,148 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
         )
     _waste(cell, console)
     console.print()
+
+
+def render_coverage(coverage: Coverage, console: Console) -> None:
+    """The coverage denominators, each table on its own and never blended into one number.
+
+    Printed after `render` rather than inside it. Coverage is not a scored figure and must
+    not sit beside the two that are: measurement.md keeps the tiers apart, and a percentage
+    printed under "gate" and "credit" would be read as a third verdict.
+
+    A table that is `None` is not printed at all — this invocation did not ask that
+    question. A table that is present but blind prints its blindness, because "we did not
+    check" and "we checked and found nothing" are the two facts a reader must never have to
+    guess between.
+    """
+    if coverage.unreadable:
+        # Above the tables it thinned: every figure below was taken over the cards that
+        # could be read, and this says which ones could not.
+        console.print("\n  [dim]not read as cards[/dim]")
+        for reason in coverage.unreadable:
+            # A parser message quoting a user's file. Text, never markup — and soft-wrapped,
+            # because Rich's word wrap breaks a path that outruns the width mid-word
+            # (`refunds.md` came back as `refund s.md` at 80 columns), and a path a reader
+            # cannot copy out of the report is worse than one that runs past the edge.
+            console.print(Text(f"    {reason}", style="yellow"), soft_wrap=True)
+    if coverage.policy is not None:
+        _policy_coverage(coverage.policy, console)
+    if coverage.vocabulary is not None:
+        _vocabulary_coverage(coverage.vocabulary, console)
+    if coverage.path is not None:
+        _path_coverage(coverage.path, console)
+
+
+def _policy_coverage(documents: list[PolicyDocument], console: Console) -> None:
+    """The clause inventory. Deliberately not a clauses x cards matrix — see coverage.py."""
+    console.print("\n  [dim]policy coverage[/dim]")
+    if not documents:
+        console.print(_figure("", "no card names a policy document, so there is nothing to count"))
+        return
+    for document in documents:
+        # The path, the headings and the clause text all come out of a user-supplied file,
+        # so every one of them reaches the console as Text rather than as markup.
+        line = Text("    ")
+        line.append(document.path)
+        # Soft-wrapped for the same reason as `unreadable` above: this line carries a path.
+        if document.blind:
+            line.append(f"   {document.blind}", style="yellow")
+            console.print(line, soft_wrap=True)
+            continue
+        line.append(f"   {_plural(len(document.clauses), 'clause')}", style="dim")
+        console.print(line, soft_wrap=True)
+        for section in document.sections:
+            entry = Text("      ")
+            entry.append(f"{section.section or '(preamble)':<24}", style="dim")
+            entry.append(_plural(section.clauses, "clause"), style="dim")
+            console.print(entry)
+        named = Text("      ")
+        if document.cards:
+            named.append(f"named by {_plural(len(document.cards), 'card')}", style="dim")
+        else:
+            # The one deterministic uncovered signal this table can give today.
+            named.append("named by no card — nothing in this deck exercises it", style="yellow")
+        console.print(named)
+    console.print(
+        Text(
+            "    clause-to-card attribution is not reported: a card's `context` names a "
+            "document, not clauses, so no per-clause predicate exists yet",
+            style="dim",
+        )
+    )
+
+
+def _vocabulary_coverage(table: VocabularyTable, console: Console) -> None:
+    """One row per declared tool: which cards wire it, and whether any run ran it."""
+    console.print("\n  [dim]vocabulary coverage[/dim]")
+    if table.blind:
+        console.print(_figure("", table.blind))
+        return
+    if not table.rows:
+        console.print(_figure("", "the declared vocabulary names no tools"))
+        return
+    width = max(len(row.tool) for row in table.rows) + 2
+    for row in table.rows:
+        line = Text("    ")
+        # An uncovered row is the one a reader is here for, so it is the one that is not dim.
+        uncovered = not row.wired_by and not row.exercised
+        line.append(f"{row.tool:<{width}}", style="yellow" if uncovered else None)
+        wired = f"wired by {len(row.wired_by)}" if row.wired_by else "no wire"
+        exercised = "exercised" if row.exercised else "not exercised"
+        line.append(f"{wired}, {exercised}", style="dim")
+        console.print(line)
+    uncovered = [row.tool for row in table.rows if not row.wired_by and not row.exercised]
+    console.print(
+        _figure(
+            "",
+            f"{len(uncovered)} of {_plural(len(table.rows), 'declared tool')} have neither a "
+            f"wire nor an exercising run",
+        )
+    )
+    if table.traces_blind:
+        console.print(_figure("", table.traces_blind))
+
+
+def _path_coverage(path: PathCoverage, console: Console) -> None:
+    """Declared graph edges against the ones runs actually traversed.
+
+    A figure is printed even at 100%, so "fully covered" cannot be mistaken for "not
+    measured", and the depth is always named — at every depth, including none.
+    """
+    console.print("\n  [dim]path coverage[/dim]")
+    if path.reference:
+        # A user-supplied reference, so Text rather than markup.
+        console.print(
+            Text(
+                f"    {path.reference} via {path.source} — {path.depth.value} depth",
+                style="dim",
+            )
+        )
+    if path.blind:
+        console.print(_figure("", path.blind))
+        return
+    console.print(
+        _figure(
+            "",
+            f"{path.covered} of {_plural(path.total, 'declared edge')} hit "
+            f"over {_plural(path.runs, 'run')}",
+        )
+    )
+    for source, target in path.missed:
+        # A node name is agent-authored, so it reaches the console as Text. `[/tmp]` in one
+        # would raise MarkupError and discard a report already paid for.
+        line = Text("      ")
+        line.append("never hit  ", style="yellow")
+        line.append(f"{source} -> {target}")
+        console.print(line)
+    console.print(_figure("", UNDERSTATED))
+    # "No run has ever hit it" is a suite claim, and neither path here makes one: `run`
+    # sees one card's runs, `coverage` sees whatever traces were handed to it.
+    console.print(_figure("", "over the traces seen here — a suite-wide 'no run ever' needs #70"))
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def _figure(label: str, detail: str) -> Text:
@@ -256,6 +400,43 @@ def judge_source(judged: list[JudgeResult]) -> str:
     if all(j.replayed for j in judged):
         return "replayed"
     return "live" if not any(j.replayed for j in judged) else "mixed replay and live"
+
+
+def depth_line(introspection: Introspection | None) -> Text:
+    """What the agent definition gave up, stated at every depth including none at all.
+
+    Public, and printed by every consumer of an introspection — the lint header and the
+    coverage report both call this, so the two cannot describe the same reading in
+    different words. An obligation that ran against half a graph and one that ran against
+    all of it must not read the same, and a reader must never have to infer which they got.
+
+    Dim: it is the context the findings were produced under, not a finding.
+    """
+    if introspection is None:
+        line = Text("  agent definition  ", style="dim")
+        line.append("not introspected — pass --agent-def <module:attribute>", style="dim")
+        return line
+    description = introspection.description
+    line = Text("  agent definition  ", style="dim")
+    # The reference and the source are user-supplied strings, so they are appended to a
+    # Text rather than interpolated into markup, on `_fail`'s rule.
+    line.append(f"{introspection.reference or '(unnamed)'} via {introspection.source}", style="dim")
+    line.append(f" — {introspection.depth.value} depth: ", style="dim")
+    line.append(
+        ", ".join(
+            _plural(len(found), noun)
+            for found, noun in (
+                (description.tools, "tool"),
+                (description.edges, "edge"),
+                (description.cycles, "cycle"),
+                (description.hitl_points, "HITL point"),
+            )
+        ),
+        style="dim",
+    )
+    if introspection.note:
+        line.append(f" ({introspection.note})", style="dim")
+    return line
 
 
 #: How a column's outcome reads in the grid. A skipped column is never a FAIL: it did not

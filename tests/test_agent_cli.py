@@ -7,13 +7,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
 from specdeck.card import CardError, parse
-from specdeck.cli import _adapter, app
+from specdeck.cli import _adapter, _resolve, app
 from specdeck.judge import Cassette, criteria_of
 from specdeck.judge import build_prompt as judge_prompt
 from specdeck.lockfile import Lockfile
@@ -21,6 +22,7 @@ from specdeck.loop import run_agent
 from specdeck.trace import SEMCONV
 
 from .fake_agent import BareAgent, FakeAgent, refuses
+from .fake_graph import FakeCompiled, refund_graph
 from .test_loop import AGENT_TURN_1, MODEL, record
 
 runner = CliRunner()
@@ -228,6 +230,16 @@ class TestAdapterForms:
         monkeypatch.setattr(module, "ready_agent", instance, raising=False)
         assert _adapter("tests.fake_agent:ready_agent") is instance
 
+    def test_a_callable_object_factory_is_called_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A `functools.partial` is neither a class nor a routine, and `--agent` has always
+        called it. The wave that split `_resolve` out for `--agent-def` stopped, and named
+        the partial in the "has no async run" error — which points at the factory, not at
+        the adapter it makes."""
+        import tests.fake_agent as module
+
+        monkeypatch.setattr(module, "partial_agent", partial(FakeAgent, refuses()), raising=False)
+        assert isinstance(_adapter("tests.fake_agent:partial_agent"), FakeAgent)
+
     def test_something_with_no_run_is_refused(self) -> None:
         with pytest.raises(CardError, match=r"run\(messages"):
             _adapter("tests.fake_agent:refuses")
@@ -252,3 +264,154 @@ class TestRelockKeepsWhatItWasNotGiven:
         # lock is written before that, which is the state under test.
         assert result.exit_code in (1, 2)
         assert Lockfile.load(workspace / "spec.lock.toml").simulator_model == MODEL
+
+
+def flat(text: str) -> str:
+    """Console output with its wrapping undone. Rich wraps at the terminal width, so an
+    assertion on a phrase is otherwise an assertion about where the line broke."""
+    return " ".join(text.split())
+
+
+class TestTheAgentDefinitionFlag:
+    """`specdeck lint --agent-def`: zero tokens, no network, one user module imported."""
+
+    def _deck(self, tmp_path: Path) -> Path:
+        (tmp_path / "a.md").write_text(
+            "# Scenario: a\nThe agent answers.\n\nwire:\n  - cancel_reservation: at_most 3\n"
+        )
+        return tmp_path
+
+    def test_the_depth_line_names_the_tier_and_the_counts(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["lint", str(self._deck(tmp_path)), "--agent-def", "tests.fake_graph:refund_graph"],
+        )
+        assert result.exit_code == 0
+        assert "topology depth: 2 tools, 3 edges, 1 cycle, 1 HITL point" in flat(result.stdout)
+        assert "via langgraph" in flat(result.stdout)
+
+    def test_without_the_flag_the_line_says_it_was_not_introspected(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["lint", str(self._deck(tmp_path))])
+        assert result.exit_code == 0
+        assert "not introspected" in flat(result.stdout)
+
+    def test_a_reference_that_does_not_import_is_a_user_error(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app, ["lint", str(self._deck(tmp_path)), "--agent-def", "nope.nothing:here"]
+        )
+        assert result.exit_code == 2
+        assert "nope.nothing:here" in flat(result.stdout)
+
+    def test_a_reference_that_is_not_module_attribute_is_a_user_error(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["lint", str(self._deck(tmp_path)), "--agent-def", "bare"])
+        assert result.exit_code == 2
+        assert "--agent-def" in flat(result.stdout)
+
+    def test_an_object_nothing_can_read_is_blindness_to_report_not_a_user_error(
+        self, tmp_path: Path
+    ) -> None:
+        # We could not read it; that is a depth to state, not a mistake the user made.
+        result = runner.invoke(
+            app, ["lint", str(self._deck(tmp_path)), "--agent-def", "tests.fake_agent:BareAgent"]
+        )
+        assert result.exit_code == 0
+        assert "via none — none depth" in flat(result.stdout)
+
+    def test_a_describe_that_raises_is_blindness_too_never_exit_3(self, tmp_path: Path) -> None:
+        # Exit 3 is "specdeck itself broke". A user definition that raises is neither that
+        # nor a clean read: it is a depth to state, with the exception in the line.
+        result = runner.invoke(
+            app,
+            [
+                "lint",
+                str(self._deck(tmp_path)),
+                "--agent-def",
+                "tests.fake_agent:BrokenDescribeAgent",
+            ],
+        )
+        assert result.exit_code == 0
+        assert "RuntimeError" in flat(result.stdout)
+
+    def test_an_unbounded_cycle_reds_the_lint(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("# Scenario: a\nThe agent answers.\n")
+        result = runner.invoke(
+            app, ["lint", str(tmp_path), "--agent-def", "tests.fake_graph:refund_graph"]
+        )
+        assert result.exit_code == 1
+        assert "unbounded-cycle" in flat(result.stdout)
+
+
+class TestResolvingAReferenceNeverRunsIt:
+    """`_resolve` is what `--agent-def` points at arbitrary user objects with."""
+
+    def test_a_factory_is_still_called(self) -> None:
+        assert isinstance(
+            _resolve("tests.fake_graph:refund_graph", flag="--agent-def"), FakeCompiled
+        )
+
+    def test_an_object_that_is_no_adapter_is_taken_as_it_stands_never_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression guard for the old `or not isinstance(found, AgentAdapter)`.
+
+        A compiled graph satisfies no protocol of ours, so under the old disjunct
+        `--agent-def` would have *invoked* the user's agent just to look at it.
+        """
+        import tests.fake_graph as module
+
+        compiled = refund_graph()
+        monkeypatch.setattr(module, "ready_graph", compiled, raising=False)
+        assert _resolve("tests.fake_graph:ready_graph", flag="--agent-def") is compiled
+
+    def test_the_flag_name_reaches_the_message(self) -> None:
+        with pytest.raises(CardError, match="--agent-def"):
+            _resolve("nope.nothing:here", flag="--agent-def")
+
+
+class TestPathCoverageInTheRunReport:
+    """Report-only, and the regression guard that it stays that way."""
+
+    def test_it_names_the_edge_the_agent_declared_and_never_traversed(
+        self, workspace: Path
+    ) -> None:
+        # `refuses()` executes `get_reservation_details` and stops, so the declared
+        # `-> cancel_reservation` edge is genuinely unreachable in this script.
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        text = flat(result.stdout)
+        assert "path coverage" in text
+        assert "0 of 1 declared edge hit" in text
+        assert "never hit get_reservation_details -> cancel_reservation" in text
+
+    def test_an_uncovered_edge_never_moves_the_exit_code(self, workspace: Path) -> None:
+        """DECISIONS.md, 2026-08-15: coverage never gates CI.
+
+        Asserted in the same test as the missed edge, so the two cannot drift apart.
+        """
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        assert result.exit_code == 0
+        assert "never hit get_reservation_details -> cancel_reservation" in flat(result.stdout)
+
+    def test_the_understatement_is_stated_on_the_run_that_reports_it(self, workspace: Path) -> None:
+        result = run(workspace, "--relock", "--simulator-model", MODEL)
+        assert "understates what ran" in flat(result.stdout)
+
+    def test_a_recorded_trace_run_reports_its_blindness_and_no_fraction(self) -> None:
+        """A `--trace` run has no adapter at all, so there is no denominator to report.
+
+        Against the committed card and its committed trace, read-only: no `--relock`, so
+        nothing here writes to the repo.
+        """
+        repo = Path(__file__).resolve().parent.parent
+        result = runner.invoke(
+            app,
+            [
+                "run",
+                str(repo / "cards" / "basic-economy-return-change.md"),
+                "--trace",
+                str(repo / "cards" / "traces" / "basic-economy-return-change.otlp.json"),
+            ],
+        )
+        assert result.exit_code == 0, result.stdout
+        text = flat(result.stdout)
+        assert "no agent definition" in text
+        assert "declared edge hit" not in text

@@ -53,6 +53,11 @@ class AgentDescription(BaseModel):
     edges: list[tuple[str, str]] = Field(default_factory=list)
     cycles: list[list[str]] = Field(default_factory=list)
     hitl_points: list[str] = Field(default_factory=list)
+    #: Which node binds which tools. Edges and cycles name *nodes*; a wire names a *tool*
+    #: and matches `execute_tool` spans by name, so without this mapping the two
+    #: vocabularies never meet and no wire can be shown to bound a loop. Empty for a
+    #: raw-SDK description, where the tool is the only node there is.
+    node_tools: dict[str, list[str]] = Field(default_factory=dict)
 
 
 @runtime_checkable

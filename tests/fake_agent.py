@@ -16,9 +16,16 @@ from specdeck.agent import AgentDescription, Chat, ToolCall
 class FakeAgent:
     """Replays a fixed script and records what it was asked."""
 
-    def __init__(self, script: list[list], *, tools: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        script: list[list],
+        *,
+        tools: list[str] | None = None,
+        edges: list[tuple[str, str]] | None = None,
+    ) -> None:
         self.script = script
         self.tools = tools or []
+        self.edges = edges or []
         self.calls: list[dict] = []
 
     async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
@@ -27,7 +34,7 @@ class FakeAgent:
         return self.script[index]
 
     def describe(self) -> AgentDescription:
-        return AgentDescription(tools=self.tools)
+        return AgentDescription(tools=self.tools, edges=self.edges)
 
 
 class BareAgent:
@@ -35,6 +42,26 @@ class BareAgent:
 
     async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
         return [Chat(content="I can help with that.", model="fake-1")]
+
+
+class BrokenDescribeAgent:
+    """`describe()` raises. A probe never crashes lint, so this is a depth to report."""
+
+    async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
+        return [Chat(content="I can help with that.", model="fake-1")]
+
+    def describe(self) -> AgentDescription:
+        raise RuntimeError("the graph is built at request time")
+
+
+class DictDescribeAgent:
+    """`describe()` answers with a plain dict. `runtime_checkable` only checks presence."""
+
+    async def run(self, messages: list[dict], tools: list[str], config: dict) -> list:
+        return [Chat(content="I can help with that.", model="fake-1")]
+
+    def describe(self) -> dict:
+        return {"tools": ["do_thing"]}
 
 
 def refuses(reservation: str = "SI5UKW") -> list[list]:
@@ -55,8 +82,17 @@ def refuses(reservation: str = "SI5UKW") -> list[list]:
 
 
 def refusing_agent() -> FakeAgent:
-    """A zero-argument factory, which is what `--agent module:attribute` resolves."""
-    return FakeAgent(refuses(), tools=["get_reservation_details", "cancel_reservation"])
+    """A zero-argument factory, which is what `--agent module:attribute` resolves.
+
+    It declares the one edge its own script never traverses: `refuses()` executes
+    `get_reservation_details` and stops, so `-> cancel_reservation` is a real, permanently
+    unhit edge — the case path coverage exists to name.
+    """
+    return FakeAgent(
+        refuses(),
+        tools=["get_reservation_details", "cancel_reservation"],
+        edges=[("get_reservation_details", "cancel_reservation")],
+    )
 
 
 #: Every config a `ConfigAgent` was handed, across every column of a matrix. Module-level

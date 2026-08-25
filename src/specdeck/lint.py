@@ -1,9 +1,16 @@
 """`specdeck lint` — zero tokens, no network, runs in pre-commit and CI.
 
-Two groups, by the data each needs. **Static** rules read the card and the lockfile:
+Three groups, by the data each needs. **Static** rules read the card and the lockfile:
 structure, dead fixture and policy paths, lockfile freshness, contradictory wires, and
 credit weight validity. **Vocabulary-fed** rules need an introspected tool vocabulary, and
-say so when they do not have one.
+say so when they do not have one. **Definition-fed** rules need the agent definition,
+introspected from `--agent-def`, and check two obligations over the whole deck rather than
+over any one card: every cycle is bounded, and every binding a card could reference is
+referenced by one.
+
+The definition-fed group states the introspection depth it saw in every report, at every
+depth including "not introspected at all". Depth varies by framework, so an obligation that
+ran against half a graph and one that ran against all of it must not read the same.
 
 Two rules govern the rest:
 
@@ -28,10 +35,11 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card, CardError, parse
-from .ir import AfterKThen, AtMost, Bound, Measure, Never, Property
+from .introspect import STRUCTURAL, Depth, Introspection, bounding_tools
+from .ir import AtMost, Bound, Measure, Never, Property
 from .judge import criteria_of, rubric_text
 from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
-from .wires import WireError, compile_wires, wires_text
+from .wires import WireError, compile_wires, named_markers, named_tools, wires_text
 
 CARD_GLOB = "*.md"
 
@@ -56,7 +64,16 @@ class Finding(BaseModel):
 
 
 class Result(BaseModel):
+    """Every finding, plus what the definition-fed rules were able to see.
+
+    The introspection is a field rather than a line of console text so that every
+    consumer — the Rich renderer today, a JUnit document later — reads the depth without
+    parsing prose. `errors`, `ok` and `counts` are untouched by it: how much was legible
+    is never itself a violation.
+    """
+
     findings: list[Finding]
+    introspection: Introspection | None = None
 
     @property
     def errors(self) -> int:
@@ -87,13 +104,18 @@ def lint_paths(
     lock: Lockfile | None = None,
     lock_path: Path | None = None,
     vocabulary: Vocabulary | None = None,
+    agent_def: Introspection | None = None,
 ) -> Result:
-    cards = _cards(paths)
+    cards = cards_under(paths)
     findings: list[Finding] = []
     for card_path in cards:
         findings += lint_card(card_path, lock=lock, lock_path=lock_path, vocabulary=vocabulary)
+    # Both deck-level groups append after every card, and both under one `card=` key each:
+    # `_render_lint` groups contiguously without sorting, so a key that reappears later
+    # would open a second block for the same subject.
     findings += _cassettes(cards)
-    return Result(findings=findings)
+    findings += _agent_definition(cards, agent_def)
+    return Result(findings=findings, introspection=agent_def)
 
 
 def lint_card(
@@ -306,7 +328,7 @@ def _vocabulary(
             card=name,
             message=f"wire names tool {tool!r}, which is not in the vocabulary",
         )
-        for tool in _named_tools(properties)
+        for tool in named_tools(properties)
         if tool not in vocabulary.tools
     ]
     findings += [
@@ -316,31 +338,10 @@ def _vocabulary(
             card=name,
             message=f"wire triggers on marker {marker!r}, which is not in the vocabulary",
         )
-        for marker in _named_markers(properties)
+        for marker in named_markers(properties)
         if marker not in vocabulary.markers
     ]
     return findings
-
-
-def _named_tools(properties: list[Property]) -> list[str]:
-    tools: set[str] = set()
-    for prop in properties:
-        rule = prop.rule
-        if isinstance(rule, Never | AtMost) and rule.selector.tool:
-            tools.add(rule.selector.tool)
-        elif isinstance(rule, AfterKThen) and rule.then.tool:
-            tools.add(rule.then.tool)
-    return sorted(tools)
-
-
-def _named_markers(properties: list[Property]) -> list[str]:
-    return sorted(
-        {
-            p.rule.trigger.marker
-            for p in properties
-            if isinstance(p.rule, AfterKThen) and p.rule.trigger.marker
-        }
-    )
 
 
 def _measures(properties: list[Property], name: str) -> list[Finding]:
@@ -459,8 +460,232 @@ def _cassettes(cards: list[Path]) -> list[Finding]:
     return findings
 
 
-def _cards(paths: list[Path]) -> list[Path]:
-    """Cards under the given paths.
+#: The `card=` key deck-level definition-fed findings carry, on `CASSETTE_DIR`'s
+#: precedent. One key, never the `--agent-def` reference: `_render_lint` groups
+#: contiguously, so two keys would open two blocks for one subject.
+AGENT_DEF = "agent definition"
+
+
+def _agent_definition(cards: list[Path], introspection: Introspection | None) -> list[Finding]:
+    """The two obligations docs/card-format.md states over an introspected definition.
+
+    Deck-wide, not per card. "Referenced by at least one wire or card" is a claim about
+    the suite: a tool wired on any card in the deck is wired, and a cycle one card bounds
+    is bounded for the agent, because there is one agent behind all of them.
+
+    Both obligations report themselves SKIPPED rather than passing quietly when the depth
+    they need was not reached — including when no `--agent-def` was given at all, which is
+    the ordinary case and still has to read differently from "checked and clean".
+    """
+    if introspection is None:
+        return [
+            Finding(
+                rule=rule,
+                severity=Severity.SKIPPED,
+                card=AGENT_DEF,
+                message=(
+                    f"{what} without the agent definition; pass "
+                    "--agent-def <module:attribute> to introspect it"
+                ),
+            )
+            for rule, what in (
+                ("unbounded-cycle", "cycles cannot be found"),
+                (
+                    "unreferenced-binding",
+                    "tool bindings, hand-offs and HITL points cannot be listed",
+                ),
+            )
+        ]
+    properties = _deck_properties(cards)
+    return _unbounded_cycles(introspection, properties) + _unreferenced_bindings(
+        cards, introspection, properties
+    )
+
+
+def _unbounded_cycles(introspection: Introspection, properties: list[Property]) -> list[Finding]:
+    """Every cycle has a bounded or escalation wire. **Error.**
+
+    What satisfies it is a wire naming a tool the cycle can call — `never` or `at_most` on
+    one of them, or an `after K` escalation whose follow-up tool is one of them — where
+    "can call" is `introspect.bounding_tools`: the tools the cycle's own nodes bind, plus a
+    node that is itself a tool. A wire naming the *node* does not, because it is not a
+    check: wires match `execute_tool` spans by tool name, so `tools: at_most 3` compiles to
+    a property no trace can satisfy. A trace-level bound does not count either —
+    `latency: under 120s` terminates a run, not a loop, and the format's own example card
+    carries one, so counting it would ship this ERROR unreachable on any deck that bounds
+    latency. See DECISIONS.md, 2026-08-25.
+
+    The gate is the cycle list rather than the depth: a description that declares its own
+    cycles and no edges is below TOPOLOGY and still has the thing this rule checks.
+    """
+    description = introspection.description
+    if not description.cycles:
+        if introspection.depth is Depth.TOPOLOGY:
+            return []
+        return [
+            Finding(
+                rule="unbounded-cycle",
+                severity=Severity.SKIPPED,
+                card=AGENT_DEF,
+                message=(
+                    f"{introspection.source} read this definition at '{introspection.depth.value}' "
+                    "depth, which carries no edges, so cycles could not be found"
+                ),
+            )
+        ]
+    bounded = set(named_tools(properties))
+    findings = []
+    for cycle in description.cycles:
+        wireable = bounding_tools(description, cycle)
+        if not wireable:
+            # Every wire subject is a tool name, so a loop through routers and chat steps
+            # alone is one no card can bound. Reported as blindness rather than as an
+            # ERROR whose instruction nobody could follow.
+            findings.append(
+                Finding(
+                    rule="unbounded-cycle",
+                    severity=Severity.SKIPPED,
+                    card=AGENT_DEF,
+                    message=(
+                        f"the cycle through {', '.join(cycle)} passes no node that binds a "
+                        "tool, so no wire can name anything inside it and whether it is "
+                        "bounded could not be checked"
+                    ),
+                )
+            )
+        elif not bounded & wireable:
+            findings.append(
+                Finding(
+                    rule="unbounded-cycle",
+                    severity=Severity.ERROR,
+                    card=AGENT_DEF,
+                    message=(
+                        f"the cycle through {', '.join(cycle)} has no wire on any card in "
+                        f"this deck. Bound a tool it calls — {', '.join(sorted(wireable))} "
+                        "— with `<tool>: never` or `<tool>: at_most <n>`, or escalate out "
+                        "of it with `<tool>: after <k> <marker>`. A wire naming the node "
+                        "rather than the tool is not one: wires match tool names. Nor is a "
+                        "trace-level bound such as `latency: under 120s`, which bounds a "
+                        "run and not a loop."
+                    ),
+                )
+            )
+    return findings
+
+
+def _unreferenced_bindings(
+    cards: list[Path], introspection: Introspection, properties: list[Property]
+) -> list[Finding]:
+    """Every tool binding, hand-off edge and HITL point is referenced by a wire or a card.
+    **Warning**, because a binding no card exercises is a gap in the suite rather than a
+    defect in it.
+
+    "Referenced by a card" is read as: the name appears as a whole word in a card's
+    `context` values. Nothing here reads `card.prose` — `card-mechanics` is the one rule
+    allowed inside the SME's block, and the recall would be near zero anyway, since an SME
+    writes "the agent refuses the change" and never `cancel_reservation`.
+    """
+    depth = introspection.depth
+    if depth is Depth.NONE:
+        return [
+            Finding(
+                rule="unreferenced-binding",
+                severity=Severity.SKIPPED,
+                card=AGENT_DEF,
+                message=(
+                    f"{introspection.source} read nothing out of this definition, so there "
+                    "are no bindings to check"
+                ),
+            )
+        ]
+    wired = set(named_tools(properties))
+    context = "\n".join(
+        value for card in _deck_cards(cards) for value in dict(card.context).values() if value
+    )
+    findings = [
+        Finding(
+            rule="unreferenced-binding",
+            severity=Severity.WARNING,
+            card=AGENT_DEF,
+            message=(
+                f"{kind} {name!r} is named by no wire and no card in this deck — no "
+                "scenario here says what the agent should do with it"
+            ),
+        )
+        for kind, name in _bindings(introspection)
+        if name not in wired and not re.search(rf"\b{re.escape(name)}\b", context)
+    ]
+    if depth is Depth.TOOLS:
+        findings.append(
+            Finding(
+                rule="unreferenced-binding",
+                severity=Severity.SKIPPED,
+                card=AGENT_DEF,
+                message=(
+                    f"{introspection.source} read this definition at 'tools' depth, so tool "
+                    "bindings were checked but hand-off edges and HITL points were not visible"
+                ),
+            )
+        )
+    return findings
+
+
+def _bindings(introspection: Introspection) -> list[tuple[str, str]]:
+    """Everything a card could reference, each labelled by what it is.
+
+    Deduped across kinds so a node that is both a tool and an edge endpoint is one
+    finding: the reader has one thing to do about it, not two.
+    """
+    description = introspection.description
+    found: list[tuple[str, str]] = [("tool binding", name) for name in description.tools]
+    found += [("HITL point", name) for name in description.hitl_points]
+    found += [
+        ("hand-off edge to", target) for _, target in description.edges if target not in STRUCTURAL
+    ]
+    seen: set[str] = set()
+    unique = []
+    for kind, name in found:
+        if name in seen:
+            continue
+        seen.add(name)
+        unique.append((kind, name))
+    return unique
+
+
+def _deck_cards(paths: list[Path]) -> list[Card]:
+    """Every card in the deck that parses. One that does not already has its own finding."""
+    parsed = []
+    for path in paths:
+        try:
+            parsed.append(parse(path))
+        except CardError:
+            continue
+    return parsed
+
+
+def _deck_properties(paths: list[Path]) -> list[Property]:
+    """Every wire in the deck, compiled.
+
+    Re-parsed rather than threaded out of `lint_card`. That function's signature is used
+    directly by around thirty tests and by the CLI, and widening its return type to carry
+    properties out would be a worse trade than reading five small markdown files twice.
+    """
+    properties: list[Property] = []
+    for card in _deck_cards(paths):
+        try:
+            properties += compile_wires(card)
+        except WireError:
+            continue  # `wire-syntax` already said so, per card
+    return properties
+
+
+def cards_under(paths: list[Path]) -> list[Path]:
+    """Cards under the given paths. **The one card-discovery rule in the project.**
+
+    Public because `specdeck lint`, `specdeck coverage` and every later command over a
+    deck have to agree about what a card is. Do not reimplement the walk: the rule below
+    is subtle, and two commands disagreeing about whether `policy/airline.md` is a card is
+    a discrepancy nobody would look for.
 
     A named path is always linted — if you point at a file, you meant it.
 

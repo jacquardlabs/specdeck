@@ -181,6 +181,34 @@ column rather than one for the card, so a cheap provider is not gated at an expe
 one's cost; a baseline recorded by a single-cell run sits in the `default` slot and the
 run says out loud that no column inherits it.
 
+### Coverage
+
+```console
+$ uv run specdeck coverage cards --vocabulary cards/vocabulary.txt \
+    --agent-def yourpkg.graph:app --trace run.otlp.json
+```
+
+Three denominators, printed as three tables and never blended into one percentage:
+**policy** (clauses per document and per section, and any policy document no card names),
+**vocabulary** (declared tools with no wire and no exercising run), and **path** (agent-graph
+edges no run traversed). Every table names what it could not see rather than reporting 0%:
+no `--vocabulary` means no denominator at all, no `--trace` means exercising was not
+checked, and a file under the deck that does not read as a card is listed above the tables
+instead of stopping them. `specdeck run` prints the path table for the run it just did.
+
+**Coverage never gates.** `specdeck coverage` exits 0 on any computed result — `2` for a
+broken input, `3` if specdeck itself breaks, never a code derived from a figure — and
+there is deliberately no `--fail-under`. The one exception is the definition-fed
+obligations, which are binary and live in `specdeck lint`, which does gate.
+
+Two limits the report states on every run rather than leaving to be found. The policy table
+is an **inventory**, not the clauses × cards matrix: a card's `context` names a document,
+not clauses, so no per-clause predicate exists yet
+([#88](https://github.com/jacquardlabs/specdeck/issues/88)). And an edge counts as hit only
+when two consecutive `execute_tool` spans carry its node names, so edges through router,
+chat and hand-off nodes can never be marked hit and the path figure **understates** what
+ran ([#89](https://github.com/jacquardlabs/specdeck/issues/89)).
+
 ### Lint
 
 ```console
@@ -199,10 +227,25 @@ One rule reads inside the prose block and only one: prose describing the card's 
 pass/fail machinery makes the judge answer with commentary instead of a verdict. It warns.
 Nothing else about the SME's wording is lint's business.
 
+`--agent-def <module:attribute>` points lint at your agent definition and adds the two
+definition-fed obligations over the whole deck: **every cycle in the graph is bounded by a
+wire naming a tool that cycle can call** (error) — the error names them, and a cycle whose
+nodes bind no tool at all is reported skipped rather than errored, because no wire could
+name anything inside it. And every tool binding, hand-off edge and HITL point is
+named by some wire or card (warning). A LangGraph compiled graph is read by duck typing, so
+langgraph is not a dependency of specdeck; anything implementing the adapter's optional
+`describe()` is read too.
+
+Every lint run prints the depth it read the definition at — `topology`, `tools`, `none`, or
+`not introspected` — and each obligation reports itself **skipped** below the depth it
+needs. A declared graph gives full topology and a raw-SDK loop gives tools only, so a check
+that ran against half a graph must not read like one that ran against all of it. This flag
+is the one lint input that imports a module of yours; zero tokens and no network still hold.
+
 Runs in pre-commit and in CI, from the same command.
 
-Not yet: the provider × prompt matrix, the definition-fed and prose-aware lint groups, and
-the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
+Not yet: the prose-aware lint group, the OpenAI SDK, MCP and subagent introspectors behind
+`--agent-def`, the clauses × cards matrix, and the `eventually` and precedence patterns — the palette ships `never`, `at_most`, bounds,
 and after-K-then-Y. specdeck's own judge and simulator speak the Anthropic Messages API
 only; they sit behind one `complete()` seam, and a second provider is
 [#60](https://github.com/jacquardlabs/specdeck/issues/60).

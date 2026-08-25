@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import inspect
 from datetime import date
 from itertools import groupby
 from pathlib import Path
@@ -28,16 +29,18 @@ from specdeck.cell import (
     run_cell,
     run_cell_async,
 )
+from specdeck.coverage import Coverage, CoverageError, collect, path_coverage
+from specdeck.introspect import Introspection, introspect
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
-from specdeck.lint import Result, Severity, Vocabulary, lint_paths
+from specdeck.lint import Result, Severity, Vocabulary, cards_under, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
 from specdeck.matrix import Column, MatrixError, cell_key, columns, load_matrix
 from specdeck.matrix_run import DEFAULT_MATRIX_CONCURRENCY, MatrixResult, Status, run_matrix
 from specdeck.provider import ProviderError
 from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
-from specdeck.report import render, render_matrix
+from specdeck.report import depth_line, render, render_coverage, render_matrix
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
@@ -74,6 +77,7 @@ USER_ERRORS = (
     BudgetError,
     CardError,
     CellError,
+    CoverageError,
     JudgeError,
     LoopError,
     MatrixError,
@@ -261,15 +265,25 @@ def run(
             )
         else:
             matrix, pending, unproven = None, None, []
-            traces = recordings or _drive(
-                card,
-                agent or "",
-                cassettes=cassette_dir,
-                lock=lock,
-                runs=n,
-                markers=_markers(vocabulary_path),
-                max_turns=max_turns,
-                live=live,
+            # Resolved once, here rather than inside `_drive`, because the same object is
+            # both what runs and what the path denominator is read off. Introspecting a
+            # second resolution would build a second adapter of the user's just to look
+            # at it.
+            adapter = _adapter(agent) if agent else None
+            introspection = introspect(adapter, reference=agent or "") if adapter else None
+            traces = (
+                _drive(
+                    card,
+                    adapter,
+                    cassettes=cassette_dir,
+                    lock=lock,
+                    runs=n,
+                    markers=_markers(vocabulary_path),
+                    max_turns=max_turns,
+                    live=live,
+                )
+                if adapter is not None
+                else recordings
             )
             builtin, pending = _builtin(
                 card_path,
@@ -298,6 +312,11 @@ def run(
             # serializer is specdeck breaking, and escaping to typer's default handler
             # would surface it as exit 1 — a card that honestly failed (#56).
             report = to_xml(cell) if junit_xml else None
+            # Computed inside the funnel though it is printed outside it, on `to_xml`'s
+            # rule: past the funnel an exception escapes to typer's default handler and
+            # exits 1, "the cell failed its gate" — which is a coverage computation
+            # reaching the exit code, the one thing coverage may never do.
+            covered = Coverage(path=path_coverage(introspection, traces))
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
@@ -332,6 +351,11 @@ def run(
         raise typer.Exit(_matrix_exit(matrix))
 
     render(cell, console, rates=rates)
+    # Printed after the cell report, never inside it. Coverage is not a scored figure and
+    # must not sit beside the two that are. Only the path table: policy and vocabulary are
+    # suite-level denominators, and one card answering "1 of 14 tools wired" would read as
+    # 7% coverage of a deck it never looked at. `specdeck coverage` asks all three.
+    render_coverage(covered, console)
     # The JUnit report first: an unwritable --baseline path must not also deny CI the file
     # it asked for, and the two failures are independent.
     _write_junit(junit_xml, report, console)
@@ -658,7 +682,7 @@ def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:
 
 def _drive(
     card: Card,
-    reference: str,
+    adapter: AgentAdapter,
     *,
     cassettes: Path,
     lock: Lockfile,
@@ -676,7 +700,7 @@ def _drive(
     return asyncio.run(
         _drive_async(
             card,
-            _adapter(reference),
+            adapter,
             cassettes=cassettes,
             lock=lock,
             runs=runs,
@@ -741,30 +765,65 @@ async def _drive_async(
     return traces
 
 
-def _adapter(reference: str) -> AgentAdapter:
-    """Resolve `module:attribute` to something that satisfies the protocol.
+def _resolve(reference: str, *, flag: str) -> object:
+    """Resolve `module:attribute` to the object the user meant.
 
-    A class is instantiated and a factory is called, both with no arguments; an adapter
-    instance is taken as it stands. The class case is not a nicety — a class satisfies a
+    A class is instantiated and a factory is called, both with no arguments; anything else
+    is taken as it stands. The class case is not a nicety — a class satisfies a
     `runtime_checkable` protocol check on attribute presence alone, so passing one through
     uninstantiated fails at the first turn with `run() missing 1 required positional
     argument`, long after the guard said it was fine.
+
+    "A class or a routine" is the discriminator, and it is deliberately not "anything that
+    is not already an adapter". `--agent-def` points at objects that satisfy no protocol
+    of ours — a compiled LangGraph graph is a plain object with a `get_graph()` — and
+    calling one because it failed an `isinstance` check would invoke the user's agent
+    just to look at it.
     """
     module_name, _, attribute = reference.partition(":")
     if not module_name or not attribute:
-        raise CardError(f"--agent {reference!r} is not `module:attribute`")
+        raise CardError(f"{flag} {reference!r} is not `module:attribute`")
     try:
         module = importlib.import_module(module_name)
     except ImportError as error:
-        raise CardError(f"--agent {reference!r}: {error}") from None
+        raise CardError(f"{flag} {reference!r}: {error}") from None
     try:
         found = getattr(module, attribute)
     except AttributeError:
-        raise CardError(f"--agent {reference!r}: {module_name} has no {attribute!r}") from None
-    adapter = found() if isinstance(found, type) or not isinstance(found, AgentAdapter) else found
+        raise CardError(f"{flag} {reference!r}: {module_name} has no {attribute!r}") from None
+    return found() if isinstance(found, type) or inspect.isroutine(found) else found
+
+
+def _adapter(reference: str) -> AgentAdapter:
+    """Resolve `--agent` to something that satisfies the adapter protocol.
+
+    The second call is `--agent`'s alone and does not belong in `_resolve`: a callable that
+    is no adapter is, here, a factory for one — a `functools.partial`, an object with
+    `__call__` — and calling it is what `--agent` has always done. `--agent-def` must not,
+    because the objects it points at satisfy no protocol of ours and calling one would
+    invoke the user's agent just to look at it.
+    """
+    adapter = _resolve(reference, flag="--agent")
+    if not isinstance(adapter, AgentAdapter) and callable(adapter):
+        adapter = adapter()
     if not isinstance(adapter, AgentAdapter):
         raise CardError(f"--agent {reference!r} has no async run(messages, tools, config)")
     return adapter
+
+
+def _introspected(reference: str | None) -> Introspection | None:
+    """Read the agent definition `--agent-def` names, or nothing when it was not given.
+
+    None and a `Depth.NONE` introspection are different facts and both are reported: one
+    says nobody asked, the other says we looked and could read nothing.
+
+    This is the only path on which lint imports a user's module, and it is opt-in for
+    exactly that reason — `specdeck lint` is otherwise pure reading. A module with
+    import-time side effects now runs inside pre-commit when this flag is passed.
+    """
+    if reference is None:
+        return None
+    return introspect(_resolve(reference, flag="--agent-def"), reference=reference)
 
 
 def _markers(path: Path | None) -> list[str]:
@@ -847,6 +906,12 @@ def lint(
         "--vocabulary",
         help="Known tool and marker names. Without it, those rules report themselves skipped.",
     ),
+    agent_def: str | None = typer.Option(
+        None,
+        "--agent-def",
+        help="Agent definition to introspect, as `module:attribute`. Feeds the "
+        "definition-fed obligations.",
+    ),
 ) -> None:
     """Check cards. Zero tokens, no network."""
     console = Console()
@@ -856,6 +921,7 @@ def lint(
             lock=Lockfile.load(lock_path) if lock_path else None,
             lock_path=lock_path,
             vocabulary=_vocabulary(vocabulary_path),
+            agent_def=_introspected(agent_def),
         )
     except USER_ERRORS as error:
         _fail(console, error)
@@ -863,6 +929,61 @@ def lint(
 
     _render_lint(result, console)
     raise typer.Exit(0 if result.ok else 1)
+
+
+@app.command()
+def coverage(
+    paths: list[Path] = typer.Argument(None, help="Cards, or directories holding them."),  # noqa: B008
+    vocabulary_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--vocabulary",
+        help="Declared tools. Without it the vocabulary table reports itself blind.",
+    ),
+    trace: list[Path] = typer.Option(  # noqa: B008
+        None, "--trace", help="A recorded event log. Repeat; traces are pooled across the deck."
+    ),
+    agent_def: str | None = typer.Option(
+        None,
+        "--agent-def",
+        help="Agent definition to introspect, as `module:attribute`. Without it the path "
+        "table has no denominator and says so.",
+    ),
+) -> None:
+    """Report the coverage denominators. Zero tokens, no network, always exits 0."""
+    # The exit code carries no coverage information at all, in either direction — this
+    # command exits 0 on any computed result, whatever the numbers say. DECISIONS.md,
+    # 2026-08-15: coverage percentages never gate CI. There is deliberately no
+    # `--fail-under`, no `--min-coverage` and no `--strict`; adding one would be a
+    # decision, not a feature. The binary definition obligations are the one carve-out and
+    # they live behind `specdeck lint`, which does gate.
+    console = Console()
+    try:
+        cards, unreadable = [], []
+        for path in cards_under(paths or [Path("cards")]):
+            # A file under the deck that is not a card does not stop the count. `lint`
+            # owns the `parse` rule and the exit code it carries; here it is one more
+            # thing this report could not see, printed above the tables it thinned.
+            try:
+                cards.append(parse(path))
+            except CardError as error:
+                unreadable.append(str(error))
+        found = collect(
+            cards,
+            vocabulary=_vocabulary(vocabulary_path),
+            traces=[load_trace(path) for path in trace or []],
+            introspection=_introspected(agent_def),
+            unreadable=unreadable,
+        )
+    except USER_ERRORS as error:
+        _fail(console, error)
+        raise typer.Exit(2) from None
+    except Exception as error:
+        console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
+        raise typer.Exit(3) from None
+
+    render_coverage(found, console)
+    console.print()
+    raise typer.Exit(0)
 
 
 @app.command()
@@ -926,6 +1047,8 @@ _STYLES = {
 
 
 def _render_lint(result: Result, console: Console) -> None:
+    console.print()
+    console.print(depth_line(result.introspection))
     console.print()
     for card, findings in groupby(result.findings, key=lambda f: f.card):
         listed = list(findings)

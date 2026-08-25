@@ -6,8 +6,9 @@ layout, the wire language under it, and the lint rules that check both.
 **Status.** The four blocks, tiers, binary judge verdicts, the lockfile, and the three
 built-in wires ship. The wire palette ships `never`, `at_most`, bounds, and after-K-then-Y;
 `eventually` and precedence do not, and a card using one fails saying so. Lint ships its
-static and vocabulary-fed rules; the definition-fed, wireable-prose, and ledger-fed groups
-do not. See [DECISIONS.md](../DECISIONS.md).
+static and vocabulary-fed rules, and the definition-fed group behind `--agent-def` with the
+LangGraph introspector only — the OpenAI SDK, MCP and subagent probes do not ship. The
+wireable-prose and ledger-fed groups do not. See [DECISIONS.md](../DECISIONS.md).
 
 ## The file
 
@@ -202,7 +203,7 @@ data source they need.
 | **Static** | 1 | Zone structure. Dead fixture and policy paths. Lockfile freshness. Contradictory wires. Credit weight validity. Card-mechanics language in prose (warning). Cassettes no card owns (warning). Judge and agent sharing a model family (warning). |
 | **Vocabulary-fed** | 1–2 | Wires referencing unknown tools. Invalid pattern × scope combinations. |
 
-| **Definition-fed** | 2 | Introspect the agent definition — a LangGraph graph, OpenAI SDK hand-offs, MCP configs, Claude Code subagent files. Obligations below. |
+| **Definition-fed** | 2 | Introspect the agent definition, from `--agent-def <module:attribute>` — a LangGraph graph, OpenAI SDK hand-offs, MCP configs, Claude Code subagent files. Obligations below. |
 | **Wireable prose** | 4 | Countable assertions in prose → suggest a wire. Paraphrase-duplicate criteria, via local embeddings. |
 | **Ledger-fed** | 3+ | Criteria with chronically low SME–judge agreement, flagged "ambiguous — reword." |
 
@@ -212,9 +213,38 @@ data source they need.
 - Every tool binding, hand-off edge, and HITL point is referenced by at least one wire or
   card. **Warning.**
 
+Both are checked over the whole deck, not per card: there is one agent behind every card,
+so a tool wired anywhere is wired and a cycle bounded anywhere is bounded.
+
+**A cycle is bounded by a wire naming a tool the cycle can call** — `<tool>: never`,
+`<tool>: at_most <n>`, or an escalation `<tool>: after <k> <marker>` whose follow-up tool
+is one of them. "A tool the cycle can call" is the tools bound to the cycle's own nodes,
+plus a node that is itself a tool, which is the raw-SDK shape. The error names them.
+
+A wire naming the graph *node* does not bound anything: a wire matches `execute_tool`
+spans by tool name, so `tools: at_most 3` on a LangGraph node compiles to a check no trace
+can ever satisfy — and the tool vocabulary rejects the name besides, so the two errors
+would have no state that clears both. A trace-level bound does not count either:
+`latency: under 120s` and `response_tokens under 400` bound a run, not a loop, and the
+example card above carries one, so counting them would ship this error unreachable on any
+deck that bounds latency. Recorded 2026-08-25.
+
+A cycle running only through nodes that bind no tool — routers, chat steps, hand-offs — is
+reported **skipped** rather than as an error: no wire can name anything inside it, so an
+error there would instruct the impossible. Stamping graph-node identity into the trace
+([#89](https://github.com/jacquardlabs/specdeck/issues/89)) is what would make it
+checkable.
+
+A binding counts as referenced when a wire on any card names it, or when its name appears
+as a whole word in a card's `context` values. Nothing here reads the prose block.
+
 Introspection depth varies by framework: a declared graph gives full topology, a raw-SDK
-loop gives tools only. The report always states which tier it saw — an obligation check
-that silently degrades is worse than one that reports its own blindness.
+loop gives tools only, and an object nothing can read gives none. The report always states
+which tier it saw — `topology`, `tools`, `none`, or `not introspected` when no
+`--agent-def` was passed — because an obligation check that silently degrades is worse than
+one that reports its own blindness. Below full depth each obligation additionally reports
+itself **skipped**, naming what it could not see. `--agent-def` is the one lint input that
+imports a module of yours, so it is opt-in and "zero tokens, no network" still holds.
 
 ### Severity rule
 
