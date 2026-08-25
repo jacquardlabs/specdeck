@@ -2,6 +2,19 @@
 
 <!-- version list -->
 
+## v0.6.0 (2026-08-25)
+
+### Features
+
+- A card that exercises never_requested and the denial convention
+  ([`d6c3d28`](https://github.com/jacquardlabs/specdeck/commit/d6c3d28af062a6d8cf1d2505b728a3d0d54beba4))
+
+### Testing
+
+- Record the judge cassette and repin the deck at six cards
+  ([`e4a9438`](https://github.com/jacquardlabs/specdeck/commit/e4a9438e5ef637154063d8bf76816d0c43ccd6f9))
+
+
 ## v0.5.1 (2026-08-25)
 
 ### Bug Fixes
