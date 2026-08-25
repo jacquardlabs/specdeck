@@ -149,3 +149,20 @@ class TestGatesPass:
 
     def test_a_card_with_no_gate_wires_passes_its_wires(self) -> None:
         assert gates_pass([]) is True
+
+
+class TestBuiltInsNeverReachTheCompiler:
+    """`compile_wires` feeds `wires_hash`. A built-in in here stales every user's lock.
+
+    The merge lives in `cell.run_cell_async`; these two assertions are what stop a later
+    refactor from unifying the pinned derivation with the evaluated one.
+    """
+
+    def test_the_module_card_compiles_to_exactly_what_it_authored(self) -> None:
+        card = parse_text(CARD)
+        props = compile_wires(card)
+        assert len(props) == len(card.wires) + len(card.credit_wires)
+
+    def test_a_card_that_authors_no_latency_wire_is_given_none_here(self) -> None:
+        card = parse_text("# Scenario: x\nThe agent answers.\n\nwire:\n  - a_tool: never\n")
+        assert [p.id for p in compile_wires(card)] == ["never:a_tool"]

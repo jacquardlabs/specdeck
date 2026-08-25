@@ -9,6 +9,10 @@ every gate held, and the cell passes at >=k of N. Credit score is the weighted s
 binary credit verdicts over the passing runs only — credit never offsets a failed gate, so
 a run that failed a gate contributes nothing rather than contributing its credit.
 
+Every cell evaluates three wires the card did not author — `stop_reason`, a latency budget,
+and a token regression against a recorded baseline — merged in here and nowhere else. See
+`builtin.py` for why the compiler does not know about them.
+
 Beneath those two it reports three secondary figures — the spread of credit over the
 passing runs, latency p50/p95, and a dollar estimate over the agent's traced tokens — and
 any waste the run's trace shows. None of them moves the verdict: a card that passed while
@@ -22,6 +26,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .builtin import BuiltinConfig, builtin_properties, merge_wires
 from .card import Card
 from .ir import Property, Verdict, evaluate_all
 from .judge import DEFAULT_JUDGE_MODEL, Criterion, JudgeResult, criteria_of, judge
@@ -119,6 +124,7 @@ def run_cell(
     simulator_model: str = "",
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
+    builtin: BuiltinConfig | None = None,
 ) -> Cell:
     """Synchronous entry point. The CLI and tests call this; it owns the event loop."""
     return asyncio.run(
@@ -132,6 +138,7 @@ def run_cell(
             simulator_model=simulator_model,
             live=live,
             concurrency=concurrency,
+            builtin=builtin,
         )
     )
 
@@ -147,6 +154,7 @@ async def run_cell_async(
     simulator_model: str = "",
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
+    builtin: BuiltinConfig | None = None,
 ) -> Cell:
     if len(traces) != n:
         raise CellError(
@@ -156,7 +164,10 @@ async def run_cell_async(
     if not 1 <= k <= n:
         raise CellError(f"{card.path}: pass threshold {k} must be between 1 and {n} runs")
 
-    properties = compile_wires(card)
+    # The one place authored and built-in wires meet. `compile_wires` stays authored-only
+    # because its output is hashed into the lockfile — a default moving under a card nobody
+    # edited must not read as drift — so the merge lives here rather than in the compiler.
+    properties = merge_wires(compile_wires(card), builtin_properties(builtin or BuiltinConfig()))
     gate_wires = [p for p in properties if p.tier is Tier.GATE]
     credit_wires = [p for p in properties if p.tier is Tier.CREDIT]
     criteria = criteria_of(card)

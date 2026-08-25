@@ -14,9 +14,12 @@ from rich.text import Text
 
 from specdeck import __version__
 from specdeck.agent import AgentAdapter
+from specdeck.baseline import BASELINE_NAME, Baseline, BaselineError, observed
+from specdeck.builtin import DEFAULT_LATENCY_BUDGET_S, BuiltinConfig
 from specdeck.card import Card, CardError, parse
 from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
+from specdeck.junit import to_xml
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
@@ -35,7 +38,20 @@ app = typer.Typer(
     add_completion=False,
 )
 
+#: The exit-code registry. Nothing here reads it — it is the written record the runner is
+#: held to, so a later command extends it instead of colliding with it. A caller routes on
+#: the code alone, so a code means one thing forever and a genuinely new state takes a new
+#: number: 4 is reserved and unissued for "the matrix did not complete: budget" (#15). A
+#: run that could not start and a run that answered are different facts, hence 2 and 3.
+EXIT_CODES = {
+    0: "the cell passed",
+    1: "the cell failed its gate",
+    2: "the run could not start — a user error, one of USER_ERRORS below",
+    3: "specdeck itself broke",
+}
+
 USER_ERRORS = (
+    BaselineError,
     CardError,
     CellError,
     JudgeError,
@@ -118,6 +134,22 @@ def run(
     rates_path: Path | None = typer.Option(  # noqa: B008
         None, "--rates", help=f"A {RATES_FILE} to merge over the built-in table."
     ),
+    latency_budget: float = typer.Option(
+        DEFAULT_LATENCY_BUDGET_S,
+        "--latency-budget",
+        help="Seconds the built-in latency wire allows, for a card that authors none.",
+    ),
+    baseline_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--baseline",
+        help=f"Recorded token costs (default: {BASELINE_NAME} beside the card).",
+    ),
+    update_baseline: bool = typer.Option(
+        False, "--update-baseline", help="Record this run's token cost and continue."
+    ),
+    junit_xml: Path | None = typer.Option(  # noqa: B008
+        None, "--junit-xml", help="Write a JUnit XML report here, for CI to render."
+    ),
 ) -> None:
     """Evaluate one card — against recorded traces, or by running the agent."""
     console = Console()
@@ -154,6 +186,13 @@ def run(
             max_turns=max_turns,
             live=live,
         )
+        builtin, pending = _builtin(
+            card_path,
+            baseline_path,
+            traces,
+            latency_budget=latency_budget,
+            update=update_baseline,
+        )
         cell = run_cell(
             card,
             traces,
@@ -168,7 +207,12 @@ def run(
             simulator_model=lock.simulator_model if agent else "",
             live=live,
             concurrency=concurrency,
+            builtin=builtin,
         )
+        # Serialised inside the funnel though it is written outside it: a bug in the
+        # serializer is specdeck breaking, and escaping to typer's default handler would
+        # surface it as exit 1 — the same code as a card that honestly failed (#56).
+        report = to_xml(cell) if junit_xml else None
     except USER_ERRORS as error:
         _fail(console, error)
         raise typer.Exit(2) from None
@@ -180,7 +224,110 @@ def run(
         raise typer.Exit(3) from None
 
     render(cell, console, rates=rates)
+    # The JUnit report first: an unwritable --baseline path must not also deny CI the file
+    # it asked for, and the two failures are independent.
+    _write_junit(junit_xml, report, console)
+    _write_baseline(pending, console)
+    if pending is not None and not cell.passed:
+        # A cell that fails its gate is still a cell that ran, so its cost is still
+        # recorded. Said out loud rather than refused: whether a failing run may set a
+        # baseline is a product question nobody has answered, and a silent bad baseline is
+        # the outcome neither answer wants.
+        console.print(
+            "[yellow]note[/yellow]",
+            Text(
+                "the baseline was recorded from a run whose gate failed — re-record it "
+                "once the card passes, or the cost of a broken run becomes the normal"
+            ),
+        )
     raise typer.Exit(0 if cell.passed else 1)
+
+
+def _builtin(
+    card_path: Path,
+    baseline_path: Path | None,
+    traces: list[Trace],
+    *,
+    latency_budget: float,
+    update: bool,
+) -> tuple[BuiltinConfig, tuple[Path, Baseline] | None]:
+    """What the free wires are configured with, and the baseline still owed to disk.
+
+    The baseline file sits beside the card like the lockfile and the cassettes, so where
+    the runner was invoked from cannot change which costs a card is compared against.
+
+    A repo with no baseline recorded runs green and simply gets no regression wire. The
+    free gates exist to catch a card getting worse; there is nothing yet to be worse than,
+    and a first install must not go red for a number nobody has written down.
+
+    Nothing is written here. `--update-baseline` folds the fresh median into the config, so
+    this run is judged against what it just recorded — the way `--relock` verifies against
+    the lock it just wrote — but the file itself is handed back for the caller to write
+    once the cell has actually run. Written here, a run refused further down (a trace count
+    that disagrees with `--runs`, a missing cassette) would still have overwritten a
+    committed baseline with a number from a cell that never ran.
+    """
+    if latency_budget <= 0:
+        # Checked here rather than left to pydantic: a `ValidationError` is not a
+        # `USER_ERROR`, so a number the user typed would exit 3, "specdeck itself broke".
+        raise CellError(
+            f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
+        )
+    path = baseline_path or card_path.parent / BASELINE_NAME
+    key = lock_key(card_path, path)
+    recorded = Baseline.load(path)
+    pending = None
+    if update:
+        # `observed` refuses before anything is recorded, so a run that cannot honestly be
+        # recorded leaves no file behind claiming it was.
+        recorded = recorded.record(key, observed(traces))
+        pending = (path, recorded)
+    return (
+        BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key)),
+        pending,
+    )
+
+
+def _write_baseline(pending: tuple[Path, Baseline] | None, console: Console) -> None:
+    """The recorded cost, once the cell it describes has actually run.
+
+    Deliberately outside the funnel above and after the cell, on `_write_junit`'s rule: a
+    path the user named is part of the invocation, so a broken one exits 2 loudly rather
+    than surfacing as exit 3, "specdeck itself broke". The cell's own report has already
+    printed by the time this runs, so a typo in `--baseline` costs the reader nothing but
+    the file.
+    """
+    if pending is None:
+        return
+    path, baseline = pending
+    try:
+        baseline.save(path)
+    except OSError as error:
+        console.print("[red]error[/red]", Text(f"cannot write the baseline to {path}: {error}"))
+        raise typer.Exit(2) from None
+
+
+def _write_junit(path: Path | None, report: str | None, console: Console) -> None:
+    """The CI report, when one was asked for.
+
+    Written on pass and on fail alike — a cell that failed is exactly what CI needs to
+    render. Reported here rather than through the funnel above, because the cell has
+    already run and its report is already on screen: this is not "the run could not
+    start". It exits 2 all the same, on the rule `--rates` already follows — a file named
+    on the invocation is part of it, and CI silently receiving no report is worse than a
+    loud refusal.
+    """
+    if path is None or report is None:
+        return
+    try:
+        # UTF-8 named, not left to the locale: the document declares `encoding='utf-8'` in
+        # band and every report carries an em dash, so a non-UTF-8 default either raises
+        # `UnicodeEncodeError` — exit 1, a card that honestly failed (#56) — or writes
+        # bytes that contradict the declaration and reach CI silently unparseable.
+        path.write_text(report, encoding="utf-8")
+    except OSError as error:
+        console.print("[red]error[/red]", Text(f"cannot write the JUnit report to {path}: {error}"))
+        raise typer.Exit(2) from None
 
 
 def _rates(rates_path: Path | None, card_path: Path, console: Console) -> Rates:

@@ -52,9 +52,22 @@ stops the run, one merely found beside the card only prints a note. A run that w
 gets a `waste` block under the detail; a finding says what it cost and never changes the
 verdict.
 
-Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start,
-`3` specdeck itself broke. A caller reading only the code should never route a malformed
-lockfile to the SME as an eval regression.
+Every card also gets three wires it did not author: `stop_reason: not truncated`, a latency
+budget (`--latency-budget`, default 120s), and a token regression against
+`spec.baseline.toml`, which `--update-baseline` records. A card takes one back by authoring
+the same subject — there is no opt-out syntax — and none of the three is hashed into the
+lockfile, so a default moving in a release is not card drift. A card with no baseline
+recorded gets no regression wire at all. See
+[docs/card-format.md](docs/card-format.md#built-in-wires).
+
+`--junit-xml PATH` writes a report any CI system renders: one `<testsuite>` per cell, one
+`<testcase>` per run, and a `<failure>` naming the wires and criteria a run failed. Written
+whenever a cell was produced, on pass and on fail; not written when the run could not start.
+
+Exit codes are distinct: `0` the cell passed, `1` it failed a gate — including a token
+regression, which is a gate wire like any other — `2` the run could not start, `3` specdeck
+itself broke. A caller reading only the code should never route a malformed lockfile to the
+SME as an eval regression.
 
 ### A card's first run
 
@@ -66,7 +79,9 @@ $ specdeck run cards/your-card.md --trace run.otlp.json --relock --live
 ```
 
 `--relock` writes `spec.lock.toml` beside the card, pinning the judge model and hashing
-the rubric, the compiled wires, and the simulator prompt. `--runs` defaults to one per
+the rubric, the compiled wires, and the simulator prompt. `--update-baseline`, separately,
+writes `spec.baseline.toml`: what this card costs in output tokens, so a later run that
+costs materially more fails rather than passing quietly. `--runs` defaults to one per
 `--trace`. `--live` calls the judge and records the reply into `cassettes/` beside the
 card — once, unless the reply carries no gradable verdict, in which case it resamples up
 to three times and records the one that parsed. Every run after that needs neither flag

@@ -7,12 +7,14 @@ delivered what #48 said it would.
 from __future__ import annotations
 
 import shutil
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 import pytest
 from typer.testing import CliRunner
 
-from specdeck.cli import app
+from specdeck.cli import EXIT_CODES, app
+from specdeck.lockfile import lock_key
 
 CARDS = Path(__file__).resolve().parent.parent / "cards"
 CARD = CARDS / "basic-economy-return-change.md"
@@ -340,3 +342,356 @@ class TestRunCountDefaults:
         result = invoke(str(CARD), "--trace", str(TRACE), "--runs", "2")
         assert result.exit_code == 2
         assert "2 runs but 1 trace" in result.stdout
+
+
+class TestTheLatencyBudgetFlag:
+    def test_a_budget_the_run_cannot_meet_fails_the_cell(self, tmp_path: Path) -> None:
+        # The demo card authors `latency: under 120s`, so the flag has to reach a card
+        # that authors none. Proven on a prose-only copy with the same trace.
+        cards = _copy_cards(tmp_path)
+        prose = cards / "prose-only.md"
+        prose.write_text("# Scenario: x\nThe agent answers.\n")
+        result = invoke(
+            str(prose),
+            "--trace",
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
+            "--relock",
+            "--latency-budget",
+            "0.001",
+        )
+        assert result.exit_code == 1, result.stdout
+        assert "latency" in result.stdout
+
+    def test_the_budget_never_overrides_a_card_that_authored_one(self) -> None:
+        # The card says 120s and the run took 3.87s. A one-millisecond default must not
+        # touch it — an authored wire always wins.
+        assert demo("--latency-budget", "0.001").exit_code == 0
+
+    @pytest.mark.parametrize("budget", ["0", "-5"])
+    def test_a_budget_nothing_could_pass_is_a_user_error_not_a_crash(self, budget: str) -> None:
+        # A pydantic ValidationError would exit 3, "specdeck itself broke", for a number
+        # the user typed. Exit 2 is what a caller routes on (#56).
+        result = demo("--latency-budget", budget)
+        assert result.exit_code == 2, result.stdout
+        assert "--latency-budget" in result.stdout
+
+
+class TestTheBaseline:
+    def _prose_card(self, cards: Path) -> Path:
+        # The demo card is fine, but a prose-only copy keeps the assertions about the free
+        # wires rather than about the card's own.
+        path = cards / "prose-only.md"
+        path.write_text("# Scenario: x\nThe agent answers.\n")
+        return path
+
+    def _run(self, cards: Path, card: Path, *extra: str):
+        return invoke(
+            str(card),
+            "--trace",
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
+            *extra,
+        )
+
+    def test_update_baseline_writes_the_file_beside_the_card_and_continues(
+        self, tmp_path: Path
+    ) -> None:
+        cards = _copy_cards(tmp_path)
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 0, result.stdout
+        written = (cards / "spec.baseline.toml").read_text()
+        # 95 output tokens on the recorded trace, the same number the cost line prices.
+        assert f'[cards."{CARD.name}"."default"]' in written
+        assert "output_tokens = 95" in written
+
+    def test_a_recorded_baseline_becomes_a_wire_on_the_next_run(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        self._run(cards, cards / CARD.name, "--update-baseline")
+        stdout = " ".join(self._run(cards, cards / CARD.name).stdout.split())
+        assert "token_baseline 95, under 105" in stdout
+
+    def test_recording_a_baseline_does_not_fail_the_card_that_set_it(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        assert self._run(cards, cards / CARD.name, "--update-baseline").exit_code == 0
+        assert self._run(cards, cards / CARD.name).exit_code == 0
+
+    def test_a_run_past_the_tolerance_exits_one_as_a_failed_gate(self, tmp_path: Path) -> None:
+        # Not a new exit code: the regression is a gate wire, so it fails like any other.
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(
+            f'[cards."{CARD.name}"."default"]\noutput_tokens = 10\n'
+        )
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 1, result.stdout
+        assert "token_baseline" in result.stdout
+
+    def test_no_baseline_file_is_not_an_error_and_gates_nothing(self, tmp_path: Path) -> None:
+        # A first install must run green. The free regression wire simply is not produced.
+        cards = _copy_cards(tmp_path)
+        assert not (cards / "spec.baseline.toml").exists()
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 0, result.stdout
+        assert "token_baseline" not in result.stdout
+
+    def test_a_malformed_baseline_exits_two_not_three(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text("<<<<<<< HEAD\nbroken = [\n")
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+
+    def test_a_named_baseline_is_read_from_where_it_was_named(self, tmp_path: Path) -> None:
+        # Not beside the card: the file the user named, keyed relative to itself.
+        cards = _copy_cards(tmp_path)
+        elsewhere = tmp_path / "ci" / "base.toml"
+        elsewhere.parent.mkdir()
+        key = lock_key(cards / CARD.name, elsewhere)
+        elsewhere.write_text(f'[cards."{key}"."default"]\noutput_tokens = 10\n')
+        result = self._run(cards, cards / CARD.name, "--baseline", str(elsewhere))
+        # 95 tokens against a baseline of 10 is a regression, and a regression is a gate.
+        assert result.exit_code == 1, result.stdout
+        assert "token_baseline" in result.stdout
+
+    def test_a_named_baseline_is_the_only_one_consulted(self, tmp_path: Path) -> None:
+        # A file beside the card must not quietly win over the one the user named.
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(
+            f'[cards."{CARD.name}"."default"]\noutput_tokens = 10\n'
+        )
+        empty = tmp_path / "empty.toml"
+        empty.write_text("")
+        assert self._run(cards, cards / CARD.name, "--baseline", str(empty)).exit_code == 0
+
+    def test_a_baseline_set_by_a_failing_run_says_so(self, tmp_path: Path) -> None:
+        # A cell that fails its gate is still a cell that ran, so a broken run's token
+        # cost can become the recorded normal. It is not refused — whether it should be is
+        # an open product question — but it is never silent.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("get_reservation_details", "update_reservation_flights")
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 1, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "recorded from a run whose gate failed" in text
+        assert (cards / "spec.baseline.toml").exists()
+
+    def test_a_baseline_set_by_a_passing_run_says_nothing(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 0
+        assert "whose gate failed" not in result.stdout
+
+    def test_a_trace_with_no_usage_refuses_and_writes_nothing(self, tmp_path: Path) -> None:
+        # A recorded baseline of 0 would make every later run pass forever.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("gen_ai.usage.output_tokens", "gen_ai.usage.ignored")
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 2, result.stdout
+        assert "gen_ai.usage.output_tokens" in result.stdout
+        assert not (cards / "spec.baseline.toml").exists()
+
+    def test_a_trace_that_spent_nothing_refuses_and_writes_nothing(self, tmp_path: Path) -> None:
+        # Not the same fact as reporting no usage: this trace reported the attribute and
+        # it summed to 0. Recorded, it would exit 3 on every later run of the card.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text()
+            .replace('"intValue": "8"', '"intValue": "0"')
+            .replace('"intValue": "87"', '"intValue": "0"')
+        )
+        result = self._run(cards, cards / CARD.name, "--update-baseline")
+        assert result.exit_code == 2, result.stdout
+        assert "totalling 0" in " ".join(result.stdout.split())
+        assert not (cards / "spec.baseline.toml").exists()
+
+    def test_a_hand_edited_zero_exits_two_not_three(self, tmp_path: Path) -> None:
+        # The reader refuses what the writer can no longer produce, so a file already in
+        # someone's repo reports itself rather than reading as specdeck breaking.
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(
+            f'[cards."{CARD.name}"."default"]\noutput_tokens = 0\n'
+        )
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            '[cards."basic-economy-return-change.md"]\noutput_tokens = 95\n',
+            "cards = 5\n",
+            '[cards]\n"basic-economy-return-change.md" = 5\n',
+        ],
+    )
+    def test_a_wrong_shaped_baseline_exits_two_not_three(self, tmp_path: Path, text: str) -> None:
+        # Valid TOML, wrong structure — the natural hand-edit. A caller routing on the
+        # exit code must not read a user's typo as "specdeck itself broke".
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.baseline.toml").write_text(text)
+        result = self._run(cards, cards / CARD.name)
+        assert result.exit_code == 2, result.stdout
+        assert "internal error" not in result.stdout
+
+    def test_a_run_that_never_started_leaves_a_committed_baseline_alone(
+        self, tmp_path: Path
+    ) -> None:
+        # The file is written only once the cell has run. Written before, a refusal down
+        # in `run_cell` would have overwritten a committed number from a cell that never
+        # ran — and, exiting before the report, without even the note that says so.
+        cards = _copy_cards(tmp_path)
+        committed = cards / "spec.baseline.toml"
+        before = f'[cards."{CARD.name}"."default"]\noutput_tokens = 95\n'
+        committed.write_text(before)
+        result = self._run(cards, cards / CARD.name, "--runs", "5", "--update-baseline")
+        assert result.exit_code == 2, result.stdout
+        assert committed.read_text() == before
+
+    def test_a_baseline_path_that_cannot_be_written_exits_two(self, tmp_path: Path) -> None:
+        # A path the user named is part of the invocation, the rule --junit-xml and
+        # --rates already follow. Exit 3 would report a typo as an internal defect.
+        cards = _copy_cards(tmp_path)
+        result = self._run(
+            cards,
+            cards / CARD.name,
+            "--baseline",
+            str(tmp_path / "absent" / "base.toml"),
+            "--update-baseline",
+        )
+        assert result.exit_code == 2, result.stdout
+        assert "cannot write the baseline" in result.stdout
+        # The cell had already run and its report had already printed: the file is the
+        # only thing lost.
+        assert "gate" in result.stdout
+
+    def test_a_spread_wider_than_the_tolerance_fails_the_run_that_recorded_it(
+        self, tmp_path: Path
+    ) -> None:
+        # measurement.md says this out loud rather than leaving it to be discovered: the
+        # fresh median gates the same run, so at n=3 with k=3 a single run more than 10%
+        # above the median fails the invocation that recorded it. 95, 95, 123 -> median
+        # 95, bound 105, run 3 over it.
+        cards = _copy_cards(tmp_path)
+        traces = cards / "traces"
+        cheap = traces / "basic-economy-return-change.otlp.json"
+        dear = traces / "dear.otlp.json"
+        dear.write_text(cheap.read_text().replace('"intValue": "87"', '"intValue": "115"'))
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cheap),
+            "--trace",
+            str(cheap),
+            "--trace",
+            str(dear),
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--update-baseline",
+        )
+        assert result.exit_code == 1, result.stdout
+        text = " ".join(result.stdout.split())
+        assert "token_baseline 123, under 105" in text
+        assert "2/3 runs" in text
+        assert "output_tokens = 95" in (cards / "spec.baseline.toml").read_text()
+
+
+class TestJUnitOutput:
+    def test_a_passing_run_writes_a_parseable_suite(self, tmp_path: Path) -> None:
+        report = tmp_path / "r.xml"
+        assert demo("--junit-xml", str(report)).exit_code == 0
+        root = ET.fromstring(report.read_text())
+        assert root.tag == "testsuites"
+        suite = root.find("testsuite")
+        assert suite.get("name") == str(CARD)
+        assert suite.get("failures") == "0"
+
+    def test_a_failing_run_still_writes_the_report(self, tmp_path: Path) -> None:
+        # The whole point in CI: the red build is the one that needs the file.
+        cards = _copy_cards(tmp_path)
+        trace_path = cards / "traces" / "basic-economy-return-change.otlp.json"
+        trace_path.write_text(
+            trace_path.read_text().replace("get_reservation_details", "update_reservation_flights")
+        )
+        report = tmp_path / "r.xml"
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(trace_path),
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--junit-xml",
+            str(report),
+        )
+        assert result.exit_code == 1, result.stdout
+        root = ET.fromstring(report.read_text())
+        assert root.get("failures") == "1"
+        failure = root.find(".//failure")
+        assert "never:update_reservation_flights" in failure.text
+        assert "the cell needs 1 of 1 and got 0" in failure.get("message")
+
+    def test_a_path_that_cannot_be_written_exits_two(self, tmp_path: Path) -> None:
+        # A named file is part of the invocation, the rule --rates already follows. CI
+        # silently receiving no report is worse than a loud refusal.
+        result = demo("--junit-xml", str(tmp_path / "absent" / "r.xml"))
+        assert result.exit_code == 2, result.stdout
+        assert "cannot write the JUnit report" in result.stdout
+
+    def test_the_bytes_match_the_encoding_the_document_declares(self, tmp_path: Path) -> None:
+        # The declaration says utf-8 in band, so the file has to be utf-8 whatever the
+        # host's locale is. Left to `write_text`'s default, a latin-1 host raises on the
+        # em dash every summary carries (exit 1, a card that honestly failed) and a cp1252
+        # host raises nothing at all — CI just receives a document that will not parse.
+        # Asserted on the bytes rather than by forcing a locale, which is not something a
+        # test can change for an already-running interpreter.
+        report = tmp_path / "r.xml"
+        assert demo("--junit-xml", str(report)).exit_code == 0
+        raw = report.read_bytes()
+        assert b"encoding='utf-8'" in raw
+        assert "—".encode() in raw
+        assert ET.fromstring(raw.decode()).find(".//system-out") is not None
+
+    def test_no_flag_writes_no_file(self, tmp_path: Path) -> None:
+        cards = _copy_cards(tmp_path)
+        before = sorted(p.name for p in cards.iterdir())
+        _run_copy(cards, cards / CARD.name)
+        assert sorted(p.name for p in cards.iterdir()) == before
+
+    def test_a_run_that_never_produced_a_cell_writes_no_report(self, tmp_path: Path) -> None:
+        # An empty green suite for a run that never started would be a lie.
+        cards = _copy_cards(tmp_path)
+        (cards / "spec.lock.toml").unlink()
+        report = tmp_path / "r.xml"
+        result = invoke(
+            str(cards / CARD.name),
+            "--trace",
+            str(cards / "traces" / "basic-economy-return-change.otlp.json"),
+            "--cassettes",
+            str(cards / "cassettes"),
+            "--junit-xml",
+            str(report),
+        )
+        assert result.exit_code == 2
+        assert not report.exists()
+
+
+class TestTheExitCodeRegistry:
+    def test_it_names_every_code_the_runner_issues(self) -> None:
+        # Written down in one place so a later wave extends it rather than colliding with
+        # it. 4 is reserved for the matrix budget abort (#15) and is not issued yet.
+        assert sorted(EXIT_CODES) == [0, 1, 2, 3]
+
+    def test_the_readme_paragraph_names_every_code_the_registry_holds(self) -> None:
+        # The paragraph, not the file: `0` appears in a README all over the place, so a
+        # bare containment check stays green through an edit that deletes the sentence.
+        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+        paragraph = next(
+            block for block in readme.split("\n\n") if block.startswith("Exit codes are")
+        )
+        flat = " ".join(paragraph.split())
+        for code in EXIT_CODES:
+            assert f"`{code}`" in flat, flat
+        assert "specdeck itself broke" in flat
