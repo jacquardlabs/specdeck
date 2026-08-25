@@ -197,7 +197,13 @@ def _drive(
     are meant to be one conversation each.
     """
     if not lock.simulator_model:
-        raise StaleLock(f"the lockfile pins no simulator model — {RELOCK_HINT}")
+        # Naming --relock alone would loop the reader back here: the pin only moves when
+        # --simulator-model is passed too (see `_lock`), so a bare relock writes it empty
+        # and the next run dies on this same line (#76).
+        raise StaleLock(
+            "the lockfile pins no simulator model — run with "
+            "--relock --simulator-model <model> to pin one"
+        )
     adapter = _adapter(reference)
 
     async def all_runs() -> list[Trace]:
