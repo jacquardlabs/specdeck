@@ -59,6 +59,13 @@ class Level(StrEnum):
     MEDIUM = "medium"
 
 
+#: What `Finding.waste_tokens` counts, per kind. A retry burned tokens; a stale result
+#: burned token-turns, which is tokens carried times the requests that carried them. Two
+#: units, and adding them would produce a figure of nothing — cctx never summed them
+#: either, it priced each kind separately in its orchestrator.
+UNITS: dict[Kind, str] = {Kind.RETRY_LOOP: "tokens", Kind.STALE_CONTEXT: "token-turns"}
+
+
 class Finding(BaseModel):
     """One thing the run spent tokens on and did not need to.
 
@@ -74,7 +81,8 @@ class Finding(BaseModel):
     last_span: int
     evidence: dict[str, Any] = Field(default_factory=dict)
     summary: str
-    #: None when no chat span reported usage — the waste happened, the size is unknown.
+    #: In this kind's own unit (see `UNITS`). None when no chat span reported usage — the
+    #: waste happened, and its size is unknown rather than zero.
     waste_tokens: int | None = None
 
 
@@ -102,8 +110,9 @@ def classify(trace: Trace) -> list[Finding]:
 def _steps(trace: Trace) -> list[Step]:
     """The whole input adapter: spans in, classifier records out.
 
-    Ordinals are 1-based over `Trace.ordered` including the root, so a span number printed
-    in evidence is that span's position in the log the reader would open.
+    Ordinals are 1-based positions in `Trace.ordered`, which sorts on start time and
+    breaks ties on span id — so a child sharing the root's start time can precede it. The
+    number is a position in that ordering, not a claim about causal nesting.
     """
     return [_step(index, span) for index, span in enumerate(trace.ordered, start=1)]
 

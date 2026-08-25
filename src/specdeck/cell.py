@@ -28,7 +28,7 @@ from .judge import DEFAULT_JUDGE_MODEL, Criterion, JudgeResult, criteria_of, jud
 from .stats import RunMeasures, measure
 from .tier import Tier
 from .trace import Trace, reported_sum
-from .waste import Finding, classify
+from .waste import Finding, Kind, classify
 from .wires import compile_wires, gates_pass
 
 DEFAULT_N = 5
@@ -95,9 +95,17 @@ class Cell(BaseModel):
         return [finding for run in self.results for finding in run.waste]
 
     @property
-    def waste_tokens(self) -> int | None:
-        """Tokens the cell spent on waste, or None when no finding could size itself."""
-        return reported_sum(*(finding.waste_tokens for finding in self.waste))
+    def waste_tokens(self) -> dict[Kind, int | None]:
+        """What the waste cost, one total per kind, in each kind's own unit.
+
+        Not one number: a retry loop is measured in tokens and a stale result in
+        token-turns, so a single sum would be a figure in no unit at all. Kept apart here
+        rather than at each reader, since only this module knows the two are different.
+        """
+        return {
+            kind: reported_sum(*(f.waste_tokens for f in self.waste if f.kind is kind))
+            for kind in dict.fromkeys(finding.kind for finding in self.waste)
+        }
 
 
 def run_cell(

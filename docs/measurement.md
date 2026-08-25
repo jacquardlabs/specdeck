@@ -153,8 +153,13 @@ clothes, so it stays as written until a real trace misfires.
 
 **A finding is never a gate.** `Cell.passed` and the exit code are untouched. The report
 prints one line per distinct finding with the number of runs that produced it, worst
-severity first, and a token total labeled an estimate — or "not reported by the trace" when
-no chat span carried usage, never 0.
+severity first, then one total per kind, labeled an estimate and stated across the runs it
+covers — or "not reported by the trace" when no chat span carried usage, never 0.
+
+One total per kind, not one total: a retry loop is measured in tokens (what the run
+re-sent) and a stale result in token-turns (tokens carried, times the requests that carried
+them). Summing the two would give a figure in no unit at all. cctx kept them apart for the
+same reason, pricing each kind separately in its orchestrator rather than adding them.
 
 A card that passes at four times the token cost of its baseline is a finding, even though
 it passed. Nothing in the repo defines a card's baseline yet, so that ratio waits on

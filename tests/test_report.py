@@ -291,5 +291,23 @@ class TestWasteBlock:
 
     def test_a_finding_that_could_not_size_itself_says_so(self) -> None:
         text = rendered(cell_of(run_stub(waste=[self._finding(waste_tokens=None)])))
-        assert "not reported by the trace" in text
+        assert "retry_loop     not reported by the trace" in text
         assert "~0 tokens" not in text
+
+    def test_the_total_says_it_spans_the_runs_it_spans(self) -> None:
+        # The finding line reads "in 4 of 5 runs"; without this the total beneath it could
+        # be read as one run's.
+        runs = [run_stub(waste=[self._finding()]) for _ in range(4)] + [run_stub(passed=False)]
+        text = rendered(cell_of(*runs))
+        assert "~480 tokens, estimated, across 5 runs" in text
+
+    def test_the_two_kinds_get_their_own_total_in_their_own_unit(self) -> None:
+        run = run_stub(
+            waste=[
+                self._finding("a retry", waste_tokens=120),
+                self._finding("a stale result", kind=Kind.STALE_CONTEXT, waste_tokens=74_880),
+            ]
+        )
+        text = rendered(cell_of(run))
+        assert "~120 tokens, estimated" in text
+        assert "~74,880 token-turns, estimated" in text

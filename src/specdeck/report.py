@@ -29,7 +29,7 @@ from . import stats
 from .cell import Cell, Run
 from .rates import Rates
 from .tier import Tier
-from .waste import Finding, Level
+from .waste import UNITS, Finding, Level
 
 PASS = "[green]PASS[/green]"
 FAIL = "[red]FAIL[/red]"
@@ -196,13 +196,17 @@ def _waste(cell: Cell, console: Console) -> None:
         line.append(summary)
         line.append(f"   in {len(findings)} of {_runs(cell.runs, 'run')}", style="dim")
         console.print(line)
-    tokens = cell.waste_tokens
-    total = (
-        f"~{tokens:,} tokens, estimated"
-        if tokens is not None
-        else "token cost not reported by the trace"
-    )
-    console.print(Text(f"    {total}", style="dim"))
+    # One total per kind, never one number: tokens and token-turns are different units.
+    # Each is named and stated across the runs it covers — a finding in four of five runs
+    # was paid for four times, and the line above it says four, not five.
+    for kind in dict.fromkeys(findings[0].kind for _, findings in worst_first):
+        tokens = cell.waste_tokens[kind]
+        total = (
+            f"~{tokens:,} {UNITS[kind]}, estimated, across {_runs(cell.runs, 'run')}"
+            if tokens is not None
+            else "not reported by the trace"
+        )
+        console.print(Text(f"    {kind.value:<15}{total}", style="dim"))
 
 
 def _runs(n: int, noun: str) -> str:

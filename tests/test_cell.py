@@ -7,6 +7,7 @@ from specdeck.cell import DEFAULT_K, DEFAULT_N, CellError, Run, run_cell
 from specdeck.judge import Cassette, build_prompt, criteria_of
 from specdeck.stats import RunMeasures
 from specdeck.trace import GenAI, Operation, SpanEvent
+from specdeck.waste import Kind
 
 from .test_trace import span, trace
 
@@ -322,11 +323,29 @@ class TestWasteIsNeverAGate:
         cell = run_cell(card, traces, cassettes=tmp_path, n=2, k=2)
         assert len(cell.waste) == 2
         # 120 output tokens on the chat that issued each repeat attempt.
-        assert cell.waste_tokens == 240
+        assert cell.waste_tokens == {Kind.RETRY_LOOP: 240}
 
     def test_waste_tokens_is_none_when_no_trace_reported_usage(self, tmp_path: Path, card) -> None:
         traces = [retries(conversation(), tokens=None)]
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
         assert cell.waste
-        assert cell.waste_tokens is None
+        assert cell.waste_tokens == {Kind.RETRY_LOOP: None}
+
+
+class TestWasteUnitsAreNotSummed:
+    def test_two_kinds_are_two_totals(self, tmp_path: Path, card) -> None:
+        # A retry burned tokens; a stale result burned token-turns. One number over both
+        # would be a figure in no unit at all — cctx priced each kind separately too.
+        large = ("The search results show many TODO items across the codebase. " * 160).strip()
+        spans = list(retries(conversation()).spans)
+        stale = span("stale-0", Operation.EXECUTE_TOOL, offset=4.0)
+        stale.attributes[GenAI.TOOL_CALL_ARGUMENTS] = '{"command": "grep -r TODO ."}'
+        stale.attributes[GenAI.TOOL_CALL_RESULT] = large
+        spans.append(stale)
+        spans += [span(f"quiet-{i}", Operation.CHAT, offset=5.0 + i) for i in range(6)]
+        traces = [trace(*spans)]
+        record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
+        totals = run_cell(card, traces, cassettes=tmp_path, n=1, k=1).waste_tokens
+        assert set(totals) == {Kind.RETRY_LOOP, Kind.STALE_CONTEXT}
+        assert totals[Kind.RETRY_LOOP] != totals[Kind.STALE_CONTEXT]

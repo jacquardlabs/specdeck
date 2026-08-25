@@ -46,8 +46,10 @@ agent already emitting OTel needs no adapter.
 
 The three dim figures qualify the two above them and never replace them. The dollar amount
 prices the agent's own traced tokens off a rate table shipped in the package — an estimate
-carrying the date it was checked, never a billing figure. A run that wastes tokens gets a
-`waste` block under the detail; a finding says what it cost and never changes the verdict.
+carrying the date it was checked, never a billing figure. `specdeck rates` prints that
+table; `--rates`, or a `rates.toml` beside the card, corrects it. A run that wastes tokens
+gets a `waste` block under the detail; a finding says what it cost and never changes the
+verdict.
 
 Exit codes are distinct: `0` the cell passed, `1` it failed, `2` the run could not start,
 `3` specdeck itself broke. A caller reading only the code should never route a malformed
