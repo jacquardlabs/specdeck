@@ -1,9 +1,14 @@
+from itertools import groupby
 from pathlib import Path
 
 import pytest
 
-from specdeck.lint import Severity, Vocabulary, lint_card, lint_paths
+from specdeck.introspect import Depth, introspect
+from specdeck.lint import AGENT_DEF, Severity, Vocabulary, lint_card, lint_paths
 from specdeck.lockfile import Lockfile
+
+from .fake_agent import BareAgent, FakeAgent
+from .fake_graph import acyclic_graph, refund_graph
 
 GOOD = """\
 # Scenario: refund request on basic economy
@@ -480,3 +485,215 @@ class TestLintSeesAuthoredWiresOnly:
     def test_a_card_with_no_wires_at_all_reports_no_wire_finding(self, tmp_path: Path) -> None:
         path = self._card(tmp_path, "")
         assert rules(lint_card(path), Severity.ERROR) == []
+
+
+class TestAgentDefinition:
+    """The two definition-fed obligations, over the whole deck rather than per card."""
+
+    def _deck(self, directory: Path, *wire_blocks: str) -> Path:
+        for index, block in enumerate(wire_blocks):
+            (directory / f"card{index}.md").write_text(
+                f"# Scenario: {index}\nThe agent answers.\n{block}"
+            )
+        return directory
+
+    def _found(self, directory: Path, target: object, rule: str) -> list:
+        result = lint_paths([directory], agent_def=introspect(target, reference="x:y"))
+        return [f for f in result.findings if f.rule == rule]
+
+    def test_without_the_flag_both_obligations_report_themselves_skipped(
+        self, card_dir: Path
+    ) -> None:
+        result = lint_paths([card_dir])
+        skipped = {f.rule for f in result.findings if f.severity is Severity.SKIPPED}
+        assert {"unbounded-cycle", "unreferenced-binding"} <= skipped
+        assert result.introspection is None
+
+    def test_without_the_flag_the_default_lint_exit_code_does_not_move(
+        self, card_dir: Path
+    ) -> None:
+        # SKIPPED never counts toward `errors`, so adding a group cannot red an existing deck.
+        assert lint_paths([card_dir]).ok is True
+
+    def test_the_skipped_message_names_the_flag_that_would_fix_it(self, card_dir: Path) -> None:
+        messages = [
+            f.message for f in lint_paths([card_dir]).findings if f.rule == "unbounded-cycle"
+        ]
+        assert any("--agent-def" in message for message in messages)
+
+    def test_the_introspection_hangs_off_the_result_for_consumers_that_do_not_read_text(
+        self, card_dir: Path
+    ) -> None:
+        result = lint_paths([card_dir], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert result.introspection is not None
+        assert result.introspection.depth is Depth.TOPOLOGY
+
+    def test_at_tools_depth_the_cycle_rule_is_skipped_and_says_why(self, card_dir: Path) -> None:
+        found = self._found(card_dir, FakeAgent([], tools=["a_tool"]), "unbounded-cycle")
+        assert [f.severity for f in found] == [Severity.SKIPPED]
+        assert "no edges" in found[0].message
+
+    def test_at_tools_depth_the_binding_rule_still_runs_over_the_tool_list(
+        self, card_dir: Path
+    ) -> None:
+        found = self._found(
+            card_dir, FakeAgent([], tools=["never_mentioned"]), "unreferenced-binding"
+        )
+        warnings = [f for f in found if f.severity is Severity.WARNING]
+        assert [f.message for f in warnings] and "never_mentioned" in warnings[0].message
+        # And it says out loud that hand-offs and HITL points were not visible at all.
+        assert any(f.severity is Severity.SKIPPED for f in found)
+
+    def test_at_no_depth_the_binding_rule_is_skipped_rather_than_reporting_nothing_missing(
+        self, card_dir: Path
+    ) -> None:
+        found = self._found(card_dir, BareAgent(), "unreferenced-binding")
+        assert [f.severity for f in found] == [Severity.SKIPPED]
+
+    def test_a_cycle_no_wire_touches_is_an_error_and_fails_the_run(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - latency: under 30s\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
+        assert result.ok is False
+
+    def test_a_trace_level_bound_does_not_satisfy_the_cycle_rule(self, tmp_path: Path) -> None:
+        """The recorded reading of "bounded", pinned so a later change is a decision.
+
+        Under the looser reading — a `latency` or `response_tokens` bound counts — this
+        ERROR is unreachable on any deck that bounds latency, and the card format's own
+        example card bounds it. See DECISIONS.md, 2026-08-25.
+        """
+        deck = self._deck(
+            tmp_path,
+            "\nwire:\n  - latency: under 120s\n  - response_tokens under 400\n"
+            "  - stop_reason: not truncated\n",
+        )
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
+
+    def test_a_wire_naming_a_tool_outside_the_cycle_does_not_clear_it(self, tmp_path: Path) -> None:
+        """Only a wire on a node *in* the cycle counts.
+
+        `cancel_reservation` is a real tool of this graph and a real wire subject, but it
+        is not a node the loop passes through, so bounding it says nothing about the loop.
+        """
+        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: never\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
+
+    def test_an_at_most_on_a_node_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - tools: at_most 3\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_a_never_on_a_node_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
+        # A tool that can never be called cannot spin.
+        deck = self._deck(tmp_path, "\nwire:\n  - agent: never\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_an_escalation_whose_follow_up_is_in_the_cycle_clears_it(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - tools: after 3 non_agreement\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_the_obligation_is_deck_wide_not_per_card(self, tmp_path: Path) -> None:
+        # One card bounds the loop; the card beside it does not, and the deck is clear.
+        deck = self._deck(
+            tmp_path, "\nwire:\n  - latency: under 30s\n", "\nwire:\n  - tools: never\n"
+        )
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert rules(result.findings, Severity.ERROR) == []
+
+    def test_the_error_names_the_cycle_and_what_would_satisfy_it(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        message = next(f.message for f in result.findings if f.rule == "unbounded-cycle")
+        assert "agent" in message and "tools" in message
+        assert "at_most" in message and "after" in message
+
+    def test_nothing_is_ever_written_to_a_card(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "\nwire:\n  - latency: under 30s\n")
+        before = (deck / "card0.md").read_text()
+        lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        assert (deck / "card0.md").read_text() == before
+
+    def test_an_unreferenced_binding_is_a_warning_never_an_error(self, tmp_path: Path) -> None:
+        deck = self._deck(tmp_path, "")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        bindings = [f for f in result.findings if f.rule == "unreferenced-binding"]
+        assert bindings and all(f.severity is Severity.WARNING for f in bindings)
+
+    def test_a_tool_wired_on_any_card_in_the_deck_is_referenced(self, tmp_path: Path) -> None:
+        deck = self._deck(
+            tmp_path, "", "\nwire:\n  - cancel_reservation: never\n  - tools: never\n"
+        )
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
+        assert "cancel_reservation" not in named
+
+    def test_an_escalation_target_counts_as_a_reference(self, tmp_path: Path) -> None:
+        # The `AfterKThen.then.tool` path. Without it an escalation target reads unwired.
+        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: after 3 non_agreement\n")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
+        assert "cancel_reservation" not in named
+
+    def test_a_name_appearing_in_a_cards_context_counts_as_a_reference(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "c.md").write_text(
+            '# Scenario: x\ncontext:\n  simulator: "the traveller asks to escalate now"\n'
+            "\nThe agent answers.\n"
+        )
+        result = lint_paths([tmp_path], agent_def=introspect(refund_graph(), reference="x:y"))
+        named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
+        assert "'escalate'" not in named
+
+    def test_a_structural_node_is_never_reported_as_an_unreferenced_hand_off(
+        self, tmp_path: Path
+    ) -> None:
+        deck = self._deck(tmp_path, "")
+        result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
+        named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
+        assert "__start__" not in named and "__end__" not in named
+
+    def test_an_empty_deck_reports_every_binding_and_still_exits_ok(self, tmp_path: Path) -> None:
+        result = lint_paths([tmp_path], agent_def=introspect(acyclic_graph(), reference="x:y"))
+        assert result.ok is True
+        assert len([f for f in result.findings if f.rule == "unreferenced-binding"]) == 3
+
+    def test_no_definition_fed_finding_reads_the_prose_block(self, tmp_path: Path) -> None:
+        """A card whose prose is rewritten wholesale produces identical findings here."""
+        deck = self._deck(tmp_path, "\nwire:\n  - tools: never\n")
+        graph = refund_graph()
+        before = [
+            f
+            for f in lint_paths([deck], agent_def=introspect(graph)).findings
+            if f.card == AGENT_DEF
+        ]
+        (deck / "card0.md").write_text(
+            "# Scenario: 0\nescalate cancel_reservation get_reservation_details agent tools\n"
+            "\nwire:\n  - tools: never\n"
+        )
+        after = [
+            f
+            for f in lint_paths([deck], agent_def=introspect(graph)).findings
+            if f.card == AGENT_DEF
+        ]
+        assert after == before
+
+    def test_the_deck_level_findings_sit_under_one_contiguous_key(self, tmp_path: Path) -> None:
+        # `_render_lint` groups without sorting, so a split key opens two blocks.
+        deck = self._deck(tmp_path, "")
+        findings = lint_paths([deck], agent_def=introspect(refund_graph())).findings
+        keys = [key for key, _ in groupby(f.card for f in findings)]
+        assert keys.count(AGENT_DEF) == 1
+
+    def test_a_card_that_does_not_compile_does_not_stop_the_obligations(
+        self, tmp_path: Path
+    ) -> None:
+        self._deck(tmp_path, "\nwire:\n  - tools: never\n")
+        (tmp_path / "bad.md").write_text("# Scenario: bad\nx\n\nwire:\n  - a: eventually b\n")
+        result = lint_paths([tmp_path], agent_def=introspect(refund_graph()))
+        assert "unbounded-cycle" not in rules(result.findings, Severity.ERROR)

@@ -29,6 +29,7 @@ from specdeck.cell import (
     run_cell,
     run_cell_async,
 )
+from specdeck.introspect import Introspection, introspect
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
@@ -38,7 +39,7 @@ from specdeck.matrix import Column, MatrixError, cell_key, columns, load_matrix
 from specdeck.matrix_run import DEFAULT_MATRIX_CONCURRENCY, MatrixResult, Status, run_matrix
 from specdeck.provider import ProviderError
 from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
-from specdeck.report import render, render_matrix
+from specdeck.report import depth_line, render, render_matrix
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
@@ -779,6 +780,21 @@ def _adapter(reference: str) -> AgentAdapter:
     return adapter
 
 
+def _introspected(reference: str | None) -> Introspection | None:
+    """Read the agent definition `--agent-def` names, or nothing when it was not given.
+
+    None and a `Depth.NONE` introspection are different facts and both are reported: one
+    says nobody asked, the other says we looked and could read nothing.
+
+    This is the only path on which lint imports a user's module, and it is opt-in for
+    exactly that reason — `specdeck lint` is otherwise pure reading. A module with
+    import-time side effects now runs inside pre-commit when this flag is passed.
+    """
+    if reference is None:
+        return None
+    return introspect(_resolve(reference, flag="--agent-def"), reference=reference)
+
+
 def _markers(path: Path | None) -> list[str]:
     vocabulary = _vocabulary(path)
     return sorted(vocabulary.markers) if vocabulary else []
@@ -859,6 +875,12 @@ def lint(
         "--vocabulary",
         help="Known tool and marker names. Without it, those rules report themselves skipped.",
     ),
+    agent_def: str | None = typer.Option(
+        None,
+        "--agent-def",
+        help="Agent definition to introspect, as `module:attribute`. Feeds the "
+        "definition-fed obligations.",
+    ),
 ) -> None:
     """Check cards. Zero tokens, no network."""
     console = Console()
@@ -868,6 +890,7 @@ def lint(
             lock=Lockfile.load(lock_path) if lock_path else None,
             lock_path=lock_path,
             vocabulary=_vocabulary(vocabulary_path),
+            agent_def=_introspected(agent_def),
         )
     except USER_ERRORS as error:
         _fail(console, error)
@@ -938,6 +961,8 @@ _STYLES = {
 
 
 def _render_lint(result: Result, console: Console) -> None:
+    console.print()
+    console.print(depth_line(result.introspection))
     console.print()
     for card, findings in groupby(result.findings, key=lambda f: f.card):
         listed = list(findings)

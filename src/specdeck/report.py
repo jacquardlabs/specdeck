@@ -28,6 +28,7 @@ from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
+from .introspect import Introspection
 from .judge import JudgeResult
 from .matrix_run import ColumnResult, MatrixResult, Status
 from .rates import Rates
@@ -111,6 +112,10 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
         )
     _waste(cell, console)
     console.print()
+
+
+def _plural(n: int, noun: str) -> str:
+    return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
 def _figure(label: str, detail: str) -> Text:
@@ -256,6 +261,43 @@ def judge_source(judged: list[JudgeResult]) -> str:
     if all(j.replayed for j in judged):
         return "replayed"
     return "live" if not any(j.replayed for j in judged) else "mixed replay and live"
+
+
+def depth_line(introspection: Introspection | None) -> Text:
+    """What the agent definition gave up, stated at every depth including none at all.
+
+    Public, and printed by every consumer of an introspection — the lint header and the
+    coverage report both call this, so the two cannot describe the same reading in
+    different words. An obligation that ran against half a graph and one that ran against
+    all of it must not read the same, and a reader must never have to infer which they got.
+
+    Dim: it is the context the findings were produced under, not a finding.
+    """
+    if introspection is None:
+        line = Text("  agent definition  ", style="dim")
+        line.append("not introspected — pass --agent-def <module:attribute>", style="dim")
+        return line
+    description = introspection.description
+    line = Text("  agent definition  ", style="dim")
+    # The reference and the source are user-supplied strings, so they are appended to a
+    # Text rather than interpolated into markup, on `_fail`'s rule.
+    line.append(f"{introspection.reference or '(unnamed)'} via {introspection.source}", style="dim")
+    line.append(f" — {introspection.depth.value} depth: ", style="dim")
+    line.append(
+        ", ".join(
+            _plural(len(found), noun)
+            for found, noun in (
+                (description.tools, "tool"),
+                (description.edges, "edge"),
+                (description.cycles, "cycle"),
+                (description.hitl_points, "HITL point"),
+            )
+        ),
+        style="dim",
+    )
+    if introspection.note:
+        line.append(f" ({introspection.note})", style="dim")
+    return line
 
 
 #: How a column's outcome reads in the grid. A skipped column is never a FAIL: it did not

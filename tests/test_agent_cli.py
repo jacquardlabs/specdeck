@@ -13,7 +13,7 @@ import pytest
 from typer.testing import CliRunner
 
 from specdeck.card import CardError, parse
-from specdeck.cli import _adapter, app
+from specdeck.cli import _adapter, _resolve, app
 from specdeck.judge import Cassette, criteria_of
 from specdeck.judge import build_prompt as judge_prompt
 from specdeck.lockfile import Lockfile
@@ -21,6 +21,7 @@ from specdeck.loop import run_agent
 from specdeck.trace import SEMCONV
 
 from .fake_agent import BareAgent, FakeAgent, refuses
+from .fake_graph import FakeCompiled, refund_graph
 from .test_loop import AGENT_TURN_1, MODEL, record
 
 runner = CliRunner()
@@ -252,3 +253,90 @@ class TestRelockKeepsWhatItWasNotGiven:
         # lock is written before that, which is the state under test.
         assert result.exit_code in (1, 2)
         assert Lockfile.load(workspace / "spec.lock.toml").simulator_model == MODEL
+
+
+def flat(text: str) -> str:
+    """Console output with its wrapping undone. Rich wraps at the terminal width, so an
+    assertion on a phrase is otherwise an assertion about where the line broke."""
+    return " ".join(text.split())
+
+
+class TestTheAgentDefinitionFlag:
+    """`specdeck lint --agent-def`: zero tokens, no network, one user module imported."""
+
+    def _deck(self, tmp_path: Path) -> Path:
+        (tmp_path / "a.md").write_text(
+            "# Scenario: a\nThe agent answers.\n\nwire:\n  - tools: at_most 3\n"
+        )
+        return tmp_path
+
+    def test_the_depth_line_names_the_tier_and_the_counts(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app,
+            ["lint", str(self._deck(tmp_path)), "--agent-def", "tests.fake_graph:refund_graph"],
+        )
+        assert result.exit_code == 0
+        assert "topology depth: 2 tools, 3 edges, 1 cycle, 1 HITL point" in flat(result.stdout)
+        assert "via langgraph" in flat(result.stdout)
+
+    def test_without_the_flag_the_line_says_it_was_not_introspected(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["lint", str(self._deck(tmp_path))])
+        assert result.exit_code == 0
+        assert "not introspected" in flat(result.stdout)
+
+    def test_a_reference_that_does_not_import_is_a_user_error(self, tmp_path: Path) -> None:
+        result = runner.invoke(
+            app, ["lint", str(self._deck(tmp_path)), "--agent-def", "nope.nothing:here"]
+        )
+        assert result.exit_code == 2
+        assert "nope.nothing:here" in flat(result.stdout)
+
+    def test_a_reference_that_is_not_module_attribute_is_a_user_error(self, tmp_path: Path) -> None:
+        result = runner.invoke(app, ["lint", str(self._deck(tmp_path)), "--agent-def", "bare"])
+        assert result.exit_code == 2
+        assert "--agent-def" in flat(result.stdout)
+
+    def test_an_object_nothing_can_read_is_blindness_to_report_not_a_user_error(
+        self, tmp_path: Path
+    ) -> None:
+        # We could not read it; that is a depth to state, not a mistake the user made.
+        result = runner.invoke(
+            app, ["lint", str(self._deck(tmp_path)), "--agent-def", "tests.fake_agent:BareAgent"]
+        )
+        assert result.exit_code == 0
+        assert "via none — none depth" in flat(result.stdout)
+
+    def test_an_unbounded_cycle_reds_the_lint(self, tmp_path: Path) -> None:
+        (tmp_path / "a.md").write_text("# Scenario: a\nThe agent answers.\n")
+        result = runner.invoke(
+            app, ["lint", str(tmp_path), "--agent-def", "tests.fake_graph:refund_graph"]
+        )
+        assert result.exit_code == 1
+        assert "unbounded-cycle" in flat(result.stdout)
+
+
+class TestResolvingAReferenceNeverRunsIt:
+    """`_resolve` is what `--agent-def` points at arbitrary user objects with."""
+
+    def test_a_factory_is_still_called(self) -> None:
+        assert isinstance(
+            _resolve("tests.fake_graph:refund_graph", flag="--agent-def"), FakeCompiled
+        )
+
+    def test_an_object_that_is_no_adapter_is_taken_as_it_stands_never_called(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The regression guard for the old `or not isinstance(found, AgentAdapter)`.
+
+        A compiled graph satisfies no protocol of ours, so under the old disjunct
+        `--agent-def` would have *invoked* the user's agent just to look at it.
+        """
+        import tests.fake_graph as module
+
+        compiled = refund_graph()
+        monkeypatch.setattr(module, "ready_graph", compiled, raising=False)
+        assert _resolve("tests.fake_graph:ready_graph", flag="--agent-def") is compiled
+
+    def test_the_flag_name_reaches_the_message(self) -> None:
+        with pytest.raises(CardError, match="--agent-def"):
+            _resolve("nope.nothing:here", flag="--agent-def")
