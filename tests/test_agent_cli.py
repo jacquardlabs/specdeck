@@ -125,6 +125,10 @@ class TestRunningTheAgent:
         result = run(workspace, "--relock")
         assert result.exit_code == 2
         assert "simulator" in result.stdout
+        # And the hint has to name the flag that actually moves the pin: --relock alone is
+        # what this run already did, so advising it again loops the reader (#76). Rich
+        # soft-wraps at 80 columns under CliRunner, so unwrap before asserting the pair.
+        assert "--relock --simulator-model" in " ".join(result.stdout.split())
 
     def test_a_disagreeing_simulator_pin_is_drift(self, workspace: Path) -> None:
         run(workspace, "--relock", "--simulator-model", MODEL)
