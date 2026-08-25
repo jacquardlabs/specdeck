@@ -32,6 +32,12 @@ SEMCONV = "semantic-conventions-genai@1.38.0"
 #: past rather than a provider to key a rate table on.
 UNKNOWN_PROVIDER = "unknown"
 
+#: And what it writes to `gen_ai.request.model` for an adapter that reported none. Named
+#: here rather than spelled at each reader, because a budget cap has to recognise it: a
+#: span saying "unknown" prices at no rate at all, and charging it zero is the silent
+#: spend the cap exists to refuse.
+UNKNOWN_MODEL = "unknown"
+
 #: OTel's general-purpose span attribute, not a `gen_ai.*` one, which is why it sits
 #: outside `GenAI`. An adapter sets it to mark a tool call that failed; nothing specdeck
 #: writes today does, so the waste classifiers fall back to reading the result text.
@@ -203,6 +209,27 @@ class Trace(BaseModel):
         return any(
             s.attributes.get(GenAI.USAGE_OUTPUT_TOKENS) is not None for s in self.of(Operation.CHAT)
         )
+
+    @property
+    def unreported_chat_spans(self) -> dict[str, int]:
+        """How many chat spans reported no usage at all, per model.
+
+        `usage_by_model` folds a model's spans into one pair, so one span carrying counts
+        makes every silent span beside it look metered. An adapter that attaches usage to
+        the final message of a turn and to nothing else is a shape, not a bug —
+        `tests/fake_agent.refuses` has it — so the count is kept rather than summed away,
+        the way `reports_output_tokens` keeps "used none" apart from "did not say".
+        """
+        silent: dict[str, int] = {}
+        for span in self.of(Operation.CHAT):
+            if any(
+                span.attributes.get(name) is not None
+                for name in (GenAI.USAGE_INPUT_TOKENS, GenAI.USAGE_OUTPUT_TOKENS)
+            ):
+                continue
+            model = qualified_model(span)
+            silent[model] = silent.get(model, 0) + 1
+        return silent
 
     @property
     def total_output_tokens(self) -> int:

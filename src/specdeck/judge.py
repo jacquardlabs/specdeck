@@ -18,9 +18,10 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
+from .budget import Budget
 from .card import Card
 from .lockfile import fingerprint
-from .provider import EmptyCompletion, ProviderError, complete
+from .provider import Completion, EmptyCompletion, ProviderError, complete
 from .tier import Tier
 from .trace import GenAI, Message, Operation, Trace
 
@@ -257,7 +258,13 @@ class Cassette:
         return str(json.loads(path.read_text())["response"])
 
     def write(
-        self, prompt: str, model: str, response: str, *, criteria: list[str] | None = None
+        self,
+        prompt: str,
+        model: str,
+        response: str,
+        *,
+        criteria: list[str] | None = None,
+        usage: tuple[int | None, int | None] | None = None,
     ) -> None:
         """Record the call. The prompt is stored, not just its hash.
 
@@ -267,18 +274,19 @@ class Cassette:
         re-recordable — which needs what was asked, on disk.
         """
         self.directory.mkdir(parents=True, exist_ok=True)
-        self.path(prompt, model).write_text(
-            json.dumps(
-                {
-                    "model": model,
-                    "criteria": criteria or [],
-                    "prompt": prompt,
-                    "response": response,
-                },
-                indent=2,
-            )
-            + "\n"
-        )
+        # `usage` is additive and omitted when the reply did not report it, so a cassette
+        # written today is byte-identical to one written before this key existed. The
+        # recordings are the Phase-3 mutation runner's fixtures, and a `"usage": null` in
+        # every new file would put a spurious diff in front of whoever re-records one.
+        recorded = {
+            "model": model,
+            "criteria": criteria or [],
+            "prompt": prompt,
+            "response": response,
+        }
+        if usage is not None and any(half is not None for half in usage):
+            recorded["usage"] = {"input_tokens": usage[0], "output_tokens": usage[1]}
+        self.path(prompt, model).write_text(json.dumps(recorded, indent=2) + "\n")
 
 
 async def judge(
@@ -290,6 +298,7 @@ async def judge(
     model: str = DEFAULT_JUDGE_MODEL,
     live: bool = False,
     slug: str = "",
+    budget: Budget | None = None,
 ) -> JudgeResult:
     prompt = build_prompt(criteria, trace, policy=policy)
     cassette = Cassette(cassettes, slug=slug)
@@ -305,12 +314,18 @@ async def judge(
     if recorded is not None:
         # A recorded reply is never resampled: it parsed once to be written, so a failure
         # here means the cassette was hand-edited, and asking the model cannot fix that.
+        # No `check()` before this branch: a replayed verdict costs nothing, and a cap
+        # that refused free work would stop a matrix that was spending no money at all.
         response, (verdicts, reasons) = recorded, parse_response(recorded, ids)
     else:
-        response, verdicts, reasons, resamples = await _sample(prompt, model, ids)
+        if budget is not None:
+            budget.check(f"a judge call for {slug or 'this card'}")
+        response, verdicts, reasons, resamples, usage = await _sample(
+            prompt, model, ids, budget=budget
+        )
         # Recorded after parsing: a cassette written from an unparseable reply is replayed
         # forever, and --live never re-calls because the file now exists.
-        cassette.write(prompt, model, response, criteria=ids)
+        cassette.write(prompt, model, response, criteria=ids, usage=usage)
     return JudgeResult(
         model=model,
         rubric_hash=rubric_hash(criteria),
@@ -332,8 +347,13 @@ async def judge(
 
 
 async def _sample(
-    prompt: str, model: str, expected: list[str], *, attempts: int = ATTEMPTS
-) -> tuple[str, dict[str, bool], dict[str, str], int]:
+    prompt: str,
+    model: str,
+    expected: list[str],
+    *,
+    attempts: int = ATTEMPTS,
+    budget: Budget | None = None,
+) -> tuple[str, dict[str, bool], dict[str, str], int, tuple[int | None, int | None]]:
     """Call the judge until a reply parses, at most `attempts` times.
 
     Only an `UngradableReply` is resampled. A transport failure raises straight out: a
@@ -341,7 +361,11 @@ async def _sample(
     for the same failure three times.
 
     Returns the reply that parsed, so the cassette records that one and not a discarded
-    sibling, along with how many were discarded ahead of it.
+    sibling, along with how many were discarded ahead of it and what it reported spending.
+
+    Every attempt is charged, including the discarded ones: a resample is money the run
+    actually spent, and a cap that only counted the reply that parsed would undercount
+    exactly the runs that cost the most.
     """
     last: UngradableReply | None = None
     for attempt in range(attempts):
@@ -349,28 +373,34 @@ async def _sample(
             # The call is inside the try: a reply that is all thinking and no text block
             # is the same nondeterminism as a reply that graded nothing, and _call raises
             # UngradableReply for it.
-            response = await _call(prompt, model)
-            verdicts, reasons = parse_response(response, expected)
+            reply = await _call(prompt, model, budget=budget)
+            verdicts, reasons = parse_response(reply.text, expected)
         except UngradableReply as error:
             last = error
             continue
-        return response, verdicts, reasons, attempt
+        return reply.text, verdicts, reasons, attempt, (reply.input_tokens, reply.output_tokens)
     raise UngradableReply(f"no gradable reply in {attempts} attempts, last: {last}")
 
 
-async def _call(prompt: str, model: str) -> str:
+async def _call(prompt: str, model: str, *, budget: Budget | None = None) -> Completion:
     """The provider seam (#60), translated into the judge's own vocabulary.
 
     A reply with no text in it is nondeterminism the next sample may not repeat, so it
     becomes an `UngradableReply` and `_sample` asks again. Everything else — a bad key, a
     429, a timeout — is a `JudgeError` that raises on the first call.
+
+    The charge lands here, on the one line the call actually returns through, so no caller
+    can forget it — a discarded usage figure looks exactly like a free call.
     """
     try:
-        return await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
+        reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
     except EmptyCompletion as error:
         raise UngradableReply(f"the judge's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise JudgeError(f"judge call failed: {error}") from None
+    if budget is not None:
+        budget.charge(model, input_tokens=reply.input_tokens, output_tokens=reply.output_tokens)
+    return reply
 
 
 SLUG_MAX = 48

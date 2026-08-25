@@ -8,14 +8,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import date
 from pathlib import Path
 
 import pytest
 
 from specdeck.agent import AgentAdapter, Chat, Describable, ToolCall
+from specdeck.budget import Budget, BudgetStop
 from specdeck.card import parse_text
 from specdeck.judge import Cassette
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
+from specdeck.rates import ModelRate, Rates
 from specdeck.simulator import build_prompt
 from specdeck.trace import GenAI, Operation, Specdeck
 
@@ -324,3 +327,67 @@ credit:
         assert cell.passed
         assert cell.credit_mean == cell.credit_total
         assert cell.results[0].judged.replayed
+
+
+class TestTheBudget:
+    """What a run cost is read off the trace the adapter produced, never off the loop.
+
+    Reactive by necessity: `adapter.run` has already spent the money by the time
+    `Chat.input_tokens` is visible, so this charge can only stop the *next* run.
+    """
+
+    RATES = Rates(
+        verified=date(2026, 8, 24),
+        table={"anthropic": {"fake": ModelRate(input=1.0, output=1.0)}},
+    )
+
+    def _script(self, **kwargs) -> list[list]:
+        return [[Chat(content="I'm sorry, no.", model="fake", **kwargs)]]
+
+    def test_the_agents_own_tokens_are_charged_from_the_trace(self, tmp_path: Path, card) -> None:
+        record(tmp_path, card, [{"reply": "Cancel it.", "done": True}])
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        drive(card, FakeAgent(self._script()), tmp_path, budget=budget)
+        # The conversation ends on the simulator's first turn, so the agent never ran.
+        assert budget.spent.usd == 0.0
+
+    def test_a_run_that_spoke_is_charged(self, tmp_path: Path, card) -> None:
+        turns = [
+            {"reply": "Cancel it.", "then": [{"role": "assistant", "content": "I'm sorry, no."}]},
+            {"reply": "Fine.", "done": True},
+        ]
+        record(tmp_path, card, turns)
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        drive(
+            card,
+            FakeAgent(self._script(input_tokens=500_000, output_tokens=500_000)),
+            tmp_path,
+            budget=budget,
+        )
+        assert budget.spent.usd == pytest.approx(1.0)
+
+    def test_an_adapter_that_reports_no_usage_aborts_under_a_cap(
+        self, tmp_path: Path, card
+    ) -> None:
+        turns = [
+            {"reply": "Cancel it.", "then": [{"role": "assistant", "content": "I'm sorry, no."}]},
+            {"reply": "Fine.", "done": True},
+        ]
+        record(tmp_path, card, turns)
+        with pytest.raises(BudgetStop, match=r"FakeAgent reported no gen_ai.usage"):
+            drive(
+                card,
+                FakeAgent(self._script()),
+                tmp_path,
+                budget=Budget(cap_usd=1.0, rates=self.RATES),
+            )
+
+    def test_with_no_cap_the_same_run_is_only_counted(self, tmp_path: Path, card) -> None:
+        turns = [
+            {"reply": "Cancel it.", "then": [{"role": "assistant", "content": "I'm sorry, no."}]},
+            {"reply": "Fine.", "done": True},
+        ]
+        record(tmp_path, card, turns)
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        drive(card, FakeAgent(self._script()), tmp_path, budget=budget)
+        assert budget.unmetered == {"fake": 1}

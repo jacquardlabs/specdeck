@@ -680,9 +680,9 @@ class TestJUnitOutput:
 
 class TestTheExitCodeRegistry:
     def test_it_names_every_code_the_runner_issues(self) -> None:
-        # Written down in one place so a later wave extends it rather than colliding with
-        # it. 4 is reserved for the matrix budget abort (#15) and is not issued yet.
-        assert sorted(EXIT_CODES) == [0, 1, 2, 3]
+        # Written down in one place so a later command extends it rather than colliding
+        # with it. 4 is the matrix budget abort (#15), reserved by wave 3 and now issued.
+        assert sorted(EXIT_CODES) == [0, 1, 2, 3, 4]
 
     def test_the_readme_paragraph_names_every_code_the_registry_holds(self) -> None:
         # The paragraph, not the file: `0` appears in a README all over the place, so a

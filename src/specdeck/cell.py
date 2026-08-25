@@ -26,6 +26,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, Field
 
+from .budget import Budget
 from .builtin import BuiltinConfig, builtin_properties, merge_wires
 from .card import Card
 from .ir import Property, Verdict, evaluate_all
@@ -125,8 +126,13 @@ def run_cell(
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
     builtin: BuiltinConfig | None = None,
+    budget: Budget | None = None,
 ) -> Cell:
-    """Synchronous entry point. The CLI and tests call this; it owns the event loop."""
+    """Synchronous entry point. The CLI's single-cell path and tests call this.
+
+    It owns the event loop, which is why the matrix cannot: `asyncio.run` does not nest,
+    so a matrix awaiting several cells goes through `run_cell_async` directly.
+    """
     return asyncio.run(
         run_cell_async(
             card,
@@ -139,6 +145,7 @@ def run_cell(
             live=live,
             concurrency=concurrency,
             builtin=builtin,
+            budget=budget,
         )
     )
 
@@ -155,6 +162,7 @@ async def run_cell_async(
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
     builtin: BuiltinConfig | None = None,
+    budget: Budget | None = None,
 ) -> Cell:
     if len(traces) != n:
         raise CellError(
@@ -192,6 +200,7 @@ async def run_cell_async(
                 judge_model=judge_model,
                 live=live,
                 slug=card.slug,
+                budget=budget,
             )
 
     results = list(await asyncio.gather(*(one(trace) for trace in traces)))
@@ -236,6 +245,7 @@ async def _run(
     judge_model: str,
     live: bool,
     slug: str = "",
+    budget: Budget | None = None,
 ) -> Run:
     # Measured before anything can return: a run that failed a gate wire still took time,
     # still burned tokens, and still shows whatever it wasted doing it.
@@ -263,6 +273,7 @@ async def _run(
         model=judge_model,
         live=live,
         slug=slug,
+        budget=budget,
     )
     if not judged.gate_passed:
         return Run(
