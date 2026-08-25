@@ -97,14 +97,14 @@ class TestTwoNumbers:
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=2, k=1)
         # Both credit checks earn on the one passing run: the criterion (2) and the wire (1).
-        assert (cell.credit_score, cell.credit_total) == (3.0, 3)
+        assert (cell.credit_mean, cell.credit_total) == (3.0, 3)
 
     def test_credit_never_offsets_a_failed_gate(self, tmp_path: Path, card) -> None:
         traces = [conversation(forbidden=True)]
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
         assert cell.passed is False
-        assert cell.credit_score is None  # no passing run to score
+        assert cell.credit_mean is None  # no passing run to score
 
     def test_a_credit_wire_that_fails_still_leaves_the_gate_alone(
         self, tmp_path: Path, card
@@ -113,7 +113,7 @@ class TestTwoNumbers:
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=1, k=1)
         assert cell.passed is True
-        assert (cell.credit_score, cell.credit_total) == (2.0, 3)
+        assert (cell.credit_mean, cell.credit_total) == (2.0, 3)
 
 
 class TestThresholds:
@@ -147,7 +147,7 @@ class TestCreditAggregation:
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=2, k=1)
         assert cell.passes == 2
-        assert cell.credit_score == 2.5
+        assert cell.credit_mean == 2.5
 
     def test_a_run_that_failed_a_gate_contributes_nothing_to_the_divisor(
         self, tmp_path: Path, card
@@ -155,7 +155,7 @@ class TestCreditAggregation:
         traces = [conversation(), conversation(forbidden=True)]
         record(tmp_path, card, traces, {"prose": True, "tone_remains_professional": True})
         cell = run_cell(card, traces, cassettes=tmp_path, n=2, k=1)
-        assert cell.credit_score == 3.0  # the one passing run's total, not halved
+        assert cell.credit_mean == 3.0  # the one passing run's total, not halved
 
 
 class TestPolicy:

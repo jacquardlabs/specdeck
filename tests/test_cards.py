@@ -23,7 +23,7 @@ from specdeck.lint import Severity, lint_paths
 from specdeck.lockfile import Lockfile, fingerprint
 from specdeck.trace import Operation
 from specdeck.traceio import load_trace
-from specdeck.wires import compile_wires
+from specdeck.wires import compile_wires, wires_text
 
 ROOT = Path(__file__).resolve().parent.parent
 CARDS = ROOT / "cards"
@@ -67,6 +67,7 @@ class TestSuiteShape:
             lock.verify(
                 path.name,
                 rubric=rubric_text(criteria_of(card)),
+                wires=wires_text(compile_wires(card)),
                 simulator=card.context.simulator,
             )
 
@@ -195,7 +196,7 @@ class TestEveryCardRuns:
         cell = run_cell(card, [trace], cassettes=CARDS / "cassettes", n=1, k=1)
         assert cell.passed, path.name
         assert cell.results[0].judged.replayed
-        assert cell.credit_score == cell.credit_total, path.name
+        assert cell.credit_mean == cell.credit_total, path.name
 
     @pytest.mark.parametrize("path", CARD_PATHS, ids=ids(CARD_PATHS))
     def test_every_cassette_names_the_card_that_owns_it(self, path: Path) -> None:

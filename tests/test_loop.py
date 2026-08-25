@@ -322,5 +322,5 @@ credit:
 
         cell = run_cell(card, [trace], cassettes=tmp_path, n=1, k=1, judge_model=MODEL)
         assert cell.passed
-        assert cell.credit_score == cell.credit_total
+        assert cell.credit_mean == cell.credit_total
         assert cell.results[0].judged.replayed

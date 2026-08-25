@@ -27,7 +27,7 @@ It never promises an exception.
 wire:
   - modify_reservation: never
   - web_search: at_most 2
-  - writer<->reviewer: escalate_to_hitl after 5 non_agreement
+  - escalate_to_hitl: after 5 non_agreement
   - latency: under 120s
   - stop_reason: not truncated
 
@@ -125,9 +125,13 @@ needs no format change.
 
 ## Lockfile
 
-`spec.lock.toml` pins the judge model, the rubric hash per card, the simulator model and
-its prompt hash, and the OTel GenAI semconv version. The runner refuses a stale lock
-without `--relock`.
+`spec.lock.toml` pins the judge model, the rubric and wire hashes per card, the simulator
+model and its prompt hash, and the OTel GenAI semconv version. The runner refuses a stale
+lock without `--relock`.
+
+Wires are pinned separately from the rubric so a stale-lock error names which half of the
+card moved — the prose the SME owns, or the wires the developer does. They hash from the
+compiled property IR, not the wire text, so reformatting is not drift and `at_most 20` is.
 
 An unpinned judge is not a test.
 

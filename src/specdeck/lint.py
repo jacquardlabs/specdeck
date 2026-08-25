@@ -30,8 +30,8 @@ from pydantic import BaseModel
 from .card import Card, CardError, parse
 from .ir import AfterKThen, AtMost, Bound, Measure, Never, Property
 from .judge import criteria_of, rubric_text
-from .lockfile import Lockfile, StaleLock
-from .wires import WireError, compile_wires
+from .lockfile import LOCKFILE_NAME, Lockfile, StaleLock, lock_key
+from .wires import WireError, compile_wires, wires_text
 
 CARD_GLOB = "*.md"
 
@@ -82,18 +82,26 @@ class Vocabulary(BaseModel):
 
 
 def lint_paths(
-    paths: list[Path], *, lock: Lockfile | None = None, vocabulary: Vocabulary | None = None
+    paths: list[Path],
+    *,
+    lock: Lockfile | None = None,
+    lock_path: Path | None = None,
+    vocabulary: Vocabulary | None = None,
 ) -> Result:
     cards = _cards(paths)
     findings: list[Finding] = []
     for card_path in cards:
-        findings += lint_card(card_path, lock=lock, vocabulary=vocabulary)
+        findings += lint_card(card_path, lock=lock, lock_path=lock_path, vocabulary=vocabulary)
     findings += _cassettes(cards)
     return Result(findings=findings)
 
 
 def lint_card(
-    path: Path | str, *, lock: Lockfile | None = None, vocabulary: Vocabulary | None = None
+    path: Path | str,
+    *,
+    lock: Lockfile | None = None,
+    lock_path: Path | None = None,
+    vocabulary: Vocabulary | None = None,
 ) -> list[Finding]:
     path = Path(path)
     name = str(path)
@@ -109,7 +117,7 @@ def lint_card(
     properties, wire_findings = _wires(card, name)
     findings += wire_findings
     findings += _vocabulary(properties, name, vocabulary)
-    findings += _lockfile(card, name, lock)
+    findings += _lockfile(card, path, name, lock, lock_path, properties)
     return findings
 
 
@@ -351,7 +359,14 @@ def _measures(properties: list[Property], name: str) -> list[Finding]:
     ]
 
 
-def _lockfile(card: Card, name: str, lock: Lockfile | None) -> list[Finding]:
+def _lockfile(
+    card: Card,
+    path: Path,
+    name: str,
+    lock: Lockfile | None,
+    lock_path: Path | None,
+    properties: list[Property],
+) -> list[Finding]:
     if lock is None:
         return [
             Finding(
@@ -361,9 +376,16 @@ def _lockfile(card: Card, name: str, lock: Lockfile | None) -> list[Finding]:
                 message="no lockfile supplied, so freshness was not checked",
             )
         ]
+    # The runner's own key derivation, not a bare filename. Guessing the lockfile's
+    # location when none was given keeps the flat layout working, and a card in a
+    # subdirectory then reads the same key the runner wrote (#61).
+    key = lock_key(path, lock_path or path.parent / LOCKFILE_NAME)
     try:
         lock.verify(
-            Path(name).name, rubric=rubric_text(criteria_of(card)), simulator=card.context.simulator
+            key,
+            rubric=rubric_text(criteria_of(card)),
+            wires=wires_text(properties),
+            simulator=card.context.simulator,
         )
     except StaleLock as error:
         return [Finding(rule="stale-lock", severity=Severity.ERROR, card=name, message=str(error))]

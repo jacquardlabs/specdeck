@@ -19,10 +19,10 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card
-from .ir import Tier
 from .lockfile import fingerprint
 from .provider import EmptyCompletion, ProviderError, complete
-from .trace import GenAI, Operation, Trace
+from .tier import Tier
+from .trace import GenAI, Message, Operation, Trace
 
 DEFAULT_JUDGE_MODEL = "claude-sonnet-5"
 MAX_TOKENS = 2048
@@ -150,16 +150,31 @@ def rubric_hash(criteria: list[Criterion]) -> str:
 
 
 def render_transcript(trace: Trace) -> str:
-    """The run, flattened, in time order. The judge's view of what happened."""
+    """The run, flattened, in time order. The judge's view of what happened.
+
+    Every user turn appears exactly once. Taking only each chat span's *last* input
+    message looked equivalent — the transcript grows by one turn per call — but two user
+    messages before a single agent reply leave the earlier one in no span's final
+    position, so it reached the judge in no form at all. A criterion phrased over turn
+    sequence, like "without the traveller asking twice", would then have been graded on
+    evidence that was not in the prompt.
+    """
     lines: list[str] = []
+    seen: list[Message] = []
     for span in trace.ordered:
         if span.operation is Operation.CHAT:
-            for message in span.input_messages[-1:]:
-                if message.get("role") == "user" and message.get("content"):
-                    lines.append(f"[user] {message['content']}")
-            for message in span.output_messages:
-                if message.get("content"):
-                    lines.append(f"[{message.get('role', 'assistant')}] {message['content']}")
+            fresh = [
+                m
+                for m in span.input_messages
+                if m.get("role") == "user" and m.get("content") and m not in seen
+            ]
+            seen += fresh
+            lines += [f"[user] {m['content']}" for m in fresh]
+            lines += [
+                f"[{m.get('role', 'assistant')}] {m['content']}"
+                for m in span.output_messages
+                if m.get("content")
+            ]
         elif span.operation is Operation.EXECUTE_TOOL:
             name = span.attributes.get(GenAI.TOOL_NAME)
             arguments = span.attributes.get(GenAI.TOOL_CALL_ARGUMENTS, "")

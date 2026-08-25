@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-import os
 from itertools import groupby
 from pathlib import Path
 
@@ -18,14 +17,14 @@ from specdeck.card import Card, CardError, parse
 from specdeck.cell import DEFAULT_CONCURRENCY, DEFAULT_K, DEFAULT_N, CellError, run_cell
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.lint import Result, Severity, Vocabulary, lint_paths
-from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock
+from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
 from specdeck.provider import ProviderError
 from specdeck.report import render
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
-from specdeck.wires import WireError
+from specdeck.wires import WireError, compile_wires, wires_text
 
 app = typer.Typer(
     name="specdeck",
@@ -73,9 +72,16 @@ def run(
         "--agent",
         help="Run the agent instead of reading traces, as `module:attribute`.",
     ),
-    runs: int = typer.Option(DEFAULT_N, "--runs", help="Runs in the cell."),
-    threshold: int = typer.Option(
-        DEFAULT_K, "--pass-threshold", help="Runs that must pass for the cell to pass."
+    runs: int | None = typer.Option(
+        None,
+        "--runs",
+        help=f"Runs in the cell (default: one per --trace, or {DEFAULT_N} with --agent).",
+    ),
+    threshold: int | None = typer.Option(
+        None,
+        "--pass-threshold",
+        help=f"Runs that must pass for the cell to pass (default: {DEFAULT_K}, or all runs "
+        "when the cell is smaller than that).",
     ),
     cassettes: Path | None = typer.Option(  # noqa: B008
         None,
@@ -114,6 +120,11 @@ def run(
             raise CardError("pass exactly one of --trace and --agent")
         card = parse(card_path)
         recordings = [load_trace(path) for path in trace or []]
+        # A cell of five is the locked statistic, not a default that fits every invocation:
+        # one recorded trace with --runs unset would fail on arithmetic before anything ran.
+        # The statistic is untouched; what changes is guessing N when the input states it.
+        n = runs if runs is not None else (len(recordings) or DEFAULT_N)
+        k = threshold if threshold is not None else min(DEFAULT_K, n)
         lock = _lock(
             card_path,
             lock_path,
@@ -131,7 +142,7 @@ def run(
             agent or "",
             cassettes=cassette_dir,
             lock=lock,
-            runs=runs,
+            runs=n,
             markers=_markers(vocabulary_path),
             max_turns=max_turns,
             live=live,
@@ -142,15 +153,24 @@ def run(
             # Every other card input resolves against the card; the cassette directory
             # has to as well, or where you stand changes which recordings are found.
             cassettes=cassette_dir,
-            n=runs,
-            k=threshold,
+            n=n,
+            k=k,
             judge_model=lock.judge_model,
+            # Named in the report only when one actually spoke: a run from recorded traces
+            # had no simulated user, and the pin describes nothing that happened.
+            simulator_model=lock.simulator_model if agent else "",
             live=live,
             concurrency=concurrency,
         )
     except USER_ERRORS as error:
         console.print(f"[red]error[/red] {error}")
         raise typer.Exit(2) from None
+    except Exception as error:
+        # Exit 3, not 1. A `TOMLDecodeError` from a conflict-marked lockfile used to leave
+        # Python exiting 1 — the same code as a card that honestly failed — so a caller
+        # reading the exit code routed a broken lockfile to the SME as an eval regression.
+        console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
+        raise typer.Exit(3) from None
 
     render(cell, console)
     raise typer.Exit(0 if cell.passed else 1)
@@ -238,8 +258,9 @@ def _lock(
 ) -> Lockfile:
     """Verify the run against the lock, or record it. An unpinned judge is not a test."""
     path = lock_path or card_path.parent / LOCKFILE_NAME
-    key = _lock_key(card_path, path)
+    key = lock_key(card_path, path)
     rubric = rubric_text(criteria_of(card))
+    wires = wires_text(compile_wires(card))
     if relock:
         base = (
             Lockfile.load(path)
@@ -254,9 +275,18 @@ def _lock(
                 cards={},
             )
         )
-        lock = base.relock(key, rubric=rubric, simulator=card.context.simulator)
+        lock = base.relock(key, rubric=rubric, wires=wires, simulator=card.context.simulator)
         # --relock is the only path that may move a pin, and it moves every pin the run
         # was given. Silently keeping the old judge is what made --judge-model inert.
+        # The pin is rewritten from whichever trace was handed in, so a trace declaring a
+        # different semconv silently becomes the new truth for every card. Said out loud
+        # rather than blocked: --relock is the operator asking for exactly this, but the
+        # drift detection the lockfile exists for should not move without a line in the log.
+        if path.exists() and base.semconv != semconv:
+            Console().print(
+                f"[yellow]note[/yellow] semconv pin moves {base.semconv} -> {semconv}, "
+                "taken from the trace supplied"
+            )
         lock = lock.model_copy(
             update={"semconv": semconv}
             | ({"judge_model": judge_model} if judge_model else {})
@@ -276,19 +306,8 @@ def _lock(
             f"--simulator-model {simulator_model} disagrees with the pinned "
             f"{lock.simulator_model or '(none)'} — {RELOCK_HINT}"
         )
-    lock.verify(key, rubric=rubric, simulator=card.context.simulator)
+    lock.verify(key, rubric=rubric, wires=wires, simulator=card.context.simulator)
     return lock
-
-
-def _lock_key(card_path: Path, lock_path: Path) -> str:
-    """A card's identity in the lock: its path relative to the lockfile.
-
-    Keying on the path as typed would make `specdeck run cards/x.md` and
-    `specdeck run /abs/cards/x.md` two different cards, and every clone that checked out
-    somewhere else would read as drift.
-    """
-    relative = os.path.relpath(card_path.resolve(), lock_path.resolve().parent)
-    return relative.replace(os.sep, "/")
 
 
 @app.command()
@@ -309,6 +328,7 @@ def lint(
         result = lint_paths(
             paths or [Path("cards")],
             lock=Lockfile.load(lock_path) if lock_path else None,
+            lock_path=lock_path,
             vocabulary=_vocabulary(vocabulary_path),
         )
     except USER_ERRORS as error:

@@ -20,8 +20,9 @@ from pathlib import Path
 from pydantic import BaseModel
 
 from .card import Card
-from .ir import Property, Tier, Verdict, evaluate_all
+from .ir import Property, Verdict, evaluate_all
 from .judge import DEFAULT_JUDGE_MODEL, Criterion, JudgeResult, criteria_of, judge
+from .tier import Tier
 from .trace import Trace
 from .wires import compile_wires, gates_pass
 
@@ -51,6 +52,13 @@ class Run(BaseModel):
 
 
 class Cell(BaseModel):
+    """One card x one provider x one prompt, over N runs.
+
+    Two numbers, never blended: `passes` out of `runs` is the gate rate and decides
+    `passed`; `credit_mean` is the weighted credit over the passing runs only. A run that
+    failed a gate contributes nothing to credit rather than contributing its own.
+    """
+
     card_path: str
     title: str
     runs: int
@@ -60,16 +68,14 @@ class Cell(BaseModel):
     credit_total: int
     judge_model: str
     judge_calls: int
+    #: Empty when the runs came from recorded traces: no simulated user spoke, and the
+    #: report should not name a model that did not run.
+    simulator_model: str = ""
     results: list[Run]
 
     @property
     def passed(self) -> bool:
         return self.passes >= self.threshold
-
-    @property
-    def credit_score(self) -> float | None:
-        """Weighted credit averaged over the passing runs. None when no run passed."""
-        return self.credit_mean
 
 
 def run_cell(
@@ -80,6 +86,7 @@ def run_cell(
     n: int = DEFAULT_N,
     k: int = DEFAULT_K,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    simulator_model: str = "",
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> Cell:
@@ -92,6 +99,7 @@ def run_cell(
             n=n,
             k=k,
             judge_model=judge_model,
+            simulator_model=simulator_model,
             live=live,
             concurrency=concurrency,
         )
@@ -106,6 +114,7 @@ async def run_cell_async(
     n: int = DEFAULT_N,
     k: int = DEFAULT_K,
     judge_model: str = DEFAULT_JUDGE_MODEL,
+    simulator_model: str = "",
     live: bool = False,
     concurrency: int = DEFAULT_CONCURRENCY,
 ) -> Cell:
@@ -156,6 +165,7 @@ async def run_cell_async(
         credit_total=credit_total,
         judge_model=judge_model,
         judge_calls=sum(r.judge_called for r in results),
+        simulator_model=simulator_model,
         results=results,
     )
 

@@ -19,7 +19,7 @@ from rich.console import Console
 from rich.text import Text
 
 from .cell import Cell, Run
-from .ir import Tier
+from .tier import Tier
 
 PASS = "[green]PASS[/green]"
 FAIL = "[red]FAIL[/red]"
@@ -35,13 +35,13 @@ def render(cell: Cell, console: Console) -> None:
         f"  gate     {verdict}   {cell.passes}/{cell.runs} runs"
         f"   [dim](passes at {cell.threshold})[/dim]"
     )
-    if cell.credit_score is None:
+    if cell.credit_mean is None:
         console.print(
             f"  credit   [dim]n/a — no passing run to score, out of {cell.credit_total}[/dim]"
         )
     else:
         console.print(
-            f"  credit   {cell.credit_score:g}/{cell.credit_total}"
+            f"  credit   {cell.credit_mean:g}/{cell.credit_total}"
             f"   [dim](over {cell.passes} passing run{'' if cell.passes == 1 else 's'})[/dim]"
         )
 
@@ -78,6 +78,11 @@ def render(cell: Cell, console: Console) -> None:
         f"{cell.judge_calls} call{'' if cell.judge_calls == 1 else 's'} "
         f"over {cell.runs} run{'' if cell.runs == 1 else 's'}[/dim]"
     )
+    # DECISIONS.md pins the simulator like the judge, "with its version printed in every
+    # report". Printed only when there is one: a card run from a recorded trace had no
+    # simulated user, and naming a model that did not speak would be a claim about the run.
+    if cell.simulator_model:
+        console.print(f"  [dim]simulator {cell.simulator_model}[/dim]")
     # Resampling is never silent: a criterion the judge had to be asked twice for is
     # ambiguous prose, and the SME can only reword what the report admits to.
     resamples = sum(j.resamples for j in judged)

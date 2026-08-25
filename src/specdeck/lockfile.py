@@ -1,7 +1,13 @@
 """`spec.lock.toml` — what the run is pinned to.
 
-Pins the judge model, the rubric hash per card, the simulator model and its prompt hash,
-and the OTel GenAI semconv version. The runner refuses a stale lock without `--relock`.
+Pins the judge model, the rubric and wire hashes per card, the simulator model and its
+prompt hash, and the OTel GenAI semconv version. The runner refuses a stale lock without
+`--relock`.
+
+Wires are pinned separately from the rubric, not folded into it, so a stale-lock error can
+say which half of the card moved — the prose the SME owns, or the wires the developer
+does. They are hashed from the compiled property IR rather than the wire text, so
+reformatting `at_most  2` is not drift while `at_most 20` is (#62).
 
 An unpinned judge is not a test: the judge model string alone drifts silently when the
 rubric text changes underneath it, and that is exactly the failure this file exists to
@@ -14,6 +20,7 @@ the dependency budget is four packages.
 from __future__ import annotations
 
 import hashlib
+import os
 import tomllib
 from pathlib import Path
 
@@ -27,6 +34,19 @@ class StaleLock(Exception):
     """The lock no longer describes what is about to run."""
 
 
+def lock_key(card_path: Path | str, lock_path: Path | str) -> str:
+    """A card's key in the lockfile: its path relative to the lockfile, forward-slashed.
+
+    One derivation, imported by both the runner and lint. Keying on the path as typed made
+    `cards/x.md` and `/abs/cards/x.md` two different cards; keying on the bare filename —
+    which lint did — made `cards/airline/refund.md` verify clean in the runner and report
+    `not in the lockfile` in lint, at the same commit, with a `--relock` hint that fixed
+    neither (#61).
+    """
+    relative = os.path.relpath(Path(card_path).resolve(), Path(lock_path).resolve().parent)
+    return relative.replace(os.sep, "/")
+
+
 def fingerprint(text: str) -> str:
     """Algorithm-tagged hash of a pinned text. Edge whitespace is not a change."""
     return f"sha256:{hashlib.sha256(text.strip().encode()).hexdigest()}"
@@ -35,6 +55,9 @@ def fingerprint(text: str) -> str:
 class CardLock(BaseModel):
     rubric_hash: str
     simulator_hash: str
+    #: Defaulted, so a lockfile written before #62 still loads — and then reads as drift
+    #: on the first verify, which is the correct answer: those cards were never pinned.
+    wires_hash: str = ""
 
 
 class Lockfile(BaseModel):
@@ -45,7 +68,7 @@ class Lockfile(BaseModel):
 
     # -- verification ------------------------------------------------------------
 
-    def verify(self, card_path: str, *, rubric: str, simulator: str) -> None:
+    def verify(self, card_path: str, *, rubric: str, simulator: str, wires: str) -> None:
         """Raise if the card has drifted from what was locked."""
         entry = self.cards.get(card_path)
         if entry is None:
@@ -54,6 +77,7 @@ class Lockfile(BaseModel):
             name
             for name, locked, current in (
                 ("rubric", entry.rubric_hash, fingerprint(rubric)),
+                ("wires", entry.wires_hash, fingerprint(wires)),
                 ("simulator", entry.simulator_hash, fingerprint(simulator)),
             )
             if locked != current
@@ -69,9 +93,13 @@ class Lockfile(BaseModel):
                 f"trace semconv {semconv} does not match the locked {self.semconv} — {RELOCK_HINT}"
             )
 
-    def relock(self, card_path: str, *, rubric: str, simulator: str) -> Lockfile:
+    def relock(self, card_path: str, *, rubric: str, simulator: str, wires: str) -> Lockfile:
         """A copy with this card's hashes refreshed. Other cards are untouched."""
-        entry = CardLock(rubric_hash=fingerprint(rubric), simulator_hash=fingerprint(simulator))
+        entry = CardLock(
+            rubric_hash=fingerprint(rubric),
+            wires_hash=fingerprint(wires),
+            simulator_hash=fingerprint(simulator),
+        )
         return self.model_copy(update={"cards": self.cards | {card_path: entry}}, deep=True)
 
     # -- persistence -------------------------------------------------------------
@@ -113,6 +141,7 @@ class Lockfile(BaseModel):
                 "",
                 f"[cards.{_quote(path)}]",
                 f"rubric_hash = {_quote(entry.rubric_hash)}",
+                f"wires_hash = {_quote(entry.wires_hash)}",
                 f"simulator_hash = {_quote(entry.simulator_hash)}",
             ]
         return "\n".join(lines) + "\n"
