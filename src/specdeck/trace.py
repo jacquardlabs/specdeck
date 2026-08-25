@@ -21,6 +21,10 @@ from typing import Any
 
 from pydantic import BaseModel, Field, model_validator
 
+#: The semconv version specdeck's own loop emits. A recorded trace declares its own and is
+#: read as it stands; this is only what `loop.run_agent` stamps on a trace it just built.
+SEMCONV = "semantic-conventions-genai@1.38.0"
+
 
 class Operation(StrEnum):
     """The three `gen_ai.operation.name` values the card palette selects on."""

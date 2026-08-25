@@ -13,21 +13,18 @@ records.
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 
-import httpx
 from pydantic import BaseModel
 
 from .card import Card
 from .ir import Tier
 from .lockfile import fingerprint
+from .provider import EmptyCompletion, ProviderError, complete
 from .trace import GenAI, Operation, Trace
 
 DEFAULT_JUDGE_MODEL = "claude-sonnet-5"
-API_URL = "https://api.anthropic.com/v1/messages"
-API_VERSION = "2023-06-01"
 MAX_TOKENS = 2048
 TIMEOUT_S = 180
 
@@ -219,14 +216,19 @@ def parse_response(
 
 
 class Cassette:
-    """A recorded judge call, keyed on the prompt and the model it was made with."""
+    """A recorded call, keyed on the prompt and the model it was made with.
 
-    def __init__(self, directory: Path | str) -> None:
+    `kind` separates the judge's recordings from the simulator's in one directory. It is
+    not part of the key: two callers cannot collide on a prompt they did not both send.
+    """
+
+    def __init__(self, directory: Path | str, kind: str = "judge") -> None:
         self.directory = Path(directory)
+        self.kind = kind
 
     def path(self, prompt: str, model: str) -> Path:
         key = fingerprint(f"{model}\n{prompt}").removeprefix("sha256:")[:24]
-        return self.directory / f"judge-{key}.json"
+        return self.directory / f"{self.kind}-{key}.json"
 
     def read(self, prompt: str, model: str) -> str | None:
         path = self.path(prompt, model)
@@ -336,33 +338,18 @@ async def _sample(
 
 
 async def _call(prompt: str, model: str) -> str:
-    key = os.environ.get("ANTHROPIC_API_KEY")
-    if not key:
-        raise JudgeError("ANTHROPIC_API_KEY is not set, and --live needs it")
-    async with httpx.AsyncClient(timeout=TIMEOUT_S) as client:
-        response = await client.post(
-            API_URL,
-            headers={
-                "x-api-key": key,
-                "anthropic-version": API_VERSION,
-                "content-type": "application/json",
-            },
-            # No temperature: current models reject it, so a pinned judge pins the model
-            # and the rubric text rather than a sampling setting.
-            json={
-                "model": model,
-                "max_tokens": MAX_TOKENS,
-                "messages": [{"role": "user", "content": prompt}],
-            },
-        )
-    if response.status_code != httpx.codes.OK:
-        raise JudgeError(f"judge call failed: {response.status_code} {response.text[:200]}")
-    blocks = response.json()["content"]
-    # Reasoning models lead with a thinking block, so select by type rather than by index.
-    text = next((b["text"] for b in blocks if b.get("type") == "text"), None)
-    if text is None:
-        raise UngradableReply("the judge's reply carried no text block")
-    return str(text)
+    """The provider seam (#60), translated into the judge's own vocabulary.
+
+    A reply with no text in it is nondeterminism the next sample may not repeat, so it
+    becomes an `UngradableReply` and `_sample` asks again. Everything else — a bad key, a
+    429, a timeout — is a `JudgeError` that raises on the first call.
+    """
+    try:
+        return await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
+    except EmptyCompletion as error:
+        raise UngradableReply(f"the judge's reply carried no text block: {error}") from None
+    except ProviderError as error:
+        raise JudgeError(f"judge call failed: {error}") from None
 
 
 SLUG_MAX = 48
