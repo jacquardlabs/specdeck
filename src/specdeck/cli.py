@@ -166,7 +166,7 @@ def run(
             concurrency=concurrency,
         )
     except USER_ERRORS as error:
-        console.print(f"[red]error[/red] {error}")
+        _fail(console, error)
         raise typer.Exit(2) from None
     except Exception as error:
         # Exit 3, not 1. A `TOMLDecodeError` from a conflict-marked lockfile used to leave
@@ -341,7 +341,7 @@ def lint(
             vocabulary=_vocabulary(vocabulary_path),
         )
     except USER_ERRORS as error:
-        console.print(f"[red]error[/red] {error}")
+        _fail(console, error)
         raise typer.Exit(2) from None
 
     _render_lint(result, console)
@@ -359,7 +359,7 @@ def rates(
     try:
         table = load_rates(rates_path, beside=Path.cwd())
     except USER_ERRORS as error:
-        console.print(f"[red]error[/red] {error}")
+        _fail(console, error)
         raise typer.Exit(2) from None
 
     _render_rates(table, console)
@@ -387,6 +387,16 @@ def _vocabulary(path: Path | None) -> Vocabulary | None:
             continue
         found[section].add(line)
     return Vocabulary(tools=found["tools"], markers=found["markers"])
+
+
+def _fail(console: Console, error: Exception) -> None:
+    """Print a user error. The message is Text, not markup.
+
+    These messages quote what the user wrote — `[rates.openai]`, a card heading, a path —
+    and Rich reads a bracket as a style tag, so an interpolated message loses exactly the
+    part that says where to look.
+    """
+    console.print("[red]error[/red]", Text(str(error)))
 
 
 #: Skipped is dim rather than absent: a rule that could not run is not a rule that passed.
@@ -426,12 +436,14 @@ def _render_rates(table: Rates, console: Console) -> None:
         console.print(Text(f"  {provider}", style="bold"))
         # A vendor id and a provider name are external text, printed as Text rather than
         # markup for the same reason a judge's reason is: a bracket would eat the report.
-        column = max(len(model) for model in entries) + 2
+        column = max((len(model) for model in entries), default=0) + 2
         for model in sorted(entries):
             rate = entries[model]
             line = Text("    ")
             line.append(f"{model:<{column}}")
-            line.append(f"{rate.input:>7.2f} in {rate.output:>8.2f} out", style="dim")
+            # Four places, like every `Estimate.label`: a sub-cent rate rounded to cents
+            # prints a number that is not the rate, and 0.004 would print as free.
+            line.append(f"{rate.input:>9.4f} in {rate.output:>10.4f} out", style="dim")
             console.print(line)
     console.print(
         "\n[dim]A model with no entry here reports n/a naming the model, never $0.00.[/dim]\n"

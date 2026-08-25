@@ -26,15 +26,21 @@ table. Cost figures are labeled estimates, always.
 ### Cost estimates
 
 The rate table is `src/specdeck/rates.toml`, shipped inside the package: per-provider,
-per-model USD per million input and output tokens, keyed by model-id prefix so a dated id
-prices as its family. It carries a `verified` date — the day those figures were last
-checked against the vendor's own pricing page — and every figure derived from it is
-printed with that date and the word *estimate*. `specdeck rates` prints the table that
-resolved.
+per-model USD per million input and output tokens, keyed by model family. A key prices its
+family and that family's dated ids — `claude-sonnet-5` prices `claude-sonnet-5-20260514` —
+and nothing else: a sibling that merely extends the name, like `claude-opus-4-9` over
+`claude-opus-4`, reports `n/a` rather than inheriting the neighbouring price. It carries a
+`verified` date — the day those figures were last checked against the vendor's own pricing
+page — and every figure derived from it is printed with that date and the word *estimate*.
 
 A `rates.toml` beside the card, or one named with `--rates`, is merged over the built-in
 one: it adds or corrects entries without restating the table, and it must carry its own
-`verified` date, which then becomes the date the report prints.
+`verified` date. The merged table prints the older of the two dates, because an override
+that adds one model says nothing about the built-in rows and so cannot re-date them.
+
+`specdeck rates` prints the table that resolved, reading an override from `--rates` or
+from the directory it is run in. It takes no card: pricing a card's run against a
+`rates.toml` beside that card is [#52](https://github.com/jacquardlabs/specdeck/issues/52).
 
 Two limits belong to the table rather than to the runner. A model with no entry reports
 `n/a` naming the model — never $0.00, and never a substituted default rate, because an

@@ -18,6 +18,7 @@ boundary rather than at each call site.
 
 from __future__ import annotations
 
+import re
 import tomllib
 from datetime import date
 from importlib import resources
@@ -28,6 +29,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from specdeck.provider import split_model
 
 RATES_FILE = "rates.toml"
+
+#: What may follow a family key in a model id and still be that family: a release date.
+#: `claude-sonnet-5-20260514` is claude-sonnet-5; `claude-opus-4-9` is not claude-opus-4,
+#: it is the next Opus, and pricing it as its retired ancestor would substitute a rate.
+_DATED = re.compile(r"-\d{8}(?!\d)")
 
 
 class RateError(Exception):
@@ -111,7 +117,12 @@ class Rates(BaseModel):
     table: dict[str, dict[str, ModelRate]]
 
     def rate_for(self, model: str, *, provider: str | None = None) -> ModelRate | None:
-        """The rate for a model id, or None. Longest prefix wins within the provider.
+        """The rate for a model id, or None — never a default, never a neighbour's rate.
+
+        A key prices its own family and that family's dated ids, longest key first:
+        `claude-sonnet-5` prices `claude-sonnet-5-20260514`, and `claude-opus-4` does not
+        price `claude-opus-4-9`, which is a different model that happens to extend the
+        string. See `_prices`.
 
         The provider comes from the model string by default, not from the trace:
         `gen_ai.provider.name` is written "unknown" on every chat span our own loop
@@ -122,8 +133,8 @@ class Rates(BaseModel):
         entries = self.table.get(provider or named)
         if not entries:
             return None
-        # Real traces carry dated ids while the table keys families.
-        match = max((prefix for prefix in entries if name.startswith(prefix)), key=len, default="")
+        candidates = [prefix for prefix in entries if _prices(prefix, name)]
+        match = max(candidates, key=len, default="")
         return entries[match] if match else None
 
     def estimate(
@@ -141,11 +152,17 @@ class Rates(BaseModel):
         return Estimate(usd=usd, priced=1, verified=self.verified)
 
     def merged(self, other: Rates) -> Rates:
-        """`other` wins per model, and brings its own date: it describes the table in use."""
+        """`other` wins per model. The date is the older of the two, never the newer.
+
+        One date is printed over the whole merged table, and an override that adds a model
+        restates nothing about the rows it did not touch. Taking `other`'s date would
+        stamp those rows with a day nobody checked them, which is the staleness the
+        `verified` date exists to expose. The older date understates freshness instead.
+        """
         table = {provider: dict(entries) for provider, entries in self.table.items()}
         for provider, entries in other.table.items():
             table[provider] = table.get(provider, {}) | entries
-        return Rates(verified=other.verified, table=table)
+        return Rates(verified=min(self.verified, other.verified), table=table)
 
     @classmethod
     def builtin(cls) -> Rates:
@@ -167,11 +184,12 @@ class Rates(BaseModel):
         if not isinstance(entries, dict):
             raise RateError(f"{source}: no [rates] table")
         table = {
-            provider: {
-                model: _rate(entry, source=source, provider=provider, model=model)
-                for model, entry in models.items()
-            }
+            provider: rates
+            # An empty [rates.x] section prices nothing, which is what an absent one does.
+            # Dropped here rather than tolerated downstream: every reader would otherwise
+            # have to know that a provider in the table may hold no models.
             for provider, models in entries.items()
+            if (rates := _provider(models, source=source, provider=provider))
         }
         try:
             return cls(verified=data["verified"], table=table)
@@ -187,11 +205,43 @@ def load_rates(path: Path | None, *, beside: Path) -> Rates:
     """
     builtin = Rates.builtin()
     found = path if path is not None else beside / RATES_FILE
-    if not found.exists():
+    # is_file, not exists: a directory named on --rates is a table the user got wrong,
+    # and every way of getting it wrong has to arrive as a RateError.
+    if not found.is_file():
         if path is not None:
             raise RateError(f"no rate table at {path}")
         return builtin
-    return builtin.merged(Rates.from_toml(found.read_text(), source=str(found)))
+    try:
+        text = found.read_text()
+    except (OSError, UnicodeDecodeError) as error:
+        raise RateError(f"{found}: {error}") from None
+    return builtin.merged(Rates.from_toml(text, source=str(found)))
+
+
+def _provider(models: object, *, source: str, provider: str) -> dict[str, ModelRate]:
+    """One `[rates.<provider>]` section, read as model id -> rate."""
+    if not isinstance(models, dict):
+        raise RateError(
+            f"{source}: [rates.{provider}] is {type(models).__name__}, not a table of model rates"
+        )
+    return {
+        model: _rate(entry, source=source, provider=provider, model=model)
+        for model, entry in models.items()
+    }
+
+
+def _prices(prefix: str, name: str) -> bool:
+    """Does the table key `prefix` price the model id `name`?
+
+    Only the family itself and its dated releases. A bare prefix test would make every
+    key a rate for every id extending it, so an unlisted `claude-opus-4-9` would price as
+    the retired `claude-opus-4` at three times the Opus tier — a substituted rate wearing
+    an "estimate" label, which is the one thing this module refuses to do.
+    """
+    if not name.startswith(prefix):
+        return False
+    rest = name[len(prefix) :]
+    return not rest or _DATED.match(rest) is not None
 
 
 def _rate(entry: object, *, source: str, provider: str, model: str) -> ModelRate:
