@@ -193,7 +193,8 @@ Three denominators, printed as three tables and never blended into one percentag
 **vocabulary** (declared tools with no wire and no exercising run), and **path** (agent-graph
 edges no run traversed). Every table names what it could not see rather than reporting 0%:
 no `--vocabulary` means no denominator at all, no `--trace` means exercising was not
-checked. `specdeck run` prints the path table for the run it just did.
+checked, and a file under the deck that does not read as a card is listed above the tables
+instead of stopping them. `specdeck run` prints the path table for the run it just did.
 
 **Coverage never gates.** `specdeck coverage` exits 0 on any computed result — `2` for a
 broken input, `3` if specdeck itself breaks, never a code derived from a figure — and
@@ -228,7 +229,9 @@ Nothing else about the SME's wording is lint's business.
 
 `--agent-def <module:attribute>` points lint at your agent definition and adds the two
 definition-fed obligations over the whole deck: **every cycle in the graph is bounded by a
-wire naming a node in it** (error), and every tool binding, hand-off edge and HITL point is
+wire naming a tool that cycle can call** (error) — the error names them, and a cycle whose
+nodes bind no tool at all is reported skipped rather than errored, because no wire could
+name anything inside it. And every tool binding, hand-off edge and HITL point is
 named by some wire or card (warning). A LangGraph compiled graph is read by duck typing, so
 langgraph is not a dependency of specdeck; anything implementing the adapter's optional
 `describe()` is read too.
