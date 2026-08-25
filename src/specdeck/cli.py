@@ -1448,8 +1448,13 @@ def _fail(console: Console, error: Exception) -> None:
     These messages quote what the user wrote — `[rates.openai]`, a card heading, a path —
     and Rich reads a bracket as a style tag, so an interpolated message loses exactly the
     part that says where to look.
+
+    Soft-wrapped for the second half of the same problem: Rich's word wrap breaks a token
+    that outruns the console width, so a quoted path came back as `abse\nnt.toml` at 120
+    columns. Whether it breaks depends on how long the reader's paths happen to be, so the
+    message that says where to look is the one the terminal is most likely to cut in half.
     """
-    console.print("[red]error[/red]", Text(str(error)))
+    console.print("[red]error[/red]", Text(str(error)), soft_wrap=True)
 
 
 #: Skipped is dim rather than absent: a rule that could not run is not a rule that passed.
