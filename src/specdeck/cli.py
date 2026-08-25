@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+from datetime import date
 from itertools import groupby
 from pathlib import Path
 
@@ -20,6 +21,7 @@ from specdeck.lint import Result, Severity, Vocabulary, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
 from specdeck.provider import ProviderError
+from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
 from specdeck.report import render
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
@@ -39,6 +41,7 @@ USER_ERRORS = (
     JudgeError,
     LoopError,
     ProviderError,
+    RateError,
     SimulatorError,
     StaleLock,
     TraceError,
@@ -339,6 +342,24 @@ def lint(
     raise typer.Exit(0 if result.ok else 1)
 
 
+@app.command()
+def rates(
+    rates_path: Path | None = typer.Option(  # noqa: B008
+        None, "--rates", help=f"A {RATES_FILE} to merge over the built-in table."
+    ),
+) -> None:
+    """Print the cost rate table. Estimates, never billing."""
+    console = Console()
+    try:
+        table = load_rates(rates_path, beside=Path.cwd())
+    except USER_ERRORS as error:
+        console.print(f"[red]error[/red] {error}")
+        raise typer.Exit(2) from None
+
+    _render_rates(table, console)
+    raise typer.Exit(0)
+
+
 def _vocabulary(path: Path | None) -> Vocabulary | None:
     """Read the declared vocabulary: `[tools]` and `[markers]` sections, one name a line.
 
@@ -386,3 +407,34 @@ def _render_lint(result: Result, console: Console) -> None:
     counts = result.counts()
     tally = ", ".join(f"{counts[s.value]} {s.value}" for s in Severity if counts[s.value])
     console.print(f"[dim]{tally or 'nothing to report'}[/dim]\n")
+
+
+def _render_rates(table: Rates, console: Console) -> None:
+    console.print()
+    console.print(
+        f"[dim]USD per million tokens — estimates, not billing. {_age(table.verified)}.[/dim]"
+    )
+    for provider in sorted(table.table):
+        entries = table.table[provider]
+        console.print()
+        console.print(Text(f"  {provider}", style="bold"))
+        # A vendor id and a provider name are external text, printed as Text rather than
+        # markup for the same reason a judge's reason is: a bracket would eat the report.
+        column = max(len(model) for model in entries) + 2
+        for model in sorted(entries):
+            rate = entries[model]
+            line = Text("    ")
+            line.append(f"{model:<{column}}")
+            line.append(f"{rate.input:>7.2f} in {rate.output:>8.2f} out", style="dim")
+            console.print(line)
+    console.print(
+        "\n[dim]A model with no entry here reports n/a naming the model, never $0.00.[/dim]\n"
+    )
+
+
+def _age(verified: date) -> str:
+    """The table dates itself in every render, which is the only staleness signal there is."""
+    days = (date.today() - verified).days
+    if days < 0:
+        return f"Verified {verified}, which is ahead of today"
+    return f"Verified {verified} ({days} day{'' if days == 1 else 's'} ago)"

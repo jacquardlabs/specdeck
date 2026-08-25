@@ -23,6 +23,26 @@ is a failing cell.
 Alongside them: variance, latency p50/p95, and a dollar estimate from the per-provider rate
 table. Cost figures are labeled estimates, always.
 
+### Cost estimates
+
+The rate table is `src/specdeck/rates.toml`, shipped inside the package: per-provider,
+per-model USD per million input and output tokens, keyed by model-id prefix so a dated id
+prices as its family. It carries a `verified` date — the day those figures were last
+checked against the vendor's own pricing page — and every figure derived from it is
+printed with that date and the word *estimate*. `specdeck rates` prints the table that
+resolved.
+
+A `rates.toml` beside the card, or one named with `--rates`, is merged over the built-in
+one: it adds or corrects entries without restating the table, and it must carry its own
+`verified` date, which then becomes the date the report prints.
+
+Two limits belong to the table rather than to the runner. A model with no entry reports
+`n/a` naming the model — never $0.00, and never a substituted default rate, because an
+invented figure under an "estimate" label is still an invented figure. And there is no
+cache pricing: the semconv carries only `gen_ai.usage.input_tokens` and
+`gen_ai.usage.output_tokens`, so a prompt-cached run is over-estimated, its cache reads
+charged at the full input rate.
+
 ## Coverage
 
 Two tiers, never blended into one percentage.
