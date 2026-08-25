@@ -657,11 +657,19 @@ def _diff(affected_by: str) -> str:
 def _inputs(path: Path) -> Inputs:
     """What one card reads, for the selector — the boundary where a card becomes data.
 
-    A card that cannot be read cannot be excluded: an unparseable card, or one whose
-    `traces:` glob escapes its directory, is selected with the reason stated, and its run
-    then reports the same error the whole deck would have reported anyway. Excluding it
-    would be a selector deciding that a file it could not understand is irrelevant, and the
+    A card the deck cannot start cannot be excluded: an unparseable card, one whose
+    `traces:` glob escapes its directory, one that declares no `traces:` at all and one
+    whose glob now matches no file are all selected with the reason stated, and the run
+    then reports the same error the whole deck would have reported anyway. Excluding one
+    would be a selector deciding that a card it could not read is irrelevant, and the
     answer would be a green run that read nothing.
+
+    Which is why the traces come from `_traces` and not from `card.trace_paths`, whose
+    answer to a glob that matches nothing is `[]` — the same total property lint reads as a
+    `dead-path` finding. `_deck_cell` calls `_traces` with these arguments too, so the
+    selector's test of whether a card can run *is* the runner's rather than a second copy
+    of it: a recording the diff deleted or renamed away resolves to nothing, and the card
+    is selected and fails the run instead of being dropped from a deck that then exits 0.
     """
     try:
         card = parse(path)
@@ -669,7 +677,7 @@ def _inputs(path: Path) -> Inputs:
             card=path,
             policy=card.policy_path,
             fixture=card.fixture_path,
-            traces=card.trace_paths,
+            traces=_traces(card, path, [], None),
         )
     except USER_ERRORS as error:
         return Inputs(card=path, unreadable=str(error))

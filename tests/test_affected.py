@@ -372,7 +372,7 @@ class TestSelectingCards:
         broken = Inputs(card=ROOT / "cards/broken.md", unreadable="line 1: no heading")
         selection = _select(_modified("src/agent.py"), deck=[*DECK, broken])
         assert selection.cards == [ROOT / "cards/broken.md"]
-        assert "could not be read" in selection.reasons[str(ROOT / "cards/broken.md")][0]
+        assert "cannot start" in selection.reasons[str(ROOT / "cards/broken.md")][0]
 
     def test_an_empty_diff_selects_nothing_without_raising(self) -> None:
         assert select(DECK, [], lock_path=LOCK).cards == []
@@ -550,6 +550,41 @@ class TestTheCommand:
         assert result.exit_code == 2, result.stdout
         assert "no cards under" in result.stdout
 
+    def test_a_deleted_recording_selects_the_card_that_declared_it(self, tmp_path: Path) -> None:
+        # The hole a unit test cannot see, because it builds `Inputs(traces=[...])` by hand:
+        # a recording the diff removed is not on disk, so the card's glob resolved to
+        # nothing and the card was dropped from a deck that then exited 0 — while the same
+        # tree run without `--affected-by` exits 2. A card the deck cannot start cannot be
+        # excluded, and the selector now asks the runner's own question to find out.
+        root = _deck_copy(tmp_path)
+        recording = "cards/traces/delay-compensation-budget.otlp.json"
+        (root / recording).unlink()
+        result = _run(root, _deleted(recording))
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "selected 1 of 5 cards" in unwrapped
+        assert "cannot start" in unwrapped
+        assert "matches no file" in unwrapped
+
+    def test_a_card_declaring_no_traces_is_selected_by_a_diff_that_matched_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        # The same rule from the other side: `traces:` deleted from the card rather than the
+        # recording deleted from the tree. The deck exits 2 on it either way, so a selection
+        # that exits 0 is the selector hiding a card the deck could not run.
+        root = _deck_copy(tmp_path)
+        card = root / "cards" / "delay-compensation-budget.md"
+        card.write_text(
+            "".join(
+                line for line in card.read_text().splitlines(keepends=True) if "traces:" not in line
+            )
+        )
+        result = _run(root, _modified("src/agent.py"))
+        assert result.exit_code == 2, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "selected 1 of 5 cards" in unwrapped
+        assert "no traces to run" in unwrapped
+
     def test_a_card_that_does_not_parse_is_selected_by_a_diff_that_matched_nothing(
         self, tmp_path: Path
     ) -> None:
@@ -560,4 +595,4 @@ class TestTheCommand:
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
         assert "selected 1 of 6 cards" in unwrapped
-        assert "could not be read" in unwrapped
+        assert "cannot start" in unwrapped

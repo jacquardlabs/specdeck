@@ -73,10 +73,13 @@ class Change(BaseModel):
 class Inputs(BaseModel):
     """Every file one card reads, resolved.
 
-    Built at the boundary rather than here: reading a card can fail, and a card that cannot
-    be read cannot be excluded — `unreadable` carries why and selects it unconditionally.
-    Its run then reports the same error the deck would have reported anyway, where a
-    silent exclusion would let a broken card sit unread for as long as nobody touched it.
+    Built at the boundary rather than here: resolving a card's inputs can fail, and a card
+    the deck cannot start cannot be excluded — `unreadable` carries why and selects it
+    unconditionally. Its run then reports the same error the deck would have reported
+    anyway, where a silent exclusion would let a broken card sit unread for as long as
+    nobody touched it. A card whose recordings the diff deleted is exactly that case: it
+    resolves to no trace at all, so it is carried here as a card that cannot start rather
+    than as a card with no trace edges to match.
     """
 
     #: The card as discovery found it, unresolved — this is what `select` hands back, so
@@ -189,9 +192,9 @@ def _everything(
 def _why(one: Inputs, touched: dict[Path, Change]) -> list[str]:
     """The evidence lines for one card, or an empty list when nothing it reads changed."""
     if one.unreadable:
-        # Selected without looking at its inputs, because they could not be read. The run
-        # reports the same error, where a silent exclusion would hide it.
-        return [f"the card could not be read: {one.unreadable}"]
+        # Selected without looking at its inputs, because they could not be resolved. The
+        # run reports the same error, where a silent exclusion would hide it.
+        return [f"the card cannot start: {one.unreadable}"]
     edges: list[tuple[Kind, Path]] = [("card", one.card.resolve())]
     edges += [("policy", one.policy)] if one.policy else []
     edges += [("fixture", one.fixture)] if one.fixture else []

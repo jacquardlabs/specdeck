@@ -117,9 +117,17 @@ An **empty** diff is refused too, rather than treated as a third kind of answer:
 that printed nothing is usually a ref that did not resolve, and a deck that ran no card on it
 would report green.
 
-Pass `--diff-root` when the diff's paths are not relative to the current directory. A card
-that cannot be parsed is selected by any diff, because a card that cannot be read cannot be
-excluded.
+Pass `--diff-root` when the diff's paths are not relative to the current directory. Each
+stanza's path is read off its own `diff --git` line, so the prefixes are whatever your git
+wrote them as — the default `a/`/`b/`, `diff.mnemonicPrefix`, `--src-prefix`, `--no-prefix`.
+A path the parser would have to guess at, a `core.quotePath` escape or a `--src-prefix` of
+more than one component, is refused by name instead: a guess that comes out wrong is a card
+silently not selected.
+
+A card the deck could not start — one that does not parse, one whose `traces:` glob now
+matches no file — is selected by any diff, because a card that cannot be read cannot be
+excluded. It fails the run the way it would have without a selection, rather than
+disappearing from it.
 
 ### A card's first run
 
