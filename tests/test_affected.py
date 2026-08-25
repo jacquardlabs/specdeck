@@ -382,6 +382,29 @@ class TestTheCommand:
         unwrapped = " ".join(result.stdout.split())
         assert "selected 5 of 5 cards" in unwrapped and "5 cards, 5 passed" in unwrapped
 
+    def test_the_vocabulary_reaches_the_selector_when_the_flag_is_given(
+        self, tmp_path: Path
+    ) -> None:
+        # The flag is inert over a deck of recorded traces and live only as a selection
+        # edge, so a slip at either hop into `_deck` would leave every unit test green
+        # while the flag did nothing at all.
+        root = _deck_copy(tmp_path)
+        result = _run(
+            root,
+            _modified("cards/vocabulary.txt"),
+            "--vocabulary",
+            str(root / "cards" / "vocabulary.txt"),
+        )
+        assert result.exit_code == 0, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "selected 5 of 5 cards" in unwrapped and "vocabulary.txt" in unwrapped
+
+    def test_without_the_flag_the_same_diff_selects_nothing(self, tmp_path: Path) -> None:
+        root = _deck_copy(tmp_path)
+        result = _run(root, _modified("cards/vocabulary.txt"))
+        assert result.exit_code == 0, result.stdout
+        assert "selected 0 of 5 cards" in " ".join(result.stdout.split())
+
     def test_a_diff_read_from_a_file_reads_the_same_as_one_from_stdin(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         patch = tmp_path / "pr.diff"
