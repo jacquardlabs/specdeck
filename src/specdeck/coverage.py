@@ -269,9 +269,11 @@ def unnamed_policies(documents: list[PolicyDocument], cards: list[Card]) -> list
     it parses as. See DECISIONS.md, 2026-08-25.
 
     The cost, stated: a genuine card kept in a policy directory is reported as an unnamed
-    policy, and an orphan policy sharing a directory with the cards is not reported at all
-    — nothing there tells the two apart. Report-only either way, so the failure mode is a
-    line to ignore rather than a red build.
+    policy; a card that does not parse is reported as one too, wherever it sits, since it
+    never reaches the card list to be excluded (`Coverage.unreadable` lists it as well);
+    and an orphan policy sharing a directory with the cards is not reported at all —
+    nothing there tells the two apart. Report-only every way, so the failure mode is a line
+    to ignore rather than a red build.
     """
     named = {Path(one.path).resolve() for one in documents}
     shared = {Path(card.path).resolve().parent for card in cards if card.context.policy}
