@@ -27,6 +27,7 @@ from rich.table import Table
 from rich.text import Text
 
 from . import stats
+from .affected import Selection
 from .cell import Cell, Run, Suite
 from .coverage import UNDERSTATED, Coverage, PathCoverage, PolicyDocument, VocabularyTable
 from .introspect import Introspection
@@ -507,6 +508,47 @@ def _deck(suite: Suite) -> Table:
             f"gate {cell.passes}/{cell.runs}  {credit}",
         )
     return table
+
+
+def render_selection(selection: Selection, console: Console) -> None:
+    """What `--affected-by` narrowed the deck to, and the evidence for every card in it.
+
+    Printed before the deck runs, not beside its report: under `--live` the reader has to
+    see what was chosen before the judging is paid for, and a selection with no stated
+    evidence is one nobody can check.
+
+    A selection of nothing is stated at length. It exits 0 having run no card, which is the
+    one shape that could read as a rubber stamp, so the line says what the code does not:
+    the exit is about the diff, not about the deck.
+    """
+    console.print()
+    count = f"selected {len(selection.cards)} of {selection.total} cards"
+    if selection.everything:
+        # One reason held by every card. Repeating it per row would be five copies of the
+        # same sentence and would read as five independent findings.
+        console.print(Text(f"  {count} — {selection.everything}", style="dim"))
+    elif not selection.cards:
+        console.print(
+            Text(f"  {count} — the diff touched no card, policy, fixture or trace", style="dim")
+        )
+        console.print(
+            Text(
+                "  nothing to run — this exit says nothing about the deck, only that the "
+                "diff selected none of it",
+                style="dim",
+            )
+        )
+    else:
+        console.print(Text(f"  {count}", style="dim"))
+        for card in selection.cards:
+            # A card path and a diff path both come out of the user's own files, so both
+            # are Text: a bracket in either would be read as a style tag and eat the line.
+            # One line each rather than two columns of a table — a card path and its
+            # evidence are each long enough that a narrow terminal would fold both.
+            console.print(Text(f"    {card}", style="dim"))
+            for reason in selection.reasons[str(card)]:
+                console.print(Text(f"      {reason}", style="dim"))
+    console.print()
 
 
 def render_matrix(result: MatrixResult, console: Console, *, rates: Rates | None = None) -> None:

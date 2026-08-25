@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import sys
 from datetime import date
 from itertools import groupby
 from pathlib import Path
@@ -16,6 +17,7 @@ from rich.console import Console
 from rich.text import Text
 
 from specdeck import __version__
+from specdeck.affected import DiffError, Inputs, Selection, parse_diff, select
 from specdeck.agent import AgentAdapter
 from specdeck.baseline import BASELINE_NAME, DEFAULT_CELL, Baseline, BaselineError, observed
 from specdeck.budget import Budget, BudgetError
@@ -48,6 +50,7 @@ from specdeck.report import (
     render,
     render_coverage,
     render_matrix,
+    render_selection,
     render_suite,
 )
 from specdeck.simulator import SimulatorError
@@ -87,6 +90,7 @@ USER_ERRORS = (
     CardError,
     CellError,
     CoverageError,
+    DiffError,
     JudgeError,
     LoopError,
     MatrixError,
@@ -168,6 +172,18 @@ def run(
     vocabulary_path: Path | None = typer.Option(  # noqa: B008
         None, "--vocabulary", help="Declared tools and markers, needed by --agent."
     ),
+    affected_by: str | None = typer.Option(
+        None,
+        "--affected-by",
+        help="Run only the cards a unified diff touches, over a directory. `-` reads the "
+        "diff from stdin.",
+    ),
+    diff_root: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--diff-root",
+        help="The repo root --affected-by's paths are relative to (default: the current "
+        "directory).",
+    ),
     rates_path: Path | None = typer.Option(  # noqa: B008
         None, "--rates", help=f"A {RATES_FILE} to merge over the built-in table."
     ),
@@ -221,6 +237,9 @@ def run(
             cassettes=cassettes,
             baseline_path=baseline_path,
             rates_path=rates_path,
+            vocabulary_path=vocabulary_path,
+            affected_by=affected_by,
+            diff_root=diff_root,
             runs=runs,
             threshold=threshold,
             latency_budget=latency_budget,
@@ -231,6 +250,11 @@ def run(
             budget_usd=budget_usd,
         )
     try:
+        if affected_by is not None or diff_root is not None:
+            # Not in `_WHY_ONE_CARD`, which is the inverse mechanism — flags refused over a
+            # deck. This is a flag that needs one: selecting from a list of one card is a
+            # yes/no nobody asked for, and answering "no" would exit 0 having run nothing.
+            raise CardError("--affected-by selects from a deck, so it takes a directory of cards")
         if matrix_path and trace:
             # A recorded trace was produced by one provider running one prompt. A column
             # over it could vary nothing, so the grid would print the same run N times.
@@ -421,6 +445,9 @@ def _run_deck(
     cassettes: Path | None,
     baseline_path: Path | None,
     rates_path: Path | None,
+    vocabulary_path: Path | None,
+    affected_by: str | None,
+    diff_root: Path | None,
     runs: int | None,
     threshold: int | None,
     latency_budget: float,
@@ -460,12 +487,22 @@ def _run_deck(
         # Resolved before anything runs, purely to fail fast — `_matrix`'s rule. A deck
         # under `--live` would otherwise make every judge call and then exit 2 on a
         # mistyped `--rates` path.
+        if diff_root is not None and affected_by is None:
+            # A cap with nothing to cap, one flag over: a root describing a diff nobody
+            # read is dead surface that reads as configuration.
+            raise CardError(
+                "--diff-root describes the diff --affected-by reads, which was not given"
+            )
         rates = _rates(rates_path, root, console)
-        suite = _deck(
+        suite, selection = _deck(
             root,
+            console,
             lock_path=lock_path,
             cassettes=cassettes,
             baseline_path=baseline_path,
+            vocabulary_path=vocabulary_path,
+            affected_by=affected_by,
+            diff_root=diff_root,
             runs=runs,
             threshold=threshold,
             latency_budget=latency_budget,
@@ -481,7 +518,10 @@ def _run_deck(
         console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
         raise typer.Exit(3) from None
 
-    render_suite(suite, console, rates=rates)
+    # A selection of nothing prints no deck table: "0 cards, 0 passed" where a verdict goes
+    # reads as a result, and `render_selection` has already said what happened and why.
+    if selection is None or selection.cards:
+        render_suite(suite, console, rates=rates)
     raise typer.Exit(_suite_exit(suite))
 
 
@@ -506,10 +546,14 @@ _WHY_ONE_CARD = {
 
 def _deck(
     root: Path,
+    console: Console,
     *,
     lock_path: Path | None,
     cassettes: Path | None,
     baseline_path: Path | None,
+    vocabulary_path: Path | None,
+    affected_by: str | None,
+    diff_root: Path | None,
     runs: int | None,
     threshold: int | None,
     latency_budget: float,
@@ -517,7 +561,7 @@ def _deck(
     concurrency: int,
     judge_model: str | None,
     simulator_model: str | None,
-) -> Suite:
+) -> tuple[Suite, Selection | None]:
     """Every card under `root`, run against the traces it declares.
 
     Discovery is `lint.cards_under`, never a second walk: two commands disagreeing about
@@ -533,14 +577,45 @@ def _deck(
     key `lock_key` already writes for both files. Resolved per card, a nested card would
     silently lose its `token_baseline` gate — the deck reporting green over a regression
     the same card fails when it is run on its own.
+
+    `--affected-by` filters that discovery and nothing else — one line between the walk and
+    the loop. A second discovery path here would be two commands disagreeing about what a
+    card is, which is the discrepancy `cards_under` exists to prevent.
     """
     paths = cards_under([root])
     if not paths:
         # Zero cards is not a green deck. "All zero of them passed" is exactly the empty
-        # report a suite exists to make impossible.
+        # report a suite exists to make impossible. Checked before the selection filters
+        # anything: an empty directory is a user error whatever the diff says, and a diff
+        # that selected none of five cards is an answer.
         raise CardError(f"no cards under {root}")
     lock_file = lock_path or root / LOCKFILE_NAME
     baseline_file = baseline_path or root / BASELINE_NAME
+    selection = None
+    if affected_by is not None:
+        changes = parse_diff(_diff(affected_by), root=(diff_root or Path.cwd()).resolve())
+        if not changes:
+            # The third shape, beside a malformed diff and one that matched nothing.
+            # `parse_diff` is total on an empty input because an empty diff really is a
+            # diff of nothing, but in CI the usual cause is `git diff origin/main...`
+            # against a ref that could not be resolved — output on stderr, nothing on the
+            # pipe — and a deck that ran no card on it would report green.
+            raise DiffError(
+                "--affected-by got an empty diff, so there is nothing to select from — a "
+                "`git diff` that printed nothing is usually a ref that could not be "
+                "resolved, and a deck that ran no card on it would report green"
+            )
+        selection = select(
+            [_inputs(path) for path in paths],
+            changes,
+            lock_path=lock_file,
+            vocabulary_path=vocabulary_path,
+        )
+        # Printed inside the funnel, unlike the report: `render_selection` raises no
+        # `typer.Exit`, `_rates` already takes the console here, and a live deck learning
+        # what it selected only after every judge call is the wrong order.
+        render_selection(selection, console)
+        paths = selection.cards
     cells: list[Cell] = []
     errors: list[SuiteError] = []
     for path in paths:
@@ -562,7 +637,50 @@ def _deck(
             )
         except USER_ERRORS as error:
             errors.append(SuiteError(card_path=str(path), message=str(error)))
-    return Suite(cells=cells, errors=errors)
+    return Suite(cells=cells, errors=errors), selection
+
+
+def _diff(affected_by: str) -> str:
+    """The diff text, from a file or from stdin.
+
+    `FileNotFoundError` is not a `USER_ERROR`, so an unreadable path left uncaught would
+    exit 3, "specdeck itself broke", for a path the user typed.
+    """
+    if affected_by == "-":
+        return sys.stdin.read()
+    try:
+        return Path(affected_by).read_text()
+    except OSError as error:
+        raise CardError(f"--affected-by {affected_by}: {error}") from None
+
+
+def _inputs(path: Path) -> Inputs:
+    """What one card reads, for the selector — the boundary where a card becomes data.
+
+    A card the deck cannot start cannot be excluded: an unparseable card, one whose
+    `traces:` glob escapes its directory, one that declares no `traces:` at all and one
+    whose glob now matches no file are all selected with the reason stated, and the run
+    then reports the same error the whole deck would have reported anyway. Excluding one
+    would be a selector deciding that a card it could not read is irrelevant, and the
+    answer would be a green run that read nothing.
+
+    Which is why the traces come from `_traces` and not from `card.trace_paths`, whose
+    answer to a glob that matches nothing is `[]` — the same total property lint reads as a
+    `dead-path` finding. `_deck_cell` calls `_traces` with these arguments too, so the
+    selector's test of whether a card can run *is* the runner's rather than a second copy
+    of it: a recording the diff deleted or renamed away resolves to nothing, and the card
+    is selected and fails the run instead of being dropped from a deck that then exits 0.
+    """
+    try:
+        card = parse(path)
+        return Inputs(
+            card=path,
+            policy=card.policy_path,
+            fixture=card.fixture_path,
+            traces=_traces(card, path, [], None),
+        )
+    except USER_ERRORS as error:
+        return Inputs(card=path, unreadable=str(error))
 
 
 def _deck_cell(
