@@ -2,6 +2,14 @@
 
 <!-- version list -->
 
+## v0.5.1 (2026-08-25)
+
+### Bug Fixes
+
+- Charge the empty reply, and refuse a baseline no run earned
+  ([`b5ca1bb`](https://github.com/jacquardlabs/specdeck/commit/b5ca1bbe04f6e2b64268a00c2a8334f4227ee359))
+
+
 ## v0.5.0 (2026-08-25)
 
 ### Bug Fixes
