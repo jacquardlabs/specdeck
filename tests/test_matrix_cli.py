@@ -135,7 +135,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return tmp_path
 
 
-def run(workspace: Path, *extra: str, matrix: str = "matrix.toml"):
+def run(workspace: Path, *extra: str, matrix: str = "matrix.toml", runs: str = "1"):
     return runner.invoke(
         app,
         [
@@ -148,7 +148,7 @@ def run(workspace: Path, *extra: str, matrix: str = "matrix.toml"):
             "--matrix",
             str(workspace / matrix),
             "--runs",
-            "1",
+            runs,
             "--pass-threshold",
             "1",
             "--relock",
@@ -196,6 +196,17 @@ class TestTheGuards:
         )
         assert result.exit_code == 2, result.stdout
         assert "--budget-usd applies to --matrix" in result.stdout
+
+    def test_a_latency_budget_nothing_could_pass_is_the_same_user_error_under_a_matrix(
+        self, workspace: Path
+    ) -> None:
+        # The single-cell path exits 2 on this number. The matrix must not route around
+        # it into `BuiltinConfig`, where the `ValidationError` is caught per column and
+        # scored exit 3, "specdeck itself broke" — after every column's agent has run.
+        result = run(workspace, "--latency-budget", "0")
+        assert result.exit_code == 2, result.stdout
+        assert "--latency-budget" in result.stdout
+        assert not fake_agent.CONFIG_CALLS, "the flag was rejected before the agent ran"
 
     def test_a_malformed_matrix_exits_two_not_three(self, workspace: Path) -> None:
         (workspace / "broken.toml").write_text("[[provider]\n")
@@ -270,9 +281,25 @@ class TestRunningTheMatrix:
 
 
 class TestTheBudget:
-    def _capped(self, workspace: Path, *extra: str, **columns: dict):
+    def _capped(self, workspace: Path, *extra: str, runs: str = "1", **columns: dict):
         (workspace / "capped.toml").write_text(matrix_text(**columns))
-        return run(workspace, *extra, matrix="capped.toml")
+        return run(workspace, *extra, matrix="capped.toml", runs=runs)
+
+    def test_the_second_run_of_a_column_never_starts_once_the_cap_is_blown(
+        self, workspace: Path
+    ) -> None:
+        # The cap is checked between the runs of a column, not only between the columns.
+        # Asserted on the adapter's call count rather than on the exit code: a column cut
+        # short exits 4 either way, so only "how many conversations happened" can tell a
+        # column that stopped from one that ran every run it was asked for.
+        spent = {"model": "claude-sonnet-5", "reply": REPLY, "output_tokens": 1_000_000}
+        assert self._capped(workspace, "--budget-usd", "0.01", sonnet=spent).exit_code == 0
+        one_conversation = len(fake_agent.CONFIG_CALLS)
+        fake_agent.CONFIG_CALLS.clear()
+
+        result = self._capped(workspace, "--budget-usd", "0.01", runs="2", sonnet=spent)
+        assert result.exit_code == 4, result.stdout
+        assert len(fake_agent.CONFIG_CALLS) == one_conversation, "run 2 started anyway"
 
     def test_a_column_whose_model_is_unpriced_refuses_to_start_naming_it(
         self, workspace: Path
@@ -287,6 +314,24 @@ class TestTheBudget:
         assert result.exit_code == 2, result.stdout
         assert "no rate for mystery (not-a-model-9)" in result.stdout
         assert "rates.toml" in result.stdout
+
+    def test_an_unpriced_judge_refuses_the_matrix_before_any_column_runs(
+        self, workspace: Path
+    ) -> None:
+        # The columns are priced; the judge the lock pins is not. Charged $0.00 forever,
+        # it would leave the cap unable to trip on specdeck's own calls — the half of the
+        # spend the cap can actually prevent.
+        result = self._capped(
+            workspace,
+            "--budget-usd",
+            "1",
+            "--judge-model",
+            "not-a-model-9",
+            sonnet={"model": "claude-sonnet-5", "reply": REPLY},
+        )
+        assert result.exit_code == 2, result.stdout
+        assert "no rate for judge (not-a-model-9)" in result.stdout
+        assert not fake_agent.CONFIG_CALLS, "no column ran"
 
     def test_an_expensive_agent_trips_the_cap_with_no_network(self, workspace: Path) -> None:
         # A million output tokens at Sonnet's rate is $10, well past a one-cent cap. The
@@ -416,12 +461,46 @@ class TestTheBudget:
         assert result.exit_code == 0, result.stdout
         assert "estimate" in result.stdout
 
-    def test_live_serialises_the_columns_and_says_so(self, workspace: Path) -> None:
+    def test_live_serialises_the_columns_and_says_so(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
         # Replay covers every call the run makes, so --live records nothing new and needs
-        # no key: what is under test is the printed note and the forced concurrency.
+        # no key: what is under test is the printed note and the forced concurrency. The
+        # concurrency is asserted rather than inferred from the note — the two are
+        # independent statements, and deleting the one that matters leaves the message
+        # behind, still printing a guarantee nothing enforces.
+        from specdeck import cli
+
+        real = cli.run_matrix
+        seen: list[int] = []
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["concurrency"])
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "run_matrix", spy)
         result = run(workspace, "--live", "--matrix-concurrency", "4")
         assert result.exit_code == 0, result.stdout
         assert "--live serialises the columns" in " ".join(result.stdout.split())
+        assert seen == [1], "the columns ran concurrently under --live"
+
+    def test_replay_keeps_the_concurrency_it_was_asked_for(
+        self, workspace: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # The other half of the same guarantee: nothing is racing a cassette in replay, so
+        # the flag is honoured and the serialisation is not a blanket ceiling.
+        from specdeck import cli
+
+        real = cli.run_matrix
+        seen: list[int] = []
+
+        async def spy(*args, **kwargs):
+            seen.append(kwargs["concurrency"])
+            return await real(*args, **kwargs)
+
+        monkeypatch.setattr(cli, "run_matrix", spy)
+        assert run(workspace, "--matrix-concurrency", "4").exit_code == 0
+        assert seen == [4]
 
 
 class TestTheBaseline:
@@ -458,6 +537,29 @@ class TestTheBaseline:
         result = run(workspace, "--update-baseline")
         assert result.exit_code == 0, result.stdout
         assert "did not pass" not in " ".join(result.stdout.split())
+
+    def test_a_column_left_without_a_baseline_of_its_own_is_named(self, workspace: Path) -> None:
+        # A half-recorded matrix is reachable by design: a budget stop leaves
+        # --update-baseline having recorded the column that ran and not the one that was
+        # skipped. The column it missed then runs with no regression wire, and the guard
+        # that exists for exactly that outcome used to fall silent one column over.
+        key = lock_key(workspace / "refused.md", workspace / BASELINE_NAME)
+        Baseline().record(key, 40, cell="sonnet/terse").save(workspace / BASELINE_NAME)
+        result = run(workspace)
+        assert result.exit_code == 0, result.stdout
+        flat = " ".join(result.stdout.split())
+        assert "no baseline is recorded for opus/terse" in flat, flat
+
+    def test_recording_the_matrix_says_nothing_about_a_missing_baseline(
+        self, workspace: Path
+    ) -> None:
+        # --update-baseline gives every column that runs its own fresh number, so there is
+        # nothing missing to warn about and the note would be false.
+        key = lock_key(workspace / "refused.md", workspace / BASELINE_NAME)
+        Baseline().record(key, 40, cell="sonnet/terse").save(workspace / BASELINE_NAME)
+        result = run(workspace, "--update-baseline")
+        assert result.exit_code == 0, result.stdout
+        assert "no baseline is recorded" not in " ".join(result.stdout.split())
 
     def test_a_single_cell_baseline_alone_is_called_out(self, workspace: Path) -> None:
         # Silence here is the worst outcome: every column would get no regression wire,

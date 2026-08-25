@@ -364,8 +364,9 @@ def _footer(result: MatrixResult) -> list[Text]:
         lines.append(
             _figure(
                 "",
-                "the cap stops new work, it cannot recall work in flight — one agent run "
-                "can exceed the remaining budget before specdeck sees its token counts",
+                "the cap stops new work, it cannot recall work in flight — an agent "
+                "conversation already under way can exceed the remaining budget before "
+                "specdeck sees its token counts",
             )
         )
     return lines

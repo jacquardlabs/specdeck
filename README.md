@@ -157,15 +157,19 @@ guarantee it cannot give:
   it is made, and every call costs nothing at all in replay.
 - your agent's spend is only ever reactive. Its model calls happen inside `adapter.run`,
   which spends the money and reports it afterwards through the optional `input_tokens` and
-  `output_tokens` on the `Chat` events it returns. **A single agent run can exceed the whole
-  remaining budget before specdeck sees a token count.**
+  `output_tokens` on the `Chat` events it returns. **An agent conversation already under way
+  can exceed the whole remaining budget before specdeck sees a token count.**
 - when the cap trips, work already in flight is allowed to finish so the cassette it paid
-  for is recorded. Only new work is refused, so the overshoot is bounded by
-  `--matrix-concurrency` x `--concurrency` calls, and it is printed rather than glossed.
+  for is recorded. Only new work is refused — including the next run within a column, not
+  just the next column — so the overshoot is bounded by what is already in flight:
+  `--matrix-concurrency` x `--concurrency` of specdeck's own calls, plus the one agent
+  conversation each running column is inside. It is printed rather than glossed.
 
 The cap fails closed rather than charging zero for a run nobody can price. Under a cap, a
 column whose `model` has no entry in the rate table refuses the whole matrix before
-anything starts, naming the model; and a run whose trace reports no `gen_ai.usage` or names
+anything starts, naming the model — and so does a pinned judge or simulator the table
+cannot price, since an unpriced model is charged $0.00 and the cap would never trip on
+specdeck's own calls; and a run whose trace reports no `gen_ai.usage` or names
 no model at all aborts the remaining columns, naming your adapter. Without a cap none of
 those fire and the run is only measured.
 

@@ -197,6 +197,16 @@ def run(
             raise CardError("--budget-usd applies to --matrix, which was not given")
         if bool(trace) == bool(agent):
             raise CardError("pass exactly one of --trace and --agent")
+        if latency_budget <= 0:
+            # Checked here rather than left to pydantic: a `ValidationError` is not a
+            # `USER_ERROR`, so a number the user typed would exit 3, "specdeck itself
+            # broke". Checked on the invocation rather than where `BuiltinConfig` is
+            # built, because the matrix builds one per column, inside a column's own
+            # try/except and after that column's agent has already run — so a typo'd flag
+            # would be scored as specdeck breaking, once per column, with the money spent.
+            raise CardError(
+                f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
+            )
         card = parse(card_path)
         rates = _rates(rates_path, card_path, console)
         recordings = [load_trace(path) for path in trace or []]
@@ -389,7 +399,13 @@ def _matrix(
     budget = Budget(cap_usd=cap, rates=rates)
     # Before anything runs, and over every column: a matrix with one unpriceable column
     # is refused whole. See `Budget.preflight` for why that beats skipping the column.
-    budget.preflight(declared)
+    # specdeck's own two models go in beside them — they are the spend the cap can really
+    # prevent, and one the table cannot price is charged $0.00 for the whole run.
+    budget.preflight(
+        declared,
+        judge_model=invocation.lock.judge_model,
+        simulator_model=invocation.lock.simulator_model,
+    )
 
     if invocation.live and matrix_concurrency > 1:
         # Not a performance choice — see `matrix_run`'s docstring. Turn 1 of every column
@@ -411,7 +427,7 @@ def _matrix(
     baseline_file = baseline_path or invocation.card_path.parent / BASELINE_NAME
     key = lock_key(invocation.card_path, baseline_file)
     recorded = Baseline.load(baseline_file)
-    _warn_default_baseline(recorded, key, declared, console)
+    _warn_default_baseline(recorded, key, declared, console, update=invocation.update)
     fresh: dict[str, int] = {}
 
     async def one_column(column: Column) -> Cell:
@@ -477,17 +493,39 @@ def _matrix(
 
 
 def _warn_default_baseline(
-    recorded: Baseline, key: str, declared: list[Column], console: Console
+    recorded: Baseline, key: str, declared: list[Column], console: Console, *, update: bool
 ) -> None:
-    """Say so when a card's recorded baseline belongs to no column in this matrix.
+    """Say so when a column of this matrix runs with no baseline of its own.
 
     A baseline recorded by a single-cell run sits in the `"default"` slot, and no matrix
     column keys there — so every column silently gets no regression wire, and a card that
     fails single-cell passes under `--matrix`. Silence there is the worst outcome.
+
+    A half-recorded matrix reaches the same outcome one column at a time, and it is
+    reachable by design: a budget stop mid-matrix is an expected way for
+    `--update-baseline` to record some columns and not others, and the columns it missed
+    then run wireless beside the ones it did. Named rather than counted, because which
+    column is missing is the whole of what the user has to act on.
+
+    Silent under `--update-baseline`: every column that runs records and is judged against
+    its own fresh number, so there is nothing missing to warn about. Silent too when the
+    card has no baseline at all — a first install must not go loud over a number nobody
+    has written down yet, which is the single-cell path's rule.
     """
-    if recorded.get(key, DEFAULT_CELL) is None:
+    missing = [column.name for column in declared if recorded.get(key, cell_key(column)) is None]
+    if update or not missing:
         return
-    if any(recorded.get(key, cell_key(column)) is not None for column in declared):
+    if len(missing) < len(declared):
+        console.print(
+            "[yellow]note[/yellow]",
+            Text(
+                f"no baseline is recorded for {', '.join(missing)}, so those columns get "
+                "no token-regression wire while the rest of the matrix does — re-record "
+                "with --matrix --update-baseline"
+            ),
+        )
+        return
+    if recorded.get(key, DEFAULT_CELL) is None:
         return
     console.print(
         "[yellow]note[/yellow]",
@@ -538,12 +576,6 @@ def _builtin(
     that disagrees with `--runs`, a missing cassette) would still have overwritten a
     committed baseline with a number from a cell that never ran.
     """
-    if latency_budget <= 0:
-        # Checked here rather than left to pydantic: a `ValidationError` is not a
-        # `USER_ERROR`, so a number the user typed would exit 3, "specdeck itself broke".
-        raise CellError(
-            f"--latency-budget takes a positive number of seconds, got {latency_budget:g}"
-        )
     path = baseline_path or card_path.parent / BASELINE_NAME
     key = lock_key(card_path, path)
     recorded = Baseline.load(path)
@@ -684,21 +716,29 @@ async def _drive_async(
             "the lockfile pins no simulator model — run with "
             "--relock --simulator-model <model> to pin one"
         )
-    return [
-        await run_agent(
-            card,
-            adapter,
-            cassettes=cassettes,
-            simulator_model=lock.simulator_model,
-            semconv=lock.semconv,
-            markers=markers,
-            max_turns=max_turns,
-            live=live,
-            config=config,
-            budget=budget,
+    traces: list[Trace] = []
+    for index in range(runs):
+        if budget is not None:
+            # Between the runs, not only between the columns. Run 1 has already charged
+            # what it spent by the time run 2 would start, so a column that carried on
+            # regardless would begin `--runs` fresh conversations after the cap is known
+            # blown — and the bound stated everywhere else would be low by that factor.
+            budget.check(f"run {index + 1} of {runs} in this column")
+        traces.append(
+            await run_agent(
+                card,
+                adapter,
+                cassettes=cassettes,
+                simulator_model=lock.simulator_model,
+                semconv=lock.semconv,
+                markers=markers,
+                max_turns=max_turns,
+                live=live,
+                config=config,
+                budget=budget,
+            )
         )
-        for _ in range(runs)
-    ]
+    return traces
 
 
 def _adapter(reference: str) -> AgentAdapter:

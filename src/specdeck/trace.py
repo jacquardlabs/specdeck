@@ -211,6 +211,27 @@ class Trace(BaseModel):
         )
 
     @property
+    def unreported_chat_spans(self) -> dict[str, int]:
+        """How many chat spans reported no usage at all, per model.
+
+        `usage_by_model` folds a model's spans into one pair, so one span carrying counts
+        makes every silent span beside it look metered. An adapter that attaches usage to
+        the final message of a turn and to nothing else is a shape, not a bug —
+        `tests/fake_agent.refuses` has it — so the count is kept rather than summed away,
+        the way `reports_output_tokens` keeps "used none" apart from "did not say".
+        """
+        silent: dict[str, int] = {}
+        for span in self.of(Operation.CHAT):
+            if any(
+                span.attributes.get(name) is not None
+                for name in (GenAI.USAGE_INPUT_TOKENS, GenAI.USAGE_OUTPUT_TOKENS)
+            ):
+                continue
+            model = qualified_model(span)
+            silent[model] = silent.get(model, 0) + 1
+        return silent
+
+    @property
     def total_output_tokens(self) -> int:
         return sum(
             int(s.attributes.get(GenAI.USAGE_OUTPUT_TOKENS) or 0) for s in self.of(Operation.CHAT)

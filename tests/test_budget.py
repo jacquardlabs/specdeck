@@ -162,6 +162,22 @@ class TestPreflight:
     def test_a_priced_column_starts(self) -> None:
         budget().preflight([column("sonnet", "priced")])
 
+    def test_an_unpriced_judge_refuses_the_matrix_by_name(self) -> None:
+        # specdeck's own spend is the half the cap can genuinely prevent, and an unpriced
+        # model is charged $0.00 forever — so a judge the table cannot price would leave
+        # the cap unable to trip on the one axis it actually governs.
+        with pytest.raises(BudgetError, match=r"no rate for judge \(my-finetune-v3\)"):
+            budget().preflight([column("sonnet", "priced")], judge_model="my-finetune-v3")
+
+    def test_an_unpriced_simulator_refuses_the_matrix_by_name(self) -> None:
+        with pytest.raises(BudgetError, match=r"no rate for simulator \(my-finetune-v3\)"):
+            budget().preflight([column("sonnet", "priced")], simulator_model="my-finetune-v3")
+
+    def test_an_unpinned_simulator_is_not_an_unpriced_one(self) -> None:
+        # `""` means no simulator has been pinned yet, which the lockfile refuses further
+        # down with the flag that fixes it. "no rate for simulator ()" would bury that.
+        budget().preflight([column("sonnet", "priced")], judge_model="priced")
+
     def test_without_a_cap_an_unpriced_column_is_not_refused(self) -> None:
         # Nothing is being enforced, so nothing has to be priceable. The report will say
         # the estimate is partial, which is the honest outcome rather than a refusal.
@@ -206,6 +222,25 @@ class TestChargingATrace:
                 trace({"model": "mystery-9", "input_tokens": 5, "output_tokens": 5}),
                 adapter="TheAdapter",
             )
+
+    def test_a_span_that_reported_nothing_is_counted_even_beside_one_that_did(self) -> None:
+        # An adapter that attaches usage to the final message of a turn and to nothing
+        # else is a shape, not a bug — `tests/fake_agent.refuses` has it. `usage_by_model`
+        # folds the silent spans into the reporting one, so without a per-span count two
+        # of these three model calls would be charged zero invisibly.
+        one = budget(cap=None)
+        one.charge_trace(trace({}, {}, {"input_tokens": 1000, "output_tokens": 1000}), adapter="P")
+        assert one.spent.usd == pytest.approx(0.002)
+        assert one.unmetered == {"priced": 2}
+
+    def test_under_a_cap_a_partly_metered_trace_is_charged_and_the_gap_is_named(self) -> None:
+        # None of the three rules fires: the trace does report output tokens, both halves
+        # are present once folded, and the model is priced. Refusing it would refuse the
+        # shape a real adapter has, so it is charged for what it reported and the silent
+        # spans are named — the cap trips on the floor rather than on nothing.
+        one = budget()
+        one.charge_trace(trace({}, {"input_tokens": 1000, "output_tokens": 1000}), adapter="P")
+        assert one.unmetered == {"priced": 1}
 
     def test_without_a_cap_none_of_the_three_rules_fires(self) -> None:
         one = budget(cap=None)

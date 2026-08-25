@@ -13,21 +13,26 @@ The agent's spend is only ever *reactive*. Its model calls happen inside the use
 `adapter.run`, which spends the money and then reports what it spent afterwards, as
 optional `Chat.input_tokens`/`Chat.output_tokens`. specdeck sees the number when the run
 is already over. So: the pre-flight refuses to start a matrix it cannot price, `check()`
-refuses to start a column the cap can no longer afford, and an overshoot aborts what is
-left — but **a single agent run can exceed the whole remaining budget before specdeck ever
-sees a token count**. That is stated in the report and in the README rather than glossed.
+refuses to start a column — and each run within a column — that the cap can no longer
+afford, and an overshoot aborts what is left. But **an agent conversation already under
+way can exceed the whole remaining budget before specdeck ever sees a token count**. That
+is stated in the report and in the README rather than glossed.
 
 THE OVERSHOOT IS BOUNDED AND PRINTED
 
 When the cap trips, in-flight work is allowed to finish. `judge.Cassette.write` records
 only after the reply parses, so cancelling mid-flight throws away a fixture that has
-already been paid for. Only *new* work is refused, and the overshoot is bounded by
-matrix concurrency x cell concurrency calls plus whatever one agent run costs.
+already been paid for. Only *new* work is refused, so the overshoot is bounded by what is
+already in flight: matrix concurrency x cell concurrency of specdeck's own calls, plus the
+one agent conversation each running column is inside — matrix concurrency of them, never
+`--runs` of them, which is why `cli._drive_async` checks between the runs of a column and
+not only between the columns.
 
 FAIL-CLOSED, THREE WAYS. Charging zero for a run nobody can price is the exact failure the
 cap exists to prevent, so under a cap each of these refuses instead:
 
-1. a column whose declared model has no rate never starts (`preflight`);
+1. a column whose declared model has no rate never starts, and neither does a matrix whose
+   judge or simulator has none — an unpriced model is charged $0.00 forever (`preflight`);
 2. a trace whose model is `loop`'s `unknown` placeholder aborts, naming the adapter;
 3. a trace reporting no `gen_ai.usage.output_tokens` aborts, naming the adapter.
 
@@ -112,33 +117,50 @@ class Budget:
         a cap quietly stops working.
         """
         if input_tokens is None and output_tokens is None:
-            self.unmetered[model] = self.unmetered.get(model, 0) + 1
+            self._unmetered(model)
             return
         self._spent = self._spent + self.rates.estimate(
             model, input_tokens=input_tokens or 0, output_tokens=output_tokens or 0
         )
 
-    def preflight(self, columns: Iterable[Column]) -> None:
-        """Refuse a matrix whose columns the cap cannot govern, before any of them starts.
+    def _unmetered(self, model: str, count: int = 1) -> None:
+        """Record calls that said nothing about what they spent. The one writer, so
+        "counted, never charged as zero" cannot be honoured in one place and not the
+        other."""
+        self.unmetered[model] = self.unmetered.get(model, 0) + count
+
+    def preflight(
+        self, columns: Iterable[Column], *, judge_model: str = "", simulator_model: str = ""
+    ) -> None:
+        """Refuse a matrix whose models the cap cannot govern, before any of them starts.
 
         The whole matrix, not the offending column alone. Skipping it would keep the cap
         enforceable over what did run, so fail-closed is not the argument — the exit code
         is. There is no honest code for "ran three of four because the rate table was
         incomplete": 4 would claim the budget stopped it and 2 would claim nothing
         started, and both would be false. Refusing here makes 2 literally true, and the
-        message names the column so the user knows which line to fix.
+        message names the model so the user knows which line to fix.
+
+        specdeck's own two models are checked beside the columns' rather than left to the
+        report: they are the half of the spend this cap can genuinely prevent, and an
+        unpriced model charges $0.00 through `rates.estimate` forever, so a judge the table
+        does not price would disable the cap over the one axis it can actually stop. An
+        unpinned simulator is not checked here — the lockfile's own refusal names the flag
+        that pins it, and "no rate for simulator ()" would bury it.
         """
         if not self.capped:
             return
+        named = [(column.name, column.model) for column in columns]
+        named += [("judge", judge_model), ("simulator", simulator_model)]
         unpriced = [
-            f"{column.name} ({column.model})"
-            for column in columns
-            if self.rates.rate_for(column.model) is None
+            f"{what} ({model})"
+            for what, model in named
+            if model and self.rates.rate_for(model) is None
         ]
         if unpriced:
             raise BudgetError(
                 f"no rate for {', '.join(unpriced)} — a budget cap cannot be held over a "
-                "column nobody can price. Add the model to a rates.toml beside the card, "
+                "call nobody can price. Add the model to a rates.toml beside the card, "
                 "or drop the cap."
             )
 
@@ -151,7 +173,19 @@ class Budget:
         usage = trace.usage_by_model
         if self.capped:
             self._refuse_unpriceable(trace, usage, adapter=adapter)
+        # Counted span by span, not model by model. `usage_by_model` folds a model's spans
+        # into one pair, so a run that reported usage on its last message alone would be
+        # charged for that message and read as the whole — and `reports_output_tokens`,
+        # which is a fact about the trace, cannot see it. The unmetered count is what keeps
+        # the figure legible as the floor it is; whether a cap should refuse such a run
+        # outright, the way it refuses one that reported nothing at all, is #86.
+        for model, count in trace.unreported_chat_spans.items():
+            self._unmetered(model, count)
         for model, (input_tokens, output_tokens) in usage.items():
+            if input_tokens is None and output_tokens is None:
+                # Already counted above, span by span; `charge` would count it a second
+                # time as one silent model.
+                continue
             self.charge(model, input_tokens=input_tokens, output_tokens=output_tokens)
 
     def _refuse_unpriceable(
