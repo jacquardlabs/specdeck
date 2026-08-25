@@ -132,8 +132,11 @@ def render_coverage(coverage: Coverage, console: Console) -> None:
         # could be read, and this says which ones could not.
         console.print("\n  [dim]not read as cards[/dim]")
         for reason in coverage.unreadable:
-            # A parser message quoting a user's file. Text, never markup.
-            console.print(Text(f"    {reason}", style="yellow"))
+            # A parser message quoting a user's file. Text, never markup — and soft-wrapped,
+            # because Rich's word wrap breaks a path that outruns the width mid-word
+            # (`refunds.md` came back as `refund s.md` at 80 columns), and a path a reader
+            # cannot copy out of the report is worse than one that runs past the edge.
+            console.print(Text(f"    {reason}", style="yellow"), soft_wrap=True)
     if coverage.policy is not None:
         _policy_coverage(coverage.policy, console)
     if coverage.vocabulary is not None:
@@ -153,12 +156,13 @@ def _policy_coverage(documents: list[PolicyDocument], console: Console) -> None:
         # so every one of them reaches the console as Text rather than as markup.
         line = Text("    ")
         line.append(document.path)
+        # Soft-wrapped for the same reason as `unreadable` above: this line carries a path.
         if document.blind:
             line.append(f"   {document.blind}", style="yellow")
-            console.print(line)
+            console.print(line, soft_wrap=True)
             continue
         line.append(f"   {_plural(len(document.clauses), 'clause')}", style="dim")
-        console.print(line)
+        console.print(line, soft_wrap=True)
         for section in document.sections:
             entry = Text("      ")
             entry.append(f"{section.section or '(preamble)':<24}", style="dim")
