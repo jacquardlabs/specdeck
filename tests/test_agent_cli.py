@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from functools import partial
 from pathlib import Path
 
 import pytest
@@ -228,6 +229,16 @@ class TestAdapterForms:
         instance = FakeAgent(refuses())
         monkeypatch.setattr(module, "ready_agent", instance, raising=False)
         assert _adapter("tests.fake_agent:ready_agent") is instance
+
+    def test_a_callable_object_factory_is_called_too(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A `functools.partial` is neither a class nor a routine, and `--agent` has always
+        called it. The wave that split `_resolve` out for `--agent-def` stopped, and named
+        the partial in the "has no async run" error — which points at the factory, not at
+        the adapter it makes."""
+        import tests.fake_agent as module
+
+        monkeypatch.setattr(module, "partial_agent", partial(FakeAgent, refuses()), raising=False)
+        assert isinstance(_adapter("tests.fake_agent:partial_agent"), FakeAgent)
 
     def test_something_with_no_run_is_refused(self) -> None:
         with pytest.raises(CardError, match=r"run\(messages"):

@@ -795,8 +795,17 @@ def _resolve(reference: str, *, flag: str) -> object:
 
 
 def _adapter(reference: str) -> AgentAdapter:
-    """Resolve `--agent` to something that satisfies the adapter protocol."""
+    """Resolve `--agent` to something that satisfies the adapter protocol.
+
+    The second call is `--agent`'s alone and does not belong in `_resolve`: a callable that
+    is no adapter is, here, a factory for one — a `functools.partial`, an object with
+    `__call__` — and calling it is what `--agent` has always done. `--agent-def` must not,
+    because the objects it points at satisfy no protocol of ours and calling one would
+    invoke the user's agent just to look at it.
+    """
     adapter = _resolve(reference, flag="--agent")
+    if not isinstance(adapter, AgentAdapter) and callable(adapter):
+        adapter = adapter()
     if not isinstance(adapter, AgentAdapter):
         raise CardError(f"--agent {reference!r} has no async run(messages, tools, config)")
     return adapter
