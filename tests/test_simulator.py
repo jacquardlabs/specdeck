@@ -10,7 +10,7 @@ from pathlib import Path
 import pytest
 
 from specdeck.budget import Budget, BudgetStop
-from specdeck.judge import Cassette
+from specdeck.judge import ATTEMPTS, Cassette
 from specdeck.rates import ModelRate, Rates
 from specdeck.simulator import (
     FENCE_TRANSCRIPT,
@@ -141,6 +141,41 @@ class TestTheBudget:
         budget = Budget(cap_usd=None, rates=RATES)
         spoken(cassettes=tmp_path, model=MODEL, live=True, budget=budget)
         assert budget.spent.usd == pytest.approx(1.0)
+
+    def _patch_empty(self, monkeypatch, usage: dict | None = None):
+        """Only a thinking block: a well-formed reply that was billed and carries no text."""
+        payload: dict = {"content": [{"type": "thinking", "thinking": "all of it"}]}
+        if usage is not None:
+            payload["usage"] = usage
+
+        class Response:
+            status_code = 200
+            text = json.dumps(payload)
+
+            def json(self) -> dict:
+                return payload
+
+        calls = [0]
+
+        async def post(self, *args, **kwargs):
+            calls[0] += 1
+            return Response()
+
+        monkeypatch.setattr("httpx.AsyncClient.post", post)
+        return calls
+
+    def test_a_turn_with_no_text_is_charged_on_every_attempt(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#101: `_turn` retries, and each empty reply was billed. See judge._call."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        calls = self._patch_empty(monkeypatch, {"input_tokens": 500_000, "output_tokens": 0})
+        budget = Budget(cap_usd=None, rates=RATES)
+        with pytest.raises(UngradableTurn):
+            spoken(cassettes=tmp_path, model=MODEL, live=True, budget=budget)
+        assert calls[0] == ATTEMPTS, "every attempt reached the wire"
+        assert budget.spent.usd > 0.0, "an empty reply was billed and charged nothing"
+        assert budget.spent.usd == pytest.approx(0.5 * ATTEMPTS)
 
     def test_a_replayed_turn_charges_nothing(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch

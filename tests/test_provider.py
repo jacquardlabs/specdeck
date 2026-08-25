@@ -126,6 +126,32 @@ class TestAnthropic:
         reply = call(model="claude-sonnet-5")
         assert (reply.input_tokens, reply.output_tokens) == (None, 34)
 
+    def test_an_empty_reply_carries_the_usage_it_was_billed_for(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """#101: the call was made and billed; the counts must survive the raise."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        _patch(
+            monkeypatch,
+            _reply(
+                [{"type": "thinking", "thinking": "all of it"}],
+                usage={"input_tokens": 900, "output_tokens": 4000},
+            ),
+        )
+        with pytest.raises(EmptyCompletion) as raised:
+            call(model="claude-sonnet-5")
+        assert (raised.value.input_tokens, raised.value.output_tokens) == (900, 4000)
+
+    def test_an_empty_reply_that_reported_no_usage_says_so_rather_than_zero(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The same rule Completion holds: "used none" and "did not say" are different."""
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "k")
+        _patch(monkeypatch, _reply([{"type": "thinking", "thinking": "all of it"}]))
+        with pytest.raises(EmptyCompletion) as raised:
+            call(model="claude-sonnet-5")
+        assert (raised.value.input_tokens, raised.value.output_tokens) == (None, None)
+
     def test_a_reply_with_no_text_is_its_own_class(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # The one provider failure worth asking again about, which is what lets the judge
         # and the simulator resample it while raising on everything else.

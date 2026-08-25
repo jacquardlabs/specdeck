@@ -397,12 +397,17 @@ async def _call(prompt: str, model: str, *, budget: Budget | None = None) -> Com
     becomes an `UngradableReply` and `_sample` asks again. Everything else — a bad key, a
     429, a timeout — is a `JudgeError` that raises on the first call.
 
-    The charge lands here, on the one line the call actually returns through, so no caller
+    The charge lands here, on both lines the call actually returns through, so no caller
     can forget it — a discarded usage figure looks exactly like a free call.
     """
     try:
         reply = await complete(prompt, model=model, max_tokens=MAX_TOKENS, timeout_s=TIMEOUT_S)
     except EmptyCompletion as error:
+        # Charged before it is re-raised, for the reason in the docstring: this is the
+        # second line the call returns through, and `_sample` asks again after it. An
+        # empty reply is billed like any other, so skipping it makes a retry loop free.
+        if budget is not None:
+            budget.charge(model, input_tokens=error.input_tokens, output_tokens=error.output_tokens)
         raise UngradableReply(f"the judge's reply carried no text block: {error}") from None
     except ProviderError as error:
         raise JudgeError(f"judge call failed: {error}") from None

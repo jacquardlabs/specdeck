@@ -392,18 +392,15 @@ def run(
         render_matrix(matrix, console, rates=rates)
         _write_baseline(pending, console)
         if unproven:
-            # The single-cell path's note, one grid wider. A column records its cost before
-            # its own gate is judged — it has to, because the wire that cost produces is
-            # evaluated in that same cell — so a column that then failed, or raised, has
-            # already written the cost of behaviour nobody wants as the new normal. Whether
-            # that should be refused outright is still the open product question wave 3
-            # left; a silent bad baseline is the outcome neither answer wants.
+            # The single-cell path's note, one grid wider. Named per column, because the
+            # columns that did pass recorded normally in the same run and the reader needs
+            # to know which half of the grid moved.
             console.print(
                 "[yellow]note[/yellow]",
                 Text(
-                    f"the baseline for {', '.join(unproven)} was recorded from a column "
-                    "that did not pass — re-record it once the column passes, or the cost "
-                    "of a broken run becomes the normal"
+                    f"no baseline was recorded for {', '.join(unproven)}: those columns "
+                    "did not pass, so their committed baselines are unchanged — re-run "
+                    "--update-baseline once they pass"
                 ),
             )
         # Raised out here, never inside the funnel: `typer.Exit` subclasses `RuntimeError`,
@@ -420,19 +417,22 @@ def run(
     # The JUnit report first: an unwritable --baseline path must not also deny CI the file
     # it asked for, and the two failures are independent.
     _write_junit(junit_xml, report, console)
-    _write_baseline(pending, console)
+    # #102: a run whose gate failed does not get to say what normal costs. The wire was
+    # still evaluated in-cell against the fresh median — that is what `_builtin` folds in,
+    # and nothing about gating moves — but the number never reaches disk, so the committed
+    # baseline stays the last one a passing run earned. Warning instead was the old
+    # behaviour, and a warning is fail-open: a gate-tier wire whose bar a broken run can
+    # quietly raise.
     if pending is not None and not cell.passed:
-        # A cell that fails its gate is still a cell that ran, so its cost is still
-        # recorded. Said out loud rather than refused: whether a failing run may set a
-        # baseline is a product question nobody has answered, and a silent bad baseline is
-        # the outcome neither answer wants.
         console.print(
             "[yellow]note[/yellow]",
             Text(
-                "the baseline was recorded from a run whose gate failed — re-record it "
-                "once the card passes, or the cost of a broken run becomes the normal"
+                "the baseline was not recorded: this run's gate failed, so the committed "
+                "baseline is unchanged — re-run --update-baseline once the card passes"
             ),
         )
+    else:
+        _write_baseline(pending, console)
     raise typer.Exit(0 if cell.passed else 1)
 
 
@@ -873,20 +873,27 @@ def _matrix(
     )
     # One write for the whole matrix, after every column has finished. N columns each
     # saving their own copy would be N writers on one file, and the last one would win.
-    pending = None
-    if fresh:
-        for cell, tokens in sorted(fresh.items()):
-            recorded = recorded.record(key, tokens, cell=cell)
-        pending = (baseline_file, recorded)
-    # A column records its cost before its own gate is judged, so a column that then
-    # failed — or raised on the way — recorded one anyway. Not `not passed` on the cell:
-    # an ERRORED column never produced one and is exactly as unproven.
-    unproven = [
+    # #102: a column records its cost before its own gate is judged — it has to, because
+    # the wire that cost produces is evaluated in that same cell — so `fresh` holds numbers
+    # from columns that then failed or raised. Those are dropped here rather than written
+    # and warned about: the committed baseline stays the last one a passing column earned.
+    # Not `not passed` on the cell: an ERRORED column never produced one and is exactly as
+    # unproven.
+    earned = {cell_key(one.column) for one in result.columns if one.status is Status.PASSED}
+    skipped = sorted(
         one.column.name
         for one in result.columns
         if one.status is not Status.PASSED and cell_key(one.column) in fresh
-    ]
-    return result, pending, unproven
+    )
+    # One write for the whole matrix, after every column has finished. N columns each
+    # saving their own copy would be N writers on one file, and the last one would win.
+    pending = None
+    keep = {cell: tokens for cell, tokens in fresh.items() if cell in earned}
+    if keep:
+        for cell, tokens in sorted(keep.items()):
+            recorded = recorded.record(key, tokens, cell=cell)
+        pending = (baseline_file, recorded)
+    return result, pending, skipped
 
 
 def _warn_default_baseline(

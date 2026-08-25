@@ -555,6 +555,49 @@ class TestTheBudget:
         )
         assert budget.spent.usd == pytest.approx(1.0)
 
+    def _empty_reply(self, usage: dict | None = None):
+        """A well-formed reply carrying only a thinking block — billed, no text in it."""
+        payload: dict = {"content": [{"type": "thinking", "thinking": "all of it"}]}
+        if usage is not None:
+            payload["usage"] = usage
+
+        class Response:
+            status_code = 200
+            text = json.dumps(payload)
+
+            def json(self) -> dict:
+                return payload
+
+        return Response()
+
+    def test_a_reply_with_no_text_is_charged_before_it_is_resampled(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path, criteria, conversation
+    ) -> None:
+        """#101: the empty-reply path is billed, and it is the one that repeats.
+
+        A thinking model that keeps returning no text bills every attempt. Charging only
+        the returning path makes a retry loop free, which is the one thing a cap exists
+        to prevent.
+        """
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+        _patch_post(
+            monkeypatch,
+            self._empty_reply({"input_tokens": 250_000, "output_tokens": 250_000}),
+        )
+        budget = Budget(cap_usd=None, rates=self.RATES)
+        with pytest.raises(UngradableReply):
+            graded(
+                criteria,
+                conversation,
+                policy="airline policy",
+                cassettes=tmp_path,
+                live=True,
+                budget=budget,
+            )
+        # Every attempt billed, so the figure is a multiple of one call, never 0.0.
+        assert budget.spent.usd > 0.0, "an empty reply was billed and charged nothing"
+        assert budget.spent.usd == pytest.approx(0.5 * ATTEMPTS)
+
     def test_a_replayed_call_charges_nothing_and_is_never_checked(
         self, tmp_path: Path, criteria, conversation
     ) -> None:
