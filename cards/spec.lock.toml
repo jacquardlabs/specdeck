@@ -7,6 +7,22 @@ model = "claude-sonnet-5"
 [simulator]
 model = ""
 
+[cards."basic-economy-cancellation-refused.md"]
+rubric_hash = "sha256:e93cbd60c4f1ef239eb68e3d23965e247aaa83b99246ecb3f6e1e23c76737396"
+simulator_hash = "sha256:acb2d40fe578d371e62ae7301855a338fe189219a01a74c53f09559225d28f11"
+
 [cards."basic-economy-return-change.md"]
 rubric_hash = "sha256:347e200141feae74a00c61da5cd5a0146d9c14f6beccfbea76903aa6301daf99"
 simulator_hash = "sha256:238516e23646d1566f73c86bb415a1fd7961d18c73c65378ab042fe901892352"
+
+[cards."booking-with-certificates.md"]
+rubric_hash = "sha256:75f6269f21f8accc9d1ec22c9b8b93e82c62c45f8f5dae2ad6277b75c082e082"
+simulator_hash = "sha256:56857dd83fae870f025206ac3135afd778d13f57c4b5a69b0158109674eef8f3"
+
+[cards."delay-compensation-budget.md"]
+rubric_hash = "sha256:0797f9cb6cc58d371e27cd81249d83f4606cf48d77b74dcfae3d325e0a03df28"
+simulator_hash = "sha256:2a11de14ccbd0fe899ddc3f733a460de427bce1752e8a331740b07e8f08022bd"
+
+[cards."escalation-after-repeated-refusal.md"]
+rubric_hash = "sha256:10677df71a71ecd000b01994e0d713931db5a2a56817bb77edb667e01f189fc7"
+simulator_hash = "sha256:36ad46a8020b64457edb0f7881d89d846edf4dbd41220f96a856552f91321ab9"

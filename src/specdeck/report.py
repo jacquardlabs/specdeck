@@ -49,9 +49,12 @@ def render(cell: Cell, console: Console) -> None:
     label = f"run {index + 1} of {cell.runs}"
     if shown.wires:
         console.print(f"\n  [dim]wires, {label}[/dim]")
+        # Padded to the widest id present rather than a fixed column: after-K-then-Y ids
+        # run past any constant, and a detail welded to its label reads as one word. See #71.
+        column = max(len(w.id) for w in shown.wires) + 2
         for wire in shown.wires:
             line = _verdict_line(wire.passed)
-            line.append(f"{wire.id:<34}")
+            line.append(f"{wire.id:<{column}}")
             line.append(wire.detail, style="dim")
             console.print(line)
     if shown.judged:
@@ -75,6 +78,14 @@ def render(cell: Cell, console: Console) -> None:
         f"{cell.judge_calls} call{'' if cell.judge_calls == 1 else 's'} "
         f"over {cell.runs} run{'' if cell.runs == 1 else 's'}[/dim]"
     )
+    # Resampling is never silent: a criterion the judge had to be asked twice for is
+    # ambiguous prose, and the SME can only reword what the report admits to.
+    resamples = sum(j.resamples for j in judged)
+    if resamples:
+        console.print(
+            f"  [dim]{resamples} repl{'y' if resamples == 1 else 'ies'} discarded as "
+            f"ungradable before one parsed[/dim]"
+        )
     console.print()
 
 

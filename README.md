@@ -4,8 +4,8 @@ Executable behavioral specs for LLM systems. A domain expert writes a prose crit
 A developer wires deterministic constraints under it. The runner executes the resulting
 cards against a provider × prompt matrix and reports pass rate, cost, and judge drift.
 
-> **Status: Phase 1, walking skeleton.** One card runs end to end against a recorded
-> trace. Everything else below — the provider matrix, coverage, calibration, drafting —
+> **Status: Phase 1, walking skeleton.** Five cards run end to end against recorded
+> traces. Everything else below — the provider matrix, coverage, calibration, drafting —
 > describes the target surface, not shipped behavior. Progress is tracked in
 > [milestones](https://github.com/jacquardlabs/specdeck/milestones), one per phase; the
 > product definition is in [PRODUCT.md](PRODUCT.md) and decisions land in
@@ -15,14 +15,14 @@ cards against a provider × prompt matrix and reports pass rate, cost, and judge
 
 ```console
 $ uv run specdeck run cards/basic-economy-return-change.md \
-    --trace cards/traces/run-01.otlp.json --runs 1 --pass-threshold 1
+    --trace cards/traces/basic-economy-return-change.otlp.json --runs 1 --pass-threshold 1
 
   gate     PASS   1/1 runs   (passes at 1)
   credit   4/4   (over 1 passing run)
 ```
 
-A τ-bench airline card, its wires evaluated against a raw OTLP export, its prose graded by
-a pinned judge replaying a recorded cassette. No API key, no network. The trace is a real
+One of five τ-bench airline cards, its wires evaluated against a raw OTLP export, its
+prose graded by a pinned judge replaying a recorded cassette. No API key, no network. The trace is a real
 OpenTelemetry GenAI export rather than a specdeck-shaped file, because an agent already
 emitting OTel needs no adapter.
 
@@ -58,8 +58,8 @@ prose block — that zone is the SME's.
 Runs in pre-commit and in CI, from the same command.
 
 Not yet: running the agent itself, the provider matrix, the definition-fed and
-prose-aware lint groups, and every pattern in the wire palette beyond `never`, `at_most`,
-and bounds.
+prose-aware lint groups, and the `eventually` and precedence patterns — the palette ships
+`never`, `at_most`, bounds, and after-K-then-Y.
 
 ## Why
 
@@ -133,3 +133,7 @@ Intent, not a claim about shipped behavior:
 ## License
 
 MIT. See [LICENSE](LICENSE).
+
+The demo cards under `cards/` derive from [τ-bench](https://github.com/sierra-research/tau-bench)
+(MIT, © 2024 Sierra) — the airline policy verbatim, the fixtures as slices, the scenario prose
+adapted from its task instructions. See [NOTICE](NOTICE).

@@ -19,3 +19,10 @@ repos:
         language: system
         files: ^cards/
         pass_filenames: false
+
+      - id: specdeck-traces
+        name: recorded traces regenerate
+        entry: python tools/make_traces.py --check
+        language: system
+        files: ^(cards/traces/|cards/fixtures/|tools/)
+        pass_filenames: false

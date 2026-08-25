@@ -6,8 +6,8 @@ anything; read [DECISIONS.md](DECISIONS.md) before proposing anything that contr
 
 **Repo state: Phase 1, walking skeleton.** `src/specdeck/` runs one card against a
 recorded trace: trace schema, property IR, lockfile, card parser, wires engine, trace
-input, judge step, cell runner, report, CLI. Not yet built: running the agent, the
-provider matrix, and lint.
+input, judge step, cell runner, report, lint, CLI. Not yet built: running the agent
+and the provider matrix.
 
 ## Non-negotiables
 

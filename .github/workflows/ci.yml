@@ -38,6 +38,9 @@ jobs:
       # The same command .pre-commit-config.yaml runs, so a card cannot be clean locally
       # and dirty in CI.
       - run: uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/vocabulary.txt
+      # The recorded traces are fixtures five cards depend on. --check proves they still
+      # regenerate, so a hand-edit or a schema change fails here rather than rotting.
+      - run: python tools/make_traces.py --check
 
   test:
     # Job name renders as "test (3.11)" / "test (3.12)". The ruleset's required

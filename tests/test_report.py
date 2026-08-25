@@ -4,7 +4,8 @@ import pytest
 from rich.console import Console
 
 from specdeck.card import parse_text
-from specdeck.cell import run_cell
+from specdeck.cell import Cell, Run, run_cell
+from specdeck.ir import Tier, Verdict
 from specdeck.report import render
 
 from .test_cell import CARD, conversation, record
@@ -82,3 +83,36 @@ class TestUntrustedText:
         )
         text = rendered(run_cell(card, traces, cassettes=tmp_path, n=1, k=1))
         assert "[/tmp]" in text
+
+
+class TestWireColumn:
+    """The label column is measured, not assumed. See #71."""
+
+    LONG = "after_3_non_agreement:transfer_to_human_agents"
+
+    def _cell(self, ids: list[str]) -> Cell:
+        wires = [
+            Verdict(id=i, tier=Tier.GATE, weight=0, passed=False, detail="k=3 reached") for i in ids
+        ]
+        return Cell(
+            card_path="cards/escalation.md",
+            title="escalate after repeated refusal",
+            runs=1,
+            threshold=1,
+            passes=0,
+            credit_mean=None,
+            credit_total=0,
+            judge_model="claude-sonnet-5",
+            judge_calls=0,
+            results=[Run(passed=False, wires=wires, judged=None, credit_earned=0)],
+        )
+
+    def test_an_id_past_the_old_fixed_column_keeps_its_separator(self) -> None:
+        # 45 characters against a hard-coded 34 printed `...human_agentsk=3 reached`.
+        text = rendered(self._cell([self.LONG, "latency"]))
+        assert f"{self.LONG}  k=3 reached" in text
+
+    def test_short_ids_stay_aligned_with_each_other(self) -> None:
+        text = rendered(self._cell(["latency", "never:cancel_reservation"]))
+        columns = [line.index("k=3 reached") for line in text.splitlines() if "k=3" in line]
+        assert len(set(columns)) == 1

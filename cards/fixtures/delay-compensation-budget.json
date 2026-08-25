@@ -1,0 +1,56 @@
+{
+  "users": {
+    "ethan_martin_2396": {
+      "name": {
+        "first_name": "Ethan",
+        "last_name": "Martin"
+      },
+      "address": {
+        "address1": "157 Willow Lane",
+        "address2": "Suite 744",
+        "city": "Dallas",
+        "country": "USA",
+        "state": "TX",
+        "zip": "75202"
+      },
+      "email": "ethan.martin2913@example.com",
+      "dob": "1963-05-18",
+      "payment_methods": {
+        "certificate_5449394": {
+          "source": "certificate",
+          "amount": 250,
+          "id": "certificate_5449394"
+        },
+        "gift_card_5853954": {
+          "source": "gift_card",
+          "amount": 71,
+          "id": "gift_card_5853954"
+        },
+        "certificate_7365778": {
+          "source": "certificate",
+          "amount": 100,
+          "id": "certificate_7365778"
+        },
+        "certificate_2942955": {
+          "source": "certificate",
+          "amount": 100,
+          "id": "certificate_2942955"
+        },
+        "credit_card_5447957": {
+          "source": "credit_card",
+          "brand": "mastercard",
+          "last_four": "8023",
+          "id": "credit_card_5447957"
+        }
+      },
+      "saved_passengers": [
+        {
+          "first_name": "Liam",
+          "last_name": "Johnson",
+          "dob": "1976-08-23"
+        }
+      ],
+      "membership": "silver"
+    }
+  }
+}
