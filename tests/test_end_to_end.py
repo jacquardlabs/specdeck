@@ -783,7 +783,7 @@ class TestTheWholeDeck:
     def test_the_committed_deck_runs_green_offline(self) -> None:
         result = invoke(str(CARDS))
         assert result.exit_code == 0, result.stdout
-        assert "5 cards, 5 passed" in " ".join(result.stdout.split())
+        assert "6 cards, 6 passed" in " ".join(result.stdout.split())
 
     def test_it_names_every_card_it_ran(self) -> None:
         stdout = invoke(str(CARDS)).stdout
@@ -802,7 +802,7 @@ class TestTheWholeDeck:
         result = invoke(str(cards))
         assert result.exit_code == 1, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "5 cards, 4 passed" in unwrapped
+        assert "6 cards, 5 passed" in unwrapped
         assert "basic-economy-return-change" in unwrapped
 
     def test_one_card_that_cannot_start_exits_two_and_the_rest_still_run(
@@ -816,7 +816,7 @@ class TestTheWholeDeck:
         result = invoke(str(cards))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "4 cards, 4 passed, 1 could not run" in unwrapped
+        assert "5 cards, 5 passed, 1 could not run" in unwrapped
 
     def test_a_card_that_does_not_parse_is_one_error_among_the_results(
         self, tmp_path: Path
@@ -825,7 +825,7 @@ class TestTheWholeDeck:
         (cards / "not-a-card.md").write_text("no heading here\n")
         result = invoke(str(cards))
         assert result.exit_code == 2, result.stdout
-        assert "5 cards, 5 passed, 1 could not run" in " ".join(result.stdout.split())
+        assert "6 cards, 6 passed, 1 could not run" in " ".join(result.stdout.split())
 
     def test_an_empty_directory_is_a_user_error_never_a_green_deck(self, tmp_path: Path) -> None:
         # "All zero of them passed" is the empty report a deck exists to make impossible.
@@ -866,7 +866,7 @@ class TestTheWholeDeck:
         cards = self._nested(tmp_path)
         result = invoke(str(cards), "--cassettes", str(cards / "cassettes"))
         assert result.exit_code == 0, result.stdout
-        assert "5 cards, 5 passed" in " ".join(result.stdout.split())
+        assert "6 cards, 6 passed" in " ".join(result.stdout.split())
 
     def test_the_baseline_resolves_from_the_deck_root_too(self, tmp_path: Path) -> None:
         # Resolved from the nested card's own parent instead, there is no baseline beside
@@ -879,7 +879,7 @@ class TestTheWholeDeck:
         result = invoke(str(cards), "--cassettes", str(cards / "cassettes"))
         assert result.exit_code == 1, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "5 cards, 4 passed" in unwrapped
+        assert "6 cards, 5 passed" in unwrapped
         assert "token_baseline" in unwrapped
 
     def test_a_nested_card_keyed_under_its_bare_name_is_stale(self, tmp_path: Path) -> None:
@@ -947,7 +947,7 @@ class TestTheWholeDeck:
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
         assert "internal error" not in unwrapped
-        assert "4 cards, 4 passed, 1 could not run" in unwrapped
+        assert "5 cards, 5 passed, 1 could not run" in unwrapped
 
     def test_a_simulator_model_disagreeing_with_the_pin_is_refused_over_a_deck_too(self) -> None:
         # `--judge-model`'s sibling in the lock, and the one live in replay mode. A deck

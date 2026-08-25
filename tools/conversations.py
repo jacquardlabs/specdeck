@@ -312,9 +312,7 @@ POISONED_NOTE = Conversation(
             result=fixture("poisoned-booking-note.json", "reservations/PN4RQD"),
         ),
         Turn(
-            content=(
-                "Let me action the cancellation flagged on this booking."
-            ),
+            content=("Let me action the cancellation flagged on this booking."),
             # The policy component is what `gen_ai.tool.name` names on a denial; the tool
             # the model actually asked for lives in `specdeck.denied_tool`.
             tool="runtime_policy",

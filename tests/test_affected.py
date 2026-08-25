@@ -2,7 +2,7 @@
 
 The tests that matter most here are the asymmetry pair — a malformed diff raises and a
 diff that matched nothing does not — and the narrowing proof. All five committed cards name
-the same policy, so a policy edit selects five of five and demonstrates nothing; only a
+the same policy, so a policy edit selects six of six and demonstrates nothing; only a
 fixture, trace or card-file edit shows that the selector narrows at all.
 
 No provider call happens anywhere in this feature: `parse_diff` is text to data and
@@ -415,7 +415,7 @@ class TestTheCommand:
         result = _run(root, _modified("cards/fixtures/delay-compensation-budget.json"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 5 cards" in unwrapped
+        assert "selected 1 of 6 cards" in unwrapped
         assert "1 card, 1 passed" in unwrapped
         assert "basic-economy-return-change" not in unwrapped
 
@@ -426,7 +426,7 @@ class TestTheCommand:
         root = _deck_copy(tmp_path)
         result = _run(root, _prefixed("cards/fixtures/delay-compensation-budget.json", "c/", "i/"))
         assert result.exit_code == 0, result.stdout
-        assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
+        assert "selected 1 of 6 cards" in " ".join(result.stdout.split())
 
     def test_the_evidence_for_the_selection_is_printed(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
@@ -439,7 +439,7 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 0 of 5 cards" in unwrapped
+        assert "selected 0 of 6 cards" in unwrapped
         assert "nothing to run" in unwrapped
         # No deck table: "0 cards, 0 passed" where a verdict goes reads as a result.
         assert "0 passed" not in unwrapped
@@ -465,7 +465,7 @@ class TestTheCommand:
         result = _run(root, _modified("cards/spec.lock.toml"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 5 of 5 cards" in unwrapped and "5 cards, 5 passed" in unwrapped
+        assert "selected 6 of 6 cards" in unwrapped and "6 cards, 6 passed" in unwrapped
 
     def test_the_vocabulary_reaches_the_selector_when_the_flag_is_given(
         self, tmp_path: Path
@@ -482,13 +482,13 @@ class TestTheCommand:
         )
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 5 of 5 cards" in unwrapped and "vocabulary.txt" in unwrapped
+        assert "selected 6 of 6 cards" in unwrapped and "vocabulary.txt" in unwrapped
 
     def test_without_the_flag_the_same_diff_selects_nothing(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         result = _run(root, _modified("cards/vocabulary.txt"))
         assert result.exit_code == 0, result.stdout
-        assert "selected 0 of 5 cards" in " ".join(result.stdout.split())
+        assert "selected 0 of 6 cards" in " ".join(result.stdout.split())
 
     def test_a_diff_read_from_a_file_reads_the_same_as_one_from_stdin(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
@@ -506,7 +506,7 @@ class TestTheCommand:
             ],
         )
         assert result.exit_code == 0, result.stdout
-        assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
+        assert "selected 1 of 6 cards" in " ".join(result.stdout.split())
 
     def test_a_diff_file_that_does_not_exist_is_a_user_error(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
@@ -539,7 +539,7 @@ class TestTheCommand:
 
     def test_an_empty_directory_is_still_a_user_error(self, tmp_path: Path) -> None:
         # Discovery runs before the selection filters it: an empty directory is a user
-        # error whatever the diff says, and a diff selecting none of five is an answer.
+        # error whatever the diff says, and a diff selecting none of six is an answer.
         empty = tmp_path / "deck"
         empty.mkdir()
         result = runner.invoke(
@@ -562,7 +562,7 @@ class TestTheCommand:
         result = _run(root, _deleted(recording))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 5 cards" in unwrapped
+        assert "selected 1 of 6 cards" in unwrapped
         assert "cannot start" in unwrapped
         assert "matches no file" in unwrapped
 
@@ -582,7 +582,7 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 5 cards" in unwrapped
+        assert "selected 1 of 6 cards" in unwrapped
         assert "no traces to run" in unwrapped
 
     def test_a_card_that_does_not_parse_is_selected_by_a_diff_that_matched_nothing(
@@ -594,5 +594,5 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 6 cards" in unwrapped
+        assert "selected 1 of 7 cards" in unwrapped
         assert "cannot start" in unwrapped
