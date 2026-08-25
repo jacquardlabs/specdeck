@@ -130,6 +130,18 @@ class TestLoad:
         Baseline().record("a.md", 100).save(path)
         assert Baseline.load(path).get("a.md") == 100
 
+    def test_a_card_path_outside_ascii_survives_the_round_trip_as_utf_8(
+        self, tmp_path: Path
+    ) -> None:
+        # TOML is defined as UTF-8 and every card path here is a key. Left to the locale,
+        # a key like this raises `UnicodeEncodeError` out of the writer on a latin-1 host —
+        # a `ValueError`, so it escapes the caller's `OSError` catch as exit 1, the code a
+        # card that honestly failed uses.
+        path = tmp_path / BASELINE_NAME
+        Baseline().record("cards/réservation.md", 100).save(path)
+        assert "réservation.md".encode() in path.read_bytes()
+        assert Baseline.load(path).get("cards/réservation.md") == 100
+
 
 class TestTheStatistic:
     def test_it_is_the_median_not_the_mean(self) -> None:

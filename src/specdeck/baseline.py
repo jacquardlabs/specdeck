@@ -91,12 +91,17 @@ class Baseline(BaseModel):
         if not path.exists():
             return cls()
         try:
-            return cls.from_toml(path.read_text())
+            return cls.from_toml(path.read_text(encoding="utf-8"))
         except (tomllib.TOMLDecodeError, ValueError, OSError) as error:
             raise BaselineError(f"cannot read the baseline at {path}: {error}") from None
 
     def save(self, path: Path | str) -> None:
-        Path(path).write_text(self.to_toml())
+        # UTF-8 named at both ends rather than left to the locale. TOML is defined as
+        # UTF-8, and every card path in this file is a key: one carrying a character the
+        # host's default cannot encode would raise `UnicodeEncodeError` out of the writer,
+        # which is a `ValueError` and so lands outside `_write_baseline`'s `OSError` catch
+        # — exit 1, the same code as a card that honestly failed (#56).
+        Path(path).write_text(self.to_toml(), encoding="utf-8")
 
     @classmethod
     def from_toml(cls, text: str) -> Baseline:
