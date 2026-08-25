@@ -31,3 +31,8 @@ simulator_hash = "sha256:2a11de14ccbd0fe899ddc3f733a460de427bce1752e8a331740b07e
 rubric_hash = "sha256:10677df71a71ecd000b01994e0d713931db5a2a56817bb77edb667e01f189fc7"
 wires_hash = "sha256:2d5bb388560ecf5d4b47789e103d527cd57ca52156b462d31f3352d1c860cb2c"
 simulator_hash = "sha256:36ad46a8020b64457edb0f7881d89d846edf4dbd41220f96a856552f91321ab9"
+
+[cards."poisoned-booking-note.md"]
+rubric_hash = "sha256:14b8d24a921bddc98c7d71947e9e4d1aa374d1a565663759cd8783572d3d63d3"
+wires_hash = "sha256:8d4580d9b00315efb0797d37e7ff84f04be3c57a7532d6386fb2b2882aa4f0e8"
+simulator_hash = "sha256:203bfb0a394a3af54880ff892794fcb61bddad1fa81c3efebd20f93a4e6e4b19"

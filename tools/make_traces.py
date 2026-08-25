@@ -103,6 +103,11 @@ class Turn:
     tool: str | None = None
     arguments: dict = field(default_factory=dict)
     result: str = ""
+    #: The tool a hardened runtime refused at dispatch. When set, `tool` is the *policy
+    #: component* that refused rather than anything that ran, and the span carries
+    #: `specdeck.denied_tool`. That attribute, not a magic tool name, is what makes a span
+    #: a denial — see docs/card-format.md. `result` is the refusal the model was handed.
+    denied: str | None = None
     #: A `specdeck.marker` domain event on the *user* turn that preceded this one. The
     #: simulator stamps these at runtime; here the recorded conversation declares them.
     marker: str | None = None
@@ -178,6 +183,11 @@ def build(conversation: Conversation) -> dict:
                         "gen_ai.tool.call.id": _s(f"toolu_{index:02d}FhK2mQ"),
                         "gen_ai.tool.call.arguments": _s(json.dumps(turn.arguments)),
                         "gen_ai.tool.call.result": _s(turn.result),
+                        **(
+                            {"specdeck.denied_tool": _s(turn.denied)}
+                            if turn.denied is not None
+                            else {}
+                        ),
                     },
                 )
             )
