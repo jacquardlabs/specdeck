@@ -8,8 +8,10 @@ conditional on pass, and beneath them variance, latency p50/p95 and a dollar est
 ([#52](https://github.com/jacquardlabs/specdeck/issues/52)), with the two ported waste
 classifiers ([#23](https://github.com/jacquardlabs/specdeck/issues/23)). So do the token
 baseline and the JUnit report ([#17](https://github.com/jacquardlabs/specdeck/issues/17),
-[#18](https://github.com/jacquardlabs/specdeck/issues/18)). Coverage, mutation scoring, and
-the calibration ledger do not. See [DECISIONS.md](../DECISIONS.md).
+[#18](https://github.com/jacquardlabs/specdeck/issues/18)). So does coverage, behind
+`specdeck coverage`: the policy inventory, the vocabulary table, and path coverage at the
+introspection depth reached. Mutation scoring and the calibration ledger do not. See
+[DECISIONS.md](../DECISIONS.md).
 
 ## The cell
 
@@ -187,13 +189,34 @@ Runtime denominators, each landing in its own phase:
 
 | Denominator | Phase | What it counts |
 |---|---|---|
-| **Policy** | 2 | Clauses extracted from the policy documents named in `context`, reported as clauses × cards. |
-| **Vocabulary** | 2 | Tools with no wire and no exercising scenario. |
-| **Path** | 2–3 | Agent-graph edges no run has ever hit. |
+| **Policy** | 2 | Clauses extracted from the policy documents named in `context`, reported as an **inventory** — count per document, count per section, and any document no card names. Not clauses × cards: see below. |
+| **Vocabulary** | 2 | Tools with no wire and no exercising scenario, against the declared vocabulary. |
+| **Path** | 2 | Agent-graph edges no run has ever hit, at the introspection depth actually reached. |
 | **Production intent** | 4–5 | Clusters over ingested OTLP production traces, mapped to cards. Uncovered intents feed the `specdeck draft` queue. |
 
+`specdeck coverage [PATHS] --vocabulary <file> --trace <file>` prints all three, each as
+its own table. Traces are pooled across the deck, so the vocabulary and path tables answer
+a suite-level question and cannot say *which* card exercised what; that waits on
+[#70](https://github.com/jacquardlabs/specdeck/issues/70). `specdeck run` prints the path
+table for the run it just did, and not the other two — a single card cannot answer a
+suite-level denominator, and printing "1 of 14 tools wired" for one card would read as 7%
+coverage of a five-card deck.
+
+Every table names what it could not see rather than reporting 0% or 0 of 0: no vocabulary
+means no denominator, no traces means exercising was not checked, and a policy document
+written as paragraphs has no clauses to count.
+
+**The policy table is an inventory, not a matrix.** The shape above once read "clauses ×
+cards", and no predicate exists that decides a card exercises a *clause*: a card's `context`
+names a document. The only attribution available today is document-level, which would put
+an identical mark in every cell of a document's rows and be misread as per-clause
+attribution. The matrix is deferred until a predicate exists, and the clause count is a
+denominator you read rather than a matrix you fill. Recorded 2026-08-25.
+
 **Coverage percentages never gate CI.** The one exception is the per-feature definition
-obligations, which are binary and cannot be gamed by adding cards.
+obligations, which are binary and cannot be gamed by adding cards. `specdeck coverage`
+exits 0 on any computed result — 2 for a broken input, 3 if specdeck itself breaks, never
+a code derived from a figure — and there is deliberately no `--fail-under`.
 
 ## Mutation score
 

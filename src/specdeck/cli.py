@@ -29,17 +29,18 @@ from specdeck.cell import (
     run_cell,
     run_cell_async,
 )
+from specdeck.coverage import CoverageError, collect
 from specdeck.introspect import Introspection, introspect
 from specdeck.judge import DEFAULT_JUDGE_MODEL, JudgeError, criteria_of, rubric_text
 from specdeck.junit import to_xml
-from specdeck.lint import Result, Severity, Vocabulary, lint_paths
+from specdeck.lint import Result, Severity, Vocabulary, cards_under, lint_paths
 from specdeck.lockfile import LOCKFILE_NAME, RELOCK_HINT, Lockfile, StaleLock, lock_key
 from specdeck.loop import DEFAULT_MAX_TURNS, LoopError, run_agent
 from specdeck.matrix import Column, MatrixError, cell_key, columns, load_matrix
 from specdeck.matrix_run import DEFAULT_MATRIX_CONCURRENCY, MatrixResult, Status, run_matrix
 from specdeck.provider import ProviderError
 from specdeck.rates import RATES_FILE, RateError, Rates, load_rates
-from specdeck.report import depth_line, render, render_matrix
+from specdeck.report import depth_line, render, render_coverage, render_matrix
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
 from specdeck.traceio import TraceError, load_trace
@@ -76,6 +77,7 @@ USER_ERRORS = (
     BudgetError,
     CardError,
     CellError,
+    CoverageError,
     JudgeError,
     LoopError,
     MatrixError,
@@ -898,6 +900,45 @@ def lint(
 
     _render_lint(result, console)
     raise typer.Exit(0 if result.ok else 1)
+
+
+@app.command()
+def coverage(
+    paths: list[Path] = typer.Argument(None, help="Cards, or directories holding them."),  # noqa: B008
+    vocabulary_path: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--vocabulary",
+        help="Declared tools. Without it the vocabulary table reports itself blind.",
+    ),
+    trace: list[Path] = typer.Option(  # noqa: B008
+        None, "--trace", help="A recorded event log. Repeat; traces are pooled across the deck."
+    ),
+) -> None:
+    """Report the coverage denominators. Zero tokens, no network, always exits 0."""
+    # The exit code carries no coverage information at all, in either direction — this
+    # command exits 0 on any computed result, whatever the numbers say. DECISIONS.md,
+    # 2026-08-15: coverage percentages never gate CI. There is deliberately no
+    # `--fail-under`, no `--min-coverage` and no `--strict`; adding one would be a
+    # decision, not a feature. The binary definition obligations are the one carve-out and
+    # they live behind `specdeck lint`, which does gate.
+    console = Console()
+    try:
+        cards = [parse(path) for path in cards_under(paths or [Path("cards")])]
+        found = collect(
+            cards,
+            vocabulary=_vocabulary(vocabulary_path),
+            traces=[load_trace(path) for path in trace or []],
+        )
+    except USER_ERRORS as error:
+        _fail(console, error)
+        raise typer.Exit(2) from None
+    except Exception as error:
+        console.print(f"[red]internal error[/red] {type(error).__name__}: {error}")
+        raise typer.Exit(3) from None
+
+    render_coverage(found, console)
+    console.print()
+    raise typer.Exit(0)
 
 
 @app.command()

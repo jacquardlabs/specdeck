@@ -28,6 +28,7 @@ from rich.text import Text
 
 from . import stats
 from .cell import Cell, Run
+from .coverage import Coverage, PolicyDocument, VocabularyTable
 from .introspect import Introspection
 from .judge import JudgeResult
 from .matrix_run import ColumnResult, MatrixResult, Status
@@ -112,6 +113,93 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
         )
     _waste(cell, console)
     console.print()
+
+
+def render_coverage(coverage: Coverage, console: Console) -> None:
+    """The coverage denominators, each table on its own and never blended into one number.
+
+    Printed after `render` rather than inside it. Coverage is not a scored figure and must
+    not sit beside the two that are: measurement.md keeps the tiers apart, and a percentage
+    printed under "gate" and "credit" would be read as a third verdict.
+
+    A table that is `None` is not printed at all — this invocation did not ask that
+    question. A table that is present but blind prints its blindness, because "we did not
+    check" and "we checked and found nothing" are the two facts a reader must never have to
+    guess between.
+    """
+    if coverage.policy is not None:
+        _policy_coverage(coverage.policy, console)
+    if coverage.vocabulary is not None:
+        _vocabulary_coverage(coverage.vocabulary, console)
+
+
+def _policy_coverage(documents: list[PolicyDocument], console: Console) -> None:
+    """The clause inventory. Deliberately not a clauses x cards matrix — see coverage.py."""
+    console.print("\n  [dim]policy coverage[/dim]")
+    if not documents:
+        console.print(_figure("", "no card names a policy document, so there is nothing to count"))
+        return
+    for document in documents:
+        # The path, the headings and the clause text all come out of a user-supplied file,
+        # so every one of them reaches the console as Text rather than as markup.
+        line = Text("    ")
+        line.append(document.path)
+        if document.blind:
+            line.append(f"   {document.blind}", style="yellow")
+            console.print(line)
+            continue
+        line.append(f"   {_plural(len(document.clauses), 'clause')}", style="dim")
+        console.print(line)
+        for section in document.sections:
+            entry = Text("      ")
+            entry.append(f"{section.section or '(preamble)':<24}", style="dim")
+            entry.append(_plural(section.clauses, "clause"), style="dim")
+            console.print(entry)
+        named = Text("      ")
+        if document.cards:
+            named.append(f"named by {_plural(len(document.cards), 'card')}", style="dim")
+        else:
+            # The one deterministic uncovered signal this table can give today.
+            named.append("named by no card — nothing in this deck exercises it", style="yellow")
+        console.print(named)
+    console.print(
+        Text(
+            "    clause-to-card attribution is not reported: a card's `context` names a "
+            "document, not clauses, so no per-clause predicate exists yet",
+            style="dim",
+        )
+    )
+
+
+def _vocabulary_coverage(table: VocabularyTable, console: Console) -> None:
+    """One row per declared tool: which cards wire it, and whether any run ran it."""
+    console.print("\n  [dim]vocabulary coverage[/dim]")
+    if table.blind:
+        console.print(_figure("", table.blind))
+        return
+    if not table.rows:
+        console.print(_figure("", "the declared vocabulary names no tools"))
+        return
+    width = max(len(row.tool) for row in table.rows) + 2
+    for row in table.rows:
+        line = Text("    ")
+        # An uncovered row is the one a reader is here for, so it is the one that is not dim.
+        uncovered = not row.wired_by and not row.exercised
+        line.append(f"{row.tool:<{width}}", style="yellow" if uncovered else None)
+        wired = f"wired by {len(row.wired_by)}" if row.wired_by else "no wire"
+        exercised = "exercised" if row.exercised else "not exercised"
+        line.append(f"{wired}, {exercised}", style="dim")
+        console.print(line)
+    uncovered = [row.tool for row in table.rows if not row.wired_by and not row.exercised]
+    console.print(
+        _figure(
+            "",
+            f"{len(uncovered)} of {_plural(len(table.rows), 'declared tool')} have neither a "
+            f"wire nor an exercising run",
+        )
+    )
+    if table.traces_blind:
+        console.print(_figure("", table.traces_blind))
 
 
 def _plural(n: int, noun: str) -> str:

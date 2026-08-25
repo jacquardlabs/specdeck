@@ -118,7 +118,7 @@ def criteria_of(card: Card) -> list[Criterion]:
     for entry in card.credit_criteria:
         criteria.append(
             Criterion(
-                id=_unique(_slug(entry.text), seen),
+                id=_unique(slug(entry.text), seen),
                 text=entry.text,
                 tier=Tier.CREDIT,
                 weight=entry.weight,
@@ -406,9 +406,14 @@ async def _call(prompt: str, model: str, *, budget: Budget | None = None) -> Com
 SLUG_MAX = 48
 
 
-def _slug(text: str) -> str:
+def slug(text: str) -> str:
     """A stable id. Truncated at a word boundary — a slug cut mid-word reads as a typo
-    to the judge that has to echo it back, and to anyone reading a report."""
+    to the judge that has to echo it back, and to anyone reading a report.
+
+    Public because the project has one slug rule and the coverage report needs it for
+    policy section ids. Its `"criterion"` fallback belongs to the judge; a caller with a
+    different empty case supplies its own before calling.
+    """
     words = re.sub(r"[^a-z0-9]+", "_", text.lower()).strip("_").split("_")
     slug = ""
     for word in words:
