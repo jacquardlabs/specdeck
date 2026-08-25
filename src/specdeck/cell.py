@@ -141,6 +141,7 @@ async def run_cell_async(
                 cassettes=cassettes,
                 judge_model=judge_model,
                 live=live,
+                slug=card.slug,
             )
 
     results = list(await asyncio.gather(*(one(trace) for trace in traces)))
@@ -183,6 +184,7 @@ async def _run(
     cassettes: Path | str,
     judge_model: str,
     live: bool,
+    slug: str = "",
 ) -> Run:
     # 1. Gate wires. Free, and a failure here means the judge is never called.
     wire_verdicts = evaluate_all(gate_wires, trace)
@@ -191,7 +193,13 @@ async def _run(
 
     # 2. Gate criteria.
     judged = await judge(
-        criteria, trace, policy=policy, cassettes=cassettes, model=judge_model, live=live
+        criteria,
+        trace,
+        policy=policy,
+        cassettes=cassettes,
+        model=judge_model,
+        live=live,
+        slug=slug,
     )
     if not judged.gate_passed:
         return Run(passed=False, wires=wire_verdicts, judged=judged, credit_earned=0)

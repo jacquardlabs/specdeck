@@ -49,6 +49,12 @@ class Card(BaseModel):
     credit_criteria: list[Weighted]
 
     @property
+    def slug(self) -> str:
+        """The card's stem, which names its recordings. `<card>` for parsed text with no
+        file behind it, so an in-memory card still keys somewhere rather than crashing."""
+        return Path(self.path).stem or "card"
+
+    @property
     def policy_path(self) -> Path | None:
         """The policy document, resolved against the card that names it."""
         return self._contained(self.context.policy, "policy")

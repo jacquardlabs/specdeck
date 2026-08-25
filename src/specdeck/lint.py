@@ -7,9 +7,11 @@ say so when they do not have one.
 
 Two rules govern the rest:
 
-*Never style-police the SME zone.* No rule here reads the content of the prose block. Its
-presence is structure and is checkable; its wording is the SME's, and a linter with an
-opinion about it is a linter they will turn off.
+*Never style-police the SME zone.* No rule here has an opinion about how the SME writes.
+There is exactly one rule that reads inside the prose block, `card-mechanics`, and it is
+not a style rule: prose describing the card's own pass/fail machinery reproducibly makes
+the judge return commentary instead of verdicts, so the run fails to grade at all. See
+DECISIONS.md, 2026-08-24. Everything else about wording is theirs.
 
 *A check that silently degrades is worse than one that reports its own blindness.* A rule
 without the data it needs emits a SKIPPED finding naming what was missing, rather than
@@ -18,6 +20,7 @@ passing quietly and letting a clean report mean two different things.
 
 from __future__ import annotations
 
+import re
 from collections import Counter
 from enum import StrEnum
 from pathlib import Path
@@ -81,9 +84,11 @@ class Vocabulary(BaseModel):
 def lint_paths(
     paths: list[Path], *, lock: Lockfile | None = None, vocabulary: Vocabulary | None = None
 ) -> Result:
+    cards = _cards(paths)
     findings: list[Finding] = []
-    for card_path in _cards(paths):
+    for card_path in cards:
         findings += lint_card(card_path, lock=lock, vocabulary=vocabulary)
+    findings += _cassettes(cards)
     return Result(findings=findings)
 
 
@@ -99,6 +104,7 @@ def lint_card(
         return [Finding(rule="parse", severity=Severity.ERROR, card=name, message=str(error))]
 
     findings = _structure(card, name)
+    findings += _card_mechanics(card, name)
     findings += _dead_paths(card, name)
     properties, wire_findings = _wires(card, name)
     findings += wire_findings
@@ -126,6 +132,54 @@ def _structure(card: Card, name: str) -> list[Finding]:
             message=(
                 "no prose block: nothing for the judge to grade and nothing to hash into "
                 "the lockfile. A prose-only card is legal; a wires-only card may not be."
+            ),
+        )
+    ]
+
+
+#: Prose that talks about the card's own grading machinery rather than the behaviour being
+#: graded. Not a style list: each of these was observed making a judge slide into
+#: commentary, returning a reply with no verdict for the criterion it was asked about.
+#: Kept narrow on purpose — the risk of a rule that reads the SME's zone is that it grows.
+_MECHANICS = (
+    (re.compile(r"\bthis card\b", re.I), "refers to the card itself"),
+    (re.compile(r"\b(?:do not|don't|never)\s+fail\b", re.I), "instructs the judge how to grade"),
+    (re.compile(r"\bfails?\s+only\s+if\b", re.I), "states a pass/fail condition"),
+    (re.compile(r"\b(?:should|must)\s+(?:pass|fail)\b", re.I), "states a pass/fail verdict"),
+    (re.compile(r"\bmark(?:ed)?\s+(?:as\s+)?(?:pass|fail)\w*\b", re.I), "asks for a verdict"),
+    (re.compile(r"\b(?:gate|credit)\s+(?:tier|check|wire)\b", re.I), "names specdeck's own tiers"),
+)
+
+#: Three or more consecutive capitalised words. ALL-CAPS emphasis showed up in every
+#: reproduction alongside the phrases above, and on its own it is the one signal here that
+#: could plausibly be ordinary prose — an airline card may legitimately say IAH or JFK —
+#: so the run has to be long enough not to fire on a pair of airport codes.
+_SHOUTING = re.compile(r"(?:\b[A-Z]{2,}\b[^\w\n]+){2,}\b[A-Z]{2,}\b")
+
+
+def _card_mechanics(card: Card, name: str) -> list[Finding]:
+    """Prose about the card's machinery, which measurably breaks grading.
+
+    The only rule that reads inside the SME's block, and it earns that by not being about
+    style: rewriting such a criterion as plain declarative expected behaviour fixed the
+    grading on the first sample, where two live judge calls had failed before it. It warns
+    rather than errors — it is a strong signal, not a certainty, and the SME's words are
+    still theirs to keep.
+    """
+    hits = [why for pattern, why in _MECHANICS if pattern.search(card.prose)]
+    if _SHOUTING.search(card.prose):
+        hits.append("shouts in capitals")
+    if not hits:
+        return []
+    return [
+        Finding(
+            rule="card-mechanics",
+            severity=Severity.WARNING,
+            card=name,
+            message=(
+                f"prose {', and '.join(hits)}. Language about how the card is scored makes "
+                "the judge answer with commentary instead of a verdict, and an ungraded "
+                "criterion fails closed. Describe the behaviour expected of the agent."
             ),
         )
     ]
@@ -314,6 +368,73 @@ def _lockfile(card: Card, name: str, lock: Lockfile | None) -> list[Finding]:
     except StaleLock as error:
         return [Finding(rule="stale-lock", severity=Severity.ERROR, card=name, message=str(error))]
     return []
+
+
+CASSETTE_DIR = "cassettes"
+_KINDS = ("judge-", "simulator-")
+
+
+def _cassettes(cards: list[Path]) -> list[Finding]:
+    """Recordings in `cassettes/` that no card owns.
+
+    Every prose edit re-keys the prompt and strands the recording it was keyed on, silently
+    — three failed pinning iterations on one card leave three dead files, and at thirty
+    cards under iteration the directory is a landfill nothing collects (#69).
+
+    Nothing is deleted here. CLAUDE.md makes cassettes the substrate for the Phase-3
+    mutation runner, so an orphan is a fixture with a second job rather than garbage, and
+    a linter that removes one is a linter that removes evidence.
+    """
+    slugs = {path.stem for path in cards}
+    findings: list[Finding] = []
+    seen_directory = False
+    for directory in sorted({path.parent / CASSETTE_DIR for path in cards}):
+        if not directory.is_dir():
+            continue
+        seen_directory = True
+        for recording in sorted(directory.glob("*.json")):
+            slug, _, rest = recording.name.partition(".")
+            name = str(recording)
+            if not rest.startswith(_KINDS):
+                findings.append(
+                    Finding(
+                        rule="orphan-cassette",
+                        severity=Severity.WARNING,
+                        card=name,
+                        message=(
+                            "cassette names no card. Recordings are "
+                            "`<card>.judge-<hash>.json`; a bare hash cannot be traced back "
+                            "to what replays it. Re-record, or rename it after its card."
+                        ),
+                    )
+                )
+            elif slug not in slugs:
+                findings.append(
+                    Finding(
+                        rule="orphan-cassette",
+                        severity=Severity.WARNING,
+                        card=name,
+                        message=(
+                            f"cassette is owned by {slug!r}, which is not a card here. "
+                            "Either the card was renamed or removed, or this recording "
+                            "outlived the prompt it was keyed on."
+                        ),
+                    )
+                )
+    if seen_directory:
+        findings.append(
+            Finding(
+                rule="orphan-cassette",
+                severity=Severity.SKIPPED,
+                card=CASSETTE_DIR,
+                message=(
+                    "a cassette whose card still exists but whose prompt has moved cannot "
+                    "be detected without the trace that produced it. Traces are declared "
+                    "per card in #70; until then this rule sees ownership, not staleness."
+                ),
+            )
+        )
+    return findings
 
 
 def _cards(paths: list[Path]) -> list[Path]:

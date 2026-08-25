@@ -60,6 +60,7 @@ async def run_agent(
             cassettes=cassettes,
             model=simulator_model,
             live=live,
+            slug=card.slug,
         )
         # The marker lands on the agent turn the user is answering, which is the span it
         # describes: "the traveller did not accept *that*". On the opening turn there is

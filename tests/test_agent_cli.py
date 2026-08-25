@@ -80,7 +80,7 @@ def workspace(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         )
     )
     criteria = criteria_of(card)
-    Cassette(cassettes).write(
+    Cassette(cassettes, slug=card.slug).write(
         judge_prompt(criteria, trace, policy=""),
         MODEL,
         json.dumps({"verdicts": {c.id: True for c in criteria}}),

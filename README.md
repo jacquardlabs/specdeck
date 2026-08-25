@@ -68,9 +68,13 @@ $ uv run specdeck lint cards --lock cards/spec.lock.toml --vocabulary cards/voca
 
 Zero tokens, no network. Checks structure, dead fixture and policy paths, lockfile
 freshness, wire syntax, and contradictory or redundant wires; with a tool vocabulary it
-also catches wires naming a tool that does not exist. A rule that lacks the data it needs
-reports itself **skipped** rather than passing quietly. It never reads the content of the
-prose block — that zone is the SME's.
+also catches wires naming a tool that does not exist, and it reports cassettes no card
+owns. A rule that lacks the data it needs reports itself **skipped** rather than passing
+quietly.
+
+One rule reads inside the prose block and only one: prose describing the card's own
+pass/fail machinery makes the judge answer with commentary instead of a verdict. It warns.
+Nothing else about the SME's wording is lint's business.
 
 Runs in pre-commit and in CI, from the same command.
 

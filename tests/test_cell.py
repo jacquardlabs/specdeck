@@ -52,7 +52,7 @@ def record(tmp_path: Path, card, traces, verdicts: dict, reasons: dict | None = 
 
     for one in traces:
         prompt = build_prompt(criteria_of(card), one, policy="")
-        Cassette(tmp_path).write(
+        Cassette(tmp_path, slug=card.slug).write(
             prompt,
             model="claude-sonnet-5",
             response=json.dumps({"verdicts": verdicts, "reasons": reasons or {}}),

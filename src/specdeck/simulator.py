@@ -127,10 +127,11 @@ async def turn(
     cassettes: Path | str,
     model: str,
     live: bool = False,
+    slug: str = "",
 ) -> Turn:
     """One simulated-user turn, replayed from a cassette unless `--live`."""
     prompt = build_prompt(intent, transcript, markers)
-    cassette = Cassette(cassettes, kind="simulator")
+    cassette = Cassette(cassettes, kind="simulator", slug=slug)
     recorded = cassette.read(prompt, model)
 
     if recorded is None and not live:
