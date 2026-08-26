@@ -285,13 +285,44 @@ agent under test can be any vendor — `examples/payable/agent.py` speaks both t
 and OpenAI APIs — while specdeck's own judge and simulator stay on one provider. Your agent
 is your code; that's what the adapter protocol is for.
 
-`gpt-5-nano` is $0.05 per million input tokens against `claude-opus-5`'s $5.00. If it holds
-every card, that's the answer, and it's a hundredfold difference nobody would take on
-faith. It's also the command to run the morning a new model ships: the deck already says
-what correct means, so the only open question is whether the new one still does it and what
-it costs.
+Here's what it printed:
 
-The first time I ran that sweep it stopped after two columns:
+```
+          opus-5      sonnet-5    gpt-5-mini   gpt-4o-mini   gpt-5-nano
+policy    PASS        PASS        PASS         PASS          error
+          gate 5/5    gate 5/5    gate 5/5     gate 5/5
+          credit 4/4  credit 4/4  credit 4/4   credit 3/4
+
+  spent    ~$1.5389 estimate (rates as of 2026-08-24), 5 columns
+  cap      $4, hard
+```
+
+**`gpt-4o-mini` holds the card five times out of five.** It's $0.15 and $0.60 per million
+input and output tokens, against `claude-opus-5`'s $5.00 and $25.00 — 33 times cheaper on
+input, 42 on output, same gate result. It drops one credit point, so the control holds and
+the polish is a little worse. That's a decision somebody can actually make, and it took
+$1.54 and about ten minutes to have it.
+
+That's the whole argument for the matrix. Not that the expensive model is unnecessary —
+maybe the credit point matters for your product — but that the question stopped being a
+matter of opinion.
+
+Two things it also found, which is why I'm showing you the real output rather than a tidy
+version of it.
+
+**The cheapest column didn't grade.** `gpt-5-nano` came back
+`UngradableReply: the judge's JSON did not parse`. The judge is `claude-sonnet-5` in every
+column, so that's our measuring instrument failing, not their model — and it failed on
+exactly the column whose answer was most interesting. It's
+[#113](https://github.com/jacquardlabs/specdeck/issues/113), it happens about one cell in
+fifty, and the cause is still unknown. A figure this repo publishes carries that.
+
+**And the grid doesn't print what each column cost.** Look again: there's a total at the
+bottom and nothing per column. I worked out the 33× by hand from `specdeck rates` and a
+calculator, for a report whose entire subject is cost
+([#115](https://github.com/jacquardlabs/specdeck/issues/115)).
+
+The first time I ran this sweep it stopped after two columns:
 
 ```
 gpt-5-mini/policy: PayableAgent called gpt-5-mini-2025-08-07, which the rate
@@ -300,9 +331,9 @@ guards a model nobody ran is not a cap.
 ```
 
 OpenAI replies name a dated snapshot for a request that said `gpt-5-mini`, and the rate
-table's dated-id rule only understood Anthropic's `-20260514`. The cap refused to price a
-model nobody declared, which is exactly what a hard cap is for. Two bugs, found by the
-guard rather than by me.
+table's dated-id rule only understood Anthropic's `-20260514`. Two bugs, found by the guard
+rather than by me, and the cap refusing to price a model nobody declared is exactly what a
+hard cap is for.
 
 ## The backlog
 
@@ -314,6 +345,8 @@ guard rather than by me.
   overwrite each other ([#112](https://github.com/jacquardlabs/specdeck/issues/112))
 - Denial spans still count as executions in coverage and waste
   ([#91](https://github.com/jacquardlabs/specdeck/issues/91))
+- The matrix prints a total and no per-column cost, which is half the question it exists
+  to answer ([#115](https://github.com/jacquardlabs/specdeck/issues/115))
 
 ## The verdict
 
@@ -321,6 +354,10 @@ For an agent that touches money, or access, or anything you'd have to explain af
 I'd now write the cards first and the prompt second. Not because the model is unreliable —
 it got the famous rule right with no help at all — but because the rules that are actually
 yours are the ones nothing else can know, and the failure they produce is the quiet kind.
+
+The deck cost about two dollars to build and pennies to re-run, and it ended by saying a
+model at a thirty-third of the price holds the same line. I'd take that trade before I'd
+take a second opinion on it.
 
 ## Next
 
