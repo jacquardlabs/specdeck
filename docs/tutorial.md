@@ -46,6 +46,7 @@ same one so the spec and the agent can't disagree about what's on the desk:
 
 ```console
 $ jq '.invoices["INV-5541"], .purchase_orders["PO-77655"]' cards/fixtures/data.json
+  # or just open cards/fixtures/data.json — it is four kilobytes
 {
   "invoice_id": "INV-5541",
   "vendor_id": "V-4501",
@@ -129,19 +130,33 @@ Full card: [`cards/over-threshold-second-approval.md`](../cards/over-threshold-s
 
 ## Get a run to look at
 
-Point the card at your agent once, live, and keep what comes back:
+Point the card at your agent, live, and keep what comes back:
 
 ```console
-$ specdeck run cards/over-threshold-second-approval.md \
+$ mkdir -p /tmp/first-run
+$ PYTHONPATH=. uv run specdeck run cards/over-threshold-second-approval.md \
     --agent examples.payable.agent:naive \
     --vocabulary cards/vocabulary.txt \
-    --save-trace cards/traces \
+    --save-trace /tmp/first-run/traces \
+    --lock /tmp/first-run/spec.lock.toml \
+    --cassettes /tmp/first-run/cassettes \
     --relock --simulator-model claude-sonnet-5 --live
 ```
 
-That's the only step that needs a key. `--relock` writes `spec.lock.toml`, pinning the judge
-and hashing the rubric and the wires. `--live` calls the judge and records the reply into
-`cassettes/`. `--save-trace` keeps the execution trace as OTLP.
+That's the only step that needs a key. `--relock` writes the lockfile, pinning the judge and
+hashing the rubric and the wires. `--live` calls the judge and records the reply into
+cassettes. `--save-trace` keeps the execution trace as OTLP.
+
+`--agent` defaults to five runs, not one, which is deliberate — a single conversation is the
+sample size this tutorial spends its second half warning about. Five cost about fourteen
+cents here. Add `--runs 1` if you only want to see the machinery work.
+
+Two details that are about this repo rather than about specdeck. `PYTHONPATH=.` because
+`examples` is a directory here, not an installed package, and `--agent` imports by module
+path — your own adapter, installed alongside specdeck, needs no such thing. And everything
+is pointed at `/tmp` so following along doesn't overwrite the committed deck: in your repo
+those three would be the real paths beside your card, which is where the next run looks for
+them by default.
 
 Now the card can name what it got, and this is the line that was missing:
 
@@ -156,7 +171,7 @@ history of whoever ran it.
 Run without a trace and without an agent and specdeck says so rather than guessing:
 
 ```console
-$ specdeck run cards/over-threshold-second-approval.md
+$ uv run specdeck run cards/over-threshold-second-approval.md
 error cards/over-threshold-second-approval.md: no traces to run — declare
 `traces:` in the card's context block, or pass --trace or --agent
 ```
@@ -167,7 +182,7 @@ everything below replays from what's committed.
 ## Watch it fail
 
 ```console
-$ specdeck run cards/over-threshold-second-approval.md \
+$ uv run specdeck run cards/over-threshold-second-approval.md \
     --trace examples/payable/tutorial/traces-before/over-threshold-second-approval.1.otlp.json
 
   gate     FAIL   0/1 runs   (passes at 1)
@@ -199,7 +214,7 @@ it for nothing.
 The fix isn't cleverness. It's writing the rule down:
 
 ```console
-$ specdeck run cards/over-threshold-second-approval.md
+$ uv run specdeck run cards/over-threshold-second-approval.md
 
   gate     PASS   1/1 runs   (passes at 1)
   credit   4/4   (over 1 passing run)
@@ -240,7 +255,7 @@ bank-change requests with no rule telling it to, so the card isn't catching a bu
 pinning an instinct, and it'll report the day a model update stops having it.
 
 ```console
-$ specdeck run cards/ --agent examples.payable.agent:agent \
+$ PYTHONPATH=. uv run specdeck run cards/ --agent examples.payable.agent:agent \
     --vocabulary cards/vocabulary.txt \
     --runs 5 --pass-threshold 5 --live      # live: five conversations per card
 ```
@@ -253,13 +268,13 @@ exists to warn you about.
 ## The cheapest model that still passes
 
 Every figure specdeck prints about money is an estimate off a committed table, dated, never
-a bill. `specdeck rates` prints it. A run of this deck costs a few cents.
+a bill. `uv run specdeck rates` prints it. A run of this deck costs a few cents.
 
 Which raises the question worth ending on — not which model is best, but which is the
 cheapest one that still holds your rules:
 
 ```console
-$ specdeck run cards/over-threshold-second-approval.md \
+$ PYTHONPATH=. uv run specdeck run cards/over-threshold-second-approval.md \
     --agent examples.payable.agent:agent \
     --matrix examples/payable/cheapest.toml \
     --runs 5 --live          # live: this one spends
