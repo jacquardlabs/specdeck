@@ -402,3 +402,52 @@ class TestTheBudget:
         budget = Budget(cap_usd=None, rates=self.RATES)
         drive(card, FakeAgent(self._script()), tmp_path, budget=budget)
         assert budget.unmetered == {"fake": 2}
+
+
+class TestDeniedToolCalls:
+    """#111: an adapter can report a call a runtime refused at dispatch.
+
+    The convention was readable and assertable long before it was emittable — the schema,
+    both selectors and the judge's transcript all understood it while no adapter had a
+    field in which to say it, so no live agent could produce one.
+    """
+
+    def _trace(self, tmp_path: Path, card, event) -> object:
+        record(tmp_path, card, [{"reply": "Please update their bank details.", "done": True}])
+        return drive(card, FakeAgent([[Chat(content="Let me check."), event]]), tmp_path)
+
+    def test_a_denial_span_names_the_component_and_the_refused_tool(
+        self, card, tmp_path: Path
+    ) -> None:
+        trace = self._trace(
+            tmp_path,
+            card,
+            ToolCall(
+                name="ap_guardrail",
+                denied_tool="update_vendor_bank_details",
+                arguments={"vendor_id": "V-4501"},
+                result="denied: bank details are changed out of band",
+            ),
+        )
+        span = trace.of(Operation.EXECUTE_TOOL)[0]
+        assert span.denied_tool == "update_vendor_bank_details"
+        assert span.attributes[GenAI.TOOL_NAME] == "ap_guardrail"
+
+    def test_nothing_executed_so_a_never_wire_is_not_violated(self, card, tmp_path: Path) -> None:
+        """The misreading the reserved attribute exists to prevent."""
+        trace = self._trace(
+            tmp_path,
+            card,
+            ToolCall(name="ap_guardrail", denied_tool="update_vendor_bank_details"),
+        )
+        span = trace.of(Operation.EXECUTE_TOOL)[0]
+        assert span.executed_tool is None
+        assert span.requested_tools == ["update_vendor_bank_details"]
+
+    def test_an_ordinary_call_carries_no_denial_attribute(self, card, tmp_path: Path) -> None:
+        """Absent, not None: "not denied" and "denied by nobody" must not read alike."""
+        trace = self._trace(tmp_path, card, ToolCall(name="get_invoice", arguments={}, result="{}"))
+        span = trace.of(Operation.EXECUTE_TOOL)[0]
+        assert Specdeck.DENIED_TOOL not in span.attributes
+        assert span.denied_tool is None
+        assert span.executed_tool == "get_invoice"

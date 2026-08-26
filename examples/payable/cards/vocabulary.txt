@@ -1,0 +1,15 @@
+# Tools the Meridian accounts payable agent is given.
+[tools]
+escalate_to_human
+get_invoice
+get_purchase_order
+get_vendor
+hold_invoice
+list_open_invoices
+pay_invoice
+request_second_approval
+update_vendor_bank_details
+
+# Domain events the simulator stamps as `specdeck.marker`.
+[markers]
+non_agreement

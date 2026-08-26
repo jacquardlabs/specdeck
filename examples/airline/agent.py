@@ -70,7 +70,12 @@ class AirlineAgent:
     `messages` carries a single opening line, which is what `_fresh` keys on.
     """
 
-    def __init__(self, *, data_path: Path | None = None) -> None:
+    def __init__(
+        self, *, data_path: Path | None = None, default_prompt: Path | None = None
+    ) -> None:
+        #: What this agent runs on when a column does not name a prompt. The tutorial's
+        #: two factories differ in exactly this and nothing else.
+        self._default_prompt = default_prompt or DEFAULT_PROMPT
         self._seed = json.loads((data_path or DATA).read_text())
         self._data: dict[str, Any] = deepcopy(self._seed)
         #: The conversation in the provider's shape, kept across the turns of one run.
@@ -162,13 +167,12 @@ class AirlineAgent:
         each run with one simulator line and appends from there."""
         return len(messages) <= 1
 
-    @staticmethod
-    def _system(config: dict) -> str:
+    def _system(self, config: dict) -> str:
         literal = config.get("system_prompt")
         if literal:
             return str(literal)
         named = config.get("prompt")
-        path = Path(str(named)) if named else DEFAULT_PROMPT
+        path = Path(str(named)) if named else self._default_prompt
         if not path.is_absolute() and not path.exists():
             # A prompt named relative to this example resolves against it, so a matrix
             # file can say `prompt = "prompts/trimmed.md"` from anywhere.
@@ -226,3 +230,26 @@ def _count(value: object) -> int | None:
 def agent() -> AirlineAgent:
     """The factory `--agent examples.airline.agent:agent` resolves to."""
     return AirlineAgent()
+
+
+def escalating() -> AirlineAgent:
+    """The agent after the card told it something the policy never did.
+
+    The τ-bench policy says to transfer "if and only if the request cannot be handled",
+    which says nothing about a traveller who has been refused three times. That rule
+    belongs to the card, not to the model and not to the vendor's policy — which is the
+    whole point: a spec carries the rules only you know.
+    """
+    return AirlineAgent(default_prompt=PROMPTS / "escalating.md")
+
+
+def naive() -> AirlineAgent:
+    """The same agent before anyone told it the rules — the tutorial's starting point.
+
+    Its prompt says "be helpful" and nothing else, which is what an airline agent looks
+    like on the first afternoon of building one. It is not a strawman: every tool works,
+    the model is the same, and it behaves the way an eager assistant behaves. That is the
+    point — the failure a card catches here is the one real agents actually have, not a
+    contrived one.
+    """
+    return AirlineAgent(default_prompt=PROMPTS / "naive.md")

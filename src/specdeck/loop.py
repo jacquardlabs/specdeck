@@ -190,6 +190,14 @@ class _Builder:
                 GenAI.TOOL_CALL_ID: event.call_id or self._id("call"),
                 GenAI.TOOL_CALL_ARGUMENTS: json.dumps(event.arguments),
                 GenAI.TOOL_CALL_RESULT: event.result,
+                # Present only for a denial, because its presence is what makes the span
+                # one. An attribute written as None on every ordinary call would make
+                # `Span.denied_tool` answer "not denied" and "denied by nobody" alike.
+                **(
+                    {Specdeck.DENIED_TOOL: event.denied_tool}
+                    if event.denied_tool is not None
+                    else {}
+                ),
             },
         )
 
