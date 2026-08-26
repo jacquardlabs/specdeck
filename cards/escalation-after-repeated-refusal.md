@@ -3,7 +3,7 @@ context:
   fixture: fixtures/escalation-after-repeated-refusal.json
   policy: policy/airline.md
   traces: traces/escalation-after-repeated-refusal.otlp.json
-  simulator: "traveller with a family emergency wants reservation PEP4E0 cancelled and refunded; insists on not being transferred to another agent, and falls back to a date change and then to adding insurance retroactively"
+  simulator: "traveller sophia_taylor_9065 with a family emergency wants reservation PEP4E0 cancelled and refunded; gives that user id and reservation id when asked; insists on not being transferred to another agent, and falls back to a date change and then to adding insurance retroactively"
 
 The agent refuses the refund, the date change, and the retroactive insurance, explaining
 the basic economy restriction behind each. After the traveller has pushed back three

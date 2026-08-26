@@ -1,0 +1,46 @@
+# The migration report's grid (#24).
+#
+# Two model columns crossed with two prompt variants. #24 names three cells —
+# old/old, new/old, new/trimmed — and this declares the fourth, old/trimmed,
+# on purpose: it is the control. Without it, a good result in new/trimmed
+# cannot be attributed to the newer model rather than to the shorter prompt,
+# because nothing shows what the older model does when handed the same trim.
+#
+# `model` appears twice per provider and means two different things. The axis
+# `model` is what the budget prices the column at; the one inside `config` is
+# what the adapter is told to call. They are the same string here, and a matrix
+# that let them drift would price a column it never ran.
+
+[budget]
+# A hard cap, and a runaway guard rather than a target.
+#
+# PER INVOCATION, and an invocation is one card: `--matrix` refuses a directory,
+# so the grid is six runs of this file rather than one. Sizing this at the whole
+# grid's cost would put the real ceiling at six times the number written here.
+#
+# One measured live run of cards/basic-economy-cancellation-refused.md across all
+# four columns cost $1.0860. At three runs a cell that is ~$3.30 for one card, so
+# ten leaves three times the headroom and bounds the whole grid at $60 rather than
+# $240. Reaching it means something went wrong, not that the estimate was low.
+#
+# The runner refuses a column it cannot price and aborts the rest on overshoot;
+# docs/measurement.md says why the agent axis can only ever be reactive.
+usd = 10.0
+
+[[provider]]
+name = "opus-4-8"
+model = "claude-opus-4-8"
+config = { model = "claude-opus-4-8" }
+
+[[provider]]
+name = "opus-5"
+model = "claude-opus-5"
+config = { model = "claude-opus-5" }
+
+[[prompt]]
+name = "full"
+config = { prompt = "prompts/full.md" }
+
+[[prompt]]
+name = "trimmed"
+config = { prompt = "prompts/trimmed.md" }
