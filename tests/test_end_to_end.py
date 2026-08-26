@@ -727,9 +727,7 @@ class TestTheExitCodeRegistry:
         # docs/cli.md, which is where the flag reference moved when the README became a
         # tour rather than a manual.
         doc = (Path(__file__).resolve().parent.parent / "docs" / "cli.md").read_text()
-        paragraph = next(
-            block for block in doc.split("\n\n") if block.startswith("Exit codes are")
-        )
+        paragraph = next(block for block in doc.split("\n\n") if block.startswith("Exit codes are"))
         flat = " ".join(paragraph.split())
         for code in EXIT_CODES:
             assert f"`{code}`" in flat, flat

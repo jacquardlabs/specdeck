@@ -40,4 +40,4 @@ config = { model = "openai/gpt-5-nano" }
 
 [[prompt]]
 name = "policy"
-config = { prompt = "prompts/policy.md" }
+config = { prompt = "../../cards/policy/ap.md" }
