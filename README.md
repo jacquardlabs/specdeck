@@ -74,7 +74,8 @@ $ uv run specdeck lint cards --vocabulary cards/vocabulary.txt
 $ uv run specdeck rates                         # what a run is priced at
 ```
 
-Point it at your own agent when you are ready:
+Point it at your own agent when you are ready — `yourpkg.adapter:Agent` is the one thing
+here you have to supply, and [`examples/payable/`](examples/payable/) is a worked one:
 
 ```console
 $ uv run specdeck run cards/your-card.md --agent yourpkg.adapter:Agent \

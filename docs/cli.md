@@ -52,7 +52,7 @@ budget (`--latency-budget`, default 120s), and a token regression against
 the same subject — there is no opt-out syntax — and none of the three is hashed into the
 lockfile, so a default moving in a release is not card drift. A card with no baseline
 recorded gets no regression wire at all. See
-[docs/card-format.md](docs/card-format.md#built-in-wires).
+[docs/card-format.md](card-format.md#built-in-wires).
 
 `--junit-xml PATH` writes a report any CI system renders: one `<testsuite>` per cell, one
 `<testcase>` per run, and a `<failure>` naming the wires and criteria a run failed. Written
