@@ -721,12 +721,14 @@ class TestTheExitCodeRegistry:
         # with it. 4 is the matrix budget abort (#15), reserved by wave 3 and now issued.
         assert sorted(EXIT_CODES) == [0, 1, 2, 3, 4]
 
-    def test_the_readme_paragraph_names_every_code_the_registry_holds(self) -> None:
-        # The paragraph, not the file: `0` appears in a README all over the place, so a
-        # bare containment check stays green through an edit that deletes the sentence.
-        readme = (Path(__file__).resolve().parent.parent / "README.md").read_text()
+    def test_the_documented_paragraph_names_every_code_the_registry_holds(self) -> None:
+        # The paragraph, not the file: `0` appears all over a doc, so a bare containment
+        # check stays green through an edit that deletes the sentence. It lives in
+        # docs/cli.md, which is where the flag reference moved when the README became a
+        # tour rather than a manual.
+        doc = (Path(__file__).resolve().parent.parent / "docs" / "cli.md").read_text()
         paragraph = next(
-            block for block in readme.split("\n\n") if block.startswith("Exit codes are")
+            block for block in doc.split("\n\n") if block.startswith("Exit codes are")
         )
         flat = " ".join(paragraph.split())
         for code in EXIT_CODES:
