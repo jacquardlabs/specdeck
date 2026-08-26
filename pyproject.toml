@@ -47,12 +47,6 @@ filterwarnings = ["error::RuntimeWarning"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
-# `examples/airline/tools.py` is a vendored port, not our code: each class body is
-# upstream's unchanged (see NOTICE). Modernising its typing or rewrapping its lines would
-# make it stop diffing cleanly against the source it was taken from, which is the one
-# property that keeps a re-port cheap and an upstream fix reviewable. Excluded from lint
-# and format together, because a half-formatted vendored file is the worst of both.
-extend-exclude = ["examples/airline/tools.py"]
 
 [tool.ruff.lint]
 # Selected explicitly rather than extended from the defaults, which grow between

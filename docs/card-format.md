@@ -18,8 +18,8 @@ One markdown file per scenario.
 ```markdown
 # Scenario: refund request on basic economy
 context:
-  fixture: airline_seed.json
-  policy: airline.md
+  fixture: fixtures/data.json
+  policy: policy/ap.md
   traces: traces/refund-basic-economy.*.otlp.json
   simulator: "frustrated customer wants a refund on flight F1234"
 

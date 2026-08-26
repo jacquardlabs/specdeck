@@ -142,9 +142,7 @@ class TestTheLangGraphProbe:
         """`tools` is a union and loses the mapping the cycle obligation needs: a cycle
         names nodes, a wire names a tool, and `node_tools` is where the two meet."""
         found = introspect(refund_graph())
-        assert found.description.node_tools == {
-            "tools": ["get_invoice", "pay_invoice"]
-        }
+        assert found.description.node_tools == {"tools": ["get_invoice", "pay_invoice"]}
         assert bounding_tools(found.description, ["agent", "tools"]) == {
             "pay_invoice",
             "get_invoice",

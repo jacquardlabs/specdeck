@@ -410,21 +410,39 @@ def _run(root: Path, diff: str, *extra: str):
 class TestTheCommand:
     """`git diff origin/main... | specdeck run cards/ --affected-by -`."""
 
-    def test_a_fixture_edit_runs_one_card_of_five(self, tmp_path: Path) -> None:
+    def test_a_trace_edit_runs_one_card_of_five(self, tmp_path: Path) -> None:
+        """A trace belongs to exactly one card, so editing one isolates that card."""
         root = _deck_copy(tmp_path)
-        result = _run(root, _modified("cards/fixtures/escalation-after-repeated-pressure.json"))
+        result = _run(
+            root, _modified("cards/traces/escalation-after-repeated-pressure.1.otlp.json")
+        )
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
         assert "selected 1 of 5 cards" in unwrapped
         assert "1 card, 1 passed" in unwrapped
         assert "over-threshold-second-approval" not in unwrapped
 
+    def test_the_shared_fixture_selects_the_whole_deck(self, tmp_path: Path) -> None:
+        """Every Meridian card reads one database, so editing it can reach any of them.
+
+        The airline deck gave each card its own slice and this selected one. Which shape a
+        deck has is the deck's business; what matters is that selection follows the real
+        dependency rather than a naming convention.
+        """
+        root = _deck_copy(tmp_path)
+        result = _run(root, _modified("cards/fixtures/data.json"))
+        unwrapped = " ".join(result.stdout.split())
+        assert "selected 5 of 5 cards" in unwrapped
+
     def test_the_same_edit_under_a_mnemonic_prefix_runs_the_same_card(self, tmp_path: Path) -> None:
         # The end the reviewer reproduced at: with `diff.mnemonicPrefix=true` set globally,
         # every path in the diff was read with an `i/` still on it, so the deck reported the
         # ratified "the diff touched no card" answer and exited 0 on a diff that touched one.
         root = _deck_copy(tmp_path)
-        result = _run(root, _prefixed("cards/fixtures/escalation-after-repeated-pressure.json", "c/", "i/"))
+        result = _run(
+            root,
+            _prefixed("cards/traces/escalation-after-repeated-pressure.1.otlp.json", "c/", "i/"),
+        )
         assert result.exit_code == 0, result.stdout
         assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
 
@@ -432,7 +450,10 @@ class TestTheCommand:
         root = _deck_copy(tmp_path)
         result = _run(root, _modified("cards/traces/bank-details-in-invoice-note.1.otlp.json"))
         unwrapped = " ".join(result.stdout.split())
-        assert "trace" in unwrapped and "bank-details-in-invoice-note.otlp.json modified" in unwrapped
+        assert (
+            "trace" in unwrapped
+            and "bank-details-in-invoice-note.1.otlp.json modified" in unwrapped
+        )
 
     def test_a_diff_that_matched_nothing_runs_nothing_and_exits_zero(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
@@ -493,7 +514,7 @@ class TestTheCommand:
     def test_a_diff_read_from_a_file_reads_the_same_as_one_from_stdin(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         patch = tmp_path / "pr.diff"
-        patch.write_text(_modified("cards/fixtures/escalation-after-repeated-pressure.json"))
+        patch.write_text(_modified("cards/traces/escalation-after-repeated-pressure.1.otlp.json"))
         result = runner.invoke(
             app,
             [
@@ -594,5 +615,5 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 5 cards" in unwrapped
+        assert "selected 1 of 6 cards" in unwrapped
         assert "cannot start" in unwrapped

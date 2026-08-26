@@ -39,7 +39,7 @@ $ uv run specdeck run cards/basic-economy-return-change.md \
   judge claude-sonnet-5 (replayed), 1 call over 1 run
 ```
 
-One of five τ-bench airline cards, its wires evaluated against a raw OTLP export, its
+One of five Meridian accounts payable cards, its wires evaluated against a captured OTLP export, its
 prose graded by a pinned judge replaying a recorded cassette. No API key, no network. The
 trace is a real OpenTelemetry GenAI export rather than a specdeck-shaped file, because an
 agent already emitting OTel needs no adapter.
@@ -328,8 +328,8 @@ One markdown file per scenario, in your repo, reviewed in PRs.
 ```markdown
 # Scenario: refund request on basic economy
 context:
-  fixture: airline_seed.json
-  policy: airline.md
+  fixture: fixtures/data.json
+  policy: policy/ap.md
   traces: traces/refund-basic-economy.*.otlp.json
   simulator: "frustrated customer wants a refund on flight F1234"
 
@@ -386,6 +386,6 @@ Intent, not a claim about shipped behavior:
 
 MIT. See [LICENSE](LICENSE).
 
-The demo cards under `cards/` derive from [τ-bench](https://github.com/sierra-research/tau-bench)
-(MIT, © 2024 Sierra) — the airline policy verbatim, the fixtures as slices, the scenario prose
-adapted from its task instructions. See [NOTICE](NOTICE).
+The cards under `cards/` and the example agent under `examples/payable/` are this project's
+own. Meridian is an invented company, and deliberately so: a deck built on a public
+benchmark cannot tell what a model reasoned out from what it recalled. See [NOTICE](NOTICE).

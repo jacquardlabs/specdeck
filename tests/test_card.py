@@ -160,10 +160,10 @@ class TestPathContainment:
 
     def test_a_subdirectory_policy_is_allowed(self, tmp_path: Path) -> None:
         (tmp_path / "policy").mkdir()
-        (tmp_path / "policy" / "airline.md").write_text("text")
+        (tmp_path / "policy" / "ap.md").write_text("text")
         card = tmp_path / "ok.md"
         card.write_text("# Scenario: x\ncontext:\n  policy: policy/ap.md\n\nprose\n")
-        assert parse(card).policy_path == tmp_path / "policy" / "airline.md"
+        assert parse(card).policy_path == tmp_path / "policy" / "ap.md"
 
 
 class TestDeclaredTraces:

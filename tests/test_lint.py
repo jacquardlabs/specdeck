@@ -790,9 +790,7 @@ class TestAgentDefinition:
         assert bindings and all(f.severity is Severity.WARNING for f in bindings)
 
     def test_a_tool_wired_on_any_card_in_the_deck_is_referenced(self, tmp_path: Path) -> None:
-        deck = self._deck(
-            tmp_path, "", "\nwire:\n  - pay_invoice: never\n  - tools: never\n"
-        )
+        deck = self._deck(tmp_path, "", "\nwire:\n  - pay_invoice: never\n  - tools: never\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
         assert "pay_invoice" not in named

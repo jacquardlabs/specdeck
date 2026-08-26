@@ -87,7 +87,7 @@ class TestTheCoverageCommand:
     def _policy_deck(self, tmp_path: Path, orphan: str) -> Path:
         """The repo's own layout: cards in the deck root, policies in `policy/`."""
         (tmp_path / "policy").mkdir()
-        (tmp_path / "policy" / "airline.md").write_text("# Airline Policy\n\n- confirm first\n")
+        (tmp_path / "policy" / "ap.md").write_text("# AP Policy\n\n- confirm first\n")
         (tmp_path / "policy" / "refunds.md").write_text(orphan)
         (tmp_path / "card.md").write_text(
             "# Scenario: x\ncontext:\n  policy: policy/ap.md\n\nThe agent answers.\n"

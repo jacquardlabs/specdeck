@@ -206,7 +206,11 @@ class TestDumpTrace:
     """#112. `load_trace(dump_trace(t))` is the property that makes a saved run a fixture."""
 
     def _trace(self):
-        return load_trace(Path("examples/payable/tutorial/traces-before/payment-ceiling-denied-at-the-rail.2.otlp.json"))
+        return load_trace(
+            Path(
+                "examples/payable/tutorial/traces-before/payment-ceiling-denied-at-the-rail.2.otlp.json"
+            )
+        )
 
     def _round_trip(self, trace, tmp_path: Path):
         out = tmp_path / "rt.otlp.json"
