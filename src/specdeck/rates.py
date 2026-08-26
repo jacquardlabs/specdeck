@@ -30,10 +30,16 @@ from specdeck.provider import split_model
 
 RATES_FILE = "rates.toml"
 
-#: What may follow a family key in a model id and still be that family: a release date.
+#: What may follow a family key in a model id and still be that family: a release date,
+#: in either shape a vendor writes one — Anthropic's `-20260514`, OpenAI's `-2025-08-07`.
 #: `claude-sonnet-5-20260514` is claude-sonnet-5; `claude-opus-4-9` is not claude-opus-4,
 #: it is the next Opus, and pricing it as its retired ancestor would substitute a rate.
-_DATED = re.compile(r"-\d{8}(?!\d)")
+#:
+#: Written for one vendor and widened when the table gained a second: OpenAI replies name
+#: a dated snapshot for a request that said `gpt-5-mini`, so the id came back unpriced and
+#: the budget cap refused the column. That was the cap working — a cap guarding a model
+#: nobody ran is not a cap — and this is the gap it found.
+_DATED = re.compile(r"-(?:\d{8}(?!\d)|\d{4}-\d{2}-\d{2}(?!\d))")
 
 
 class RateError(Exception):

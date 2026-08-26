@@ -364,7 +364,12 @@ class PayableAgent:
         return {
             "content": blocks,
             "stop_reason": body["choices"][0].get("finish_reason") or "stop",
-            "model": body.get("model") or model,
+            # Prefixed, because the reply names a dated snapshot — `gpt-5-mini-2025-08-07`
+            # for a request that said `gpt-5-mini` — and a bare id resolves under the
+            # default provider, where no `gpt-*` is priced. specdeck's budget cap then
+            # refuses the column, correctly: a cap that guards a model nobody ran is not a
+            # cap. Anthropic returns the id it was asked for, so one call never showed this.
+            "model": f"openai/{body.get('model') or model}",
             "usage": {
                 "input_tokens": usage.get("prompt_tokens"),
                 "output_tokens": usage.get("completion_tokens"),
