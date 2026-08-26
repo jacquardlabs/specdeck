@@ -102,9 +102,16 @@ have measured:
 
 | | |
 |---|---|
-| shape | 1 card × 5 columns × 5 runs = 25 cells |
-| all-in | **~$1.5389** estimate, rates as of 2026-08-24 |
+| shape | 1 card, 5 columns, 5 runs per column |
 | columns | `claude-opus-5` through `gpt-5-nano` |
+| all-in | **~$1.5389** estimate, rates as of 2026-08-24 |
+| of which | one column errored and produced no gradable result |
+
+That last row is not a footnote. The `gpt-5-nano` column came back `UngradableReply`
+([#113](https://github.com/jacquardlabs/specdeck/issues/113)), and the money it spent
+getting there is inside the total like everyone else's. Divide $1.5389 by a cell count and
+you get a per-cell figure inflated by a column that graded nothing — which is a second
+reason, independent of the model spread below, not to treat the total as a rate.
 
 There is deliberately no table here projecting that to a 25-, 100- or 250-card deck. The
 columns span $5.00/$25.00 per million tokens down to $0.05/$0.40 — a 100× spread on
@@ -130,8 +137,8 @@ for planning:
   all of them. Both are true, and the second is why no per-pull-request figure is quoted here.
 
 Run the numbers for your own deck the way this repo got its one: with a hard `[budget]` cap
-in the matrix file, which refuses to price a model the table does not know rather than
-guessing at it.
+in the matrix file. A model the table does not know yields no rate at all, and the cap then
+refuses to continue rather than charging it at $0.00 and never tripping.
 
 ## The token baseline
 
