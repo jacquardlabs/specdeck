@@ -84,10 +84,10 @@ class TestCycles:
 
 class TestDepthIsWhatCameBack:
     def test_an_adapter_declaring_only_tools_reports_tools(self) -> None:
-        found = introspect(FakeAgent([], tools=["cancel_reservation"]))
+        found = introspect(FakeAgent([], tools=["pay_invoice"]))
         assert found.depth is Depth.TOOLS
         assert found.source == "describe()"
-        assert found.description.tools == ["cancel_reservation"]
+        assert found.description.tools == ["pay_invoice"]
 
     def test_a_raw_sdk_loop_reports_none_rather_than_guessing(self) -> None:
         found = introspect(BareAgent())
@@ -121,7 +121,7 @@ class TestTheLangGraphProbe:
         found = introspect(refund_graph(), reference="tests.fake_graph:refund_graph")
         assert found.source == "langgraph"
         assert found.depth is Depth.TOPOLOGY
-        assert found.description.tools == ["cancel_reservation", "get_reservation_details"]
+        assert found.description.tools == ["get_invoice", "pay_invoice"]
         assert found.description.hitl_points == ["escalate"]
 
     def test_the_start_and_end_nodes_are_never_edge_endpoints(self) -> None:
@@ -143,11 +143,11 @@ class TestTheLangGraphProbe:
         names nodes, a wire names a tool, and `node_tools` is where the two meet."""
         found = introspect(refund_graph())
         assert found.description.node_tools == {
-            "tools": ["cancel_reservation", "get_reservation_details"]
+            "tools": ["get_invoice", "pay_invoice"]
         }
         assert bounding_tools(found.description, ["agent", "tools"]) == {
-            "cancel_reservation",
-            "get_reservation_details",
+            "pay_invoice",
+            "get_invoice",
         }
 
     def test_a_cycle_through_nodes_that_bind_nothing_has_no_bounding_tool(self) -> None:

@@ -23,4 +23,4 @@ wire:
 credit:
   - "names the specific approver from the purchase order rather than saying 'a manager'": 2
   - "confirms the invoice is otherwise in order, so the delay is clearly the threshold and not a problem with the invoice": 1
-  - "does not imply the payment could be made sooner by asking someone else": 1
+  - "does not suggest the threshold itself could be waived or worked around": 1

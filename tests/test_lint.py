@@ -245,7 +245,7 @@ class TestRequestedVersusExecuted:
         # Without this the typo compiles to a wire that can never fire and lint says
         # nothing — the exact failure `unknown-tool` exists to catch.
         card = self._card(tmp_path, "cancel_reservtion: never_requested")
-        findings = lint_card(card, vocabulary=Vocabulary(tools={"cancel_reservation"}))
+        findings = lint_card(card, vocabulary=Vocabulary(tools={"pay_invoice"}))
         assert "unknown-tool" in rules(findings, Severity.ERROR)
 
 
@@ -540,13 +540,13 @@ class TestTheRunnerAndLintAgreeOnTheKey:
         from shutil import copy
 
         source = Path(__file__).resolve().parent.parent / "cards"
-        nested = tmp_path / "airline"
+        nested = tmp_path / "payable"
         nested.mkdir()
         copy(source / "over-threshold-second-approval.md", nested / "refund.md")
         (nested / "fixtures").mkdir()
         copy(source / "fixtures" / "data.json", nested / "fixtures")
         (nested / "policy").mkdir()
-        copy(source / "policy" / "airline.md", nested / "policy")
+        copy(source / "policy" / "ap.md", nested / "policy")
         # The card declares its own `traces:`, so a workspace without them is a card whose
         # glob matches nothing — a `dead-path` error about the fixture, not about the key
         # this class is here to check.
@@ -565,7 +565,7 @@ class TestTheRunnerAndLintAgreeOnTheKey:
             app,
             [
                 "run",
-                str(tmp_path / "airline" / "refund.md"),
+                str(tmp_path / "payable" / "refund.md"),
                 "--trace",
                 str(source / "traces" / "over-threshold-second-approval.1.otlp.json"),
                 "--lock",
@@ -577,7 +577,7 @@ class TestTheRunnerAndLintAgreeOnTheKey:
 
     def test_the_runner_locks_a_nested_card_under_its_subdirectory(self, tmp_path: Path) -> None:
         lock = self._relock(self._workspace(tmp_path))
-        assert "airline/refund.md" in Lockfile.load(lock).cards
+        assert "payable/refund.md" in Lockfile.load(lock).cards
 
     def test_lint_finds_the_card_the_runner_locked(self, tmp_path: Path) -> None:
         workspace = self._workspace(tmp_path)
@@ -703,13 +703,13 @@ class TestAgentDefinition:
         assert "unbounded-cycle" in rules(result.findings, Severity.ERROR)
 
     def test_an_at_most_on_a_tool_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
-        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: at_most 3\n")
+        deck = self._deck(tmp_path, "\nwire:\n  - pay_invoice: at_most 3\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
 
     def test_a_never_on_a_tool_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
         # A tool that can never be called cannot spin.
-        deck = self._deck(tmp_path, "\nwire:\n  - get_reservation_details: never\n")
+        deck = self._deck(tmp_path, "\nwire:\n  - get_invoice: never\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
 
@@ -753,7 +753,7 @@ class TestAgentDefinition:
         assert rules(cleared.findings, Severity.ERROR) == []
 
     def test_an_escalation_whose_follow_up_the_cycle_calls_clears_it(self, tmp_path: Path) -> None:
-        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: after 3 non_agreement\n")
+        deck = self._deck(tmp_path, "\nwire:\n  - pay_invoice: after 3 non_agreement\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
 
@@ -774,7 +774,7 @@ class TestAgentDefinition:
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         message = next(f.message for f in result.findings if f.rule == "unbounded-cycle")
         assert "agent" in message and "tools" in message
-        assert "cancel_reservation" in message and "get_reservation_details" in message
+        assert "pay_invoice" in message and "get_invoice" in message
         assert "at_most" in message and "after" in message
 
     def test_nothing_is_ever_written_to_a_card(self, tmp_path: Path) -> None:
@@ -795,14 +795,14 @@ class TestAgentDefinition:
         )
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
-        assert "cancel_reservation" not in named
+        assert "pay_invoice" not in named
 
     def test_an_escalation_target_counts_as_a_reference(self, tmp_path: Path) -> None:
         # The `AfterKThen.then.tool` path. Without it an escalation target reads unwired.
-        deck = self._deck(tmp_path, "\nwire:\n  - cancel_reservation: after 3 non_agreement\n")
+        deck = self._deck(tmp_path, "\nwire:\n  - pay_invoice: after 3 non_agreement\n")
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
-        assert "cancel_reservation" not in named
+        assert "pay_invoice" not in named
 
     def test_a_name_appearing_in_a_cards_context_counts_as_a_reference(
         self, tmp_path: Path
@@ -838,7 +838,7 @@ class TestAgentDefinition:
             if f.card == AGENT_DEF
         ]
         (deck / "card0.md").write_text(
-            "# Scenario: 0\nescalate cancel_reservation get_reservation_details agent tools\n"
+            "# Scenario: 0\nescalate pay_invoice get_invoice agent tools\n"
             "\nwire:\n  - tools: never\n"
         )
         after = [

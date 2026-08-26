@@ -23,7 +23,7 @@ wires_hash = "sha256:0f36abd39ad7ca69bb94341337ff1794ce504547ed6eae18caa8c86c9c7
 simulator_hash = "sha256:b0aa5e9b57eed1732a07f2eebedaefb21045aee6b674869d8518ce06b58e7922"
 
 [cards."over-threshold-second-approval.md"]
-rubric_hash = "sha256:ad96ea5ec1ab2c4c3a7e6d0061d081642e9a5ebb4e2bd37e31d0e177928654d1"
+rubric_hash = "sha256:873e10beb78561c0b46152c8f035e3fbd42978d05633abd636817baaa11817c9"
 wires_hash = "sha256:f3b3483c62e6bfb6f99a47322e812cb1d4aac152b69cc180ddfc8d499a80758c"
 simulator_hash = "sha256:ee8a70d64a1e315880d941eb644ddbf5b6754865471093ad4a437ad4322176be"
 

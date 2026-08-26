@@ -55,7 +55,7 @@ class TestTheCardRunsGreen:
     def test_it_reports_two_numbers_never_blended(self) -> None:
         stdout = demo().stdout
         assert "gate" in stdout and "1/1 runs" in stdout
-        assert "credit" in stdout and "3/4" in stdout
+        assert "credit" in stdout and "4/4" in stdout
 
     def test_the_judge_is_replayed_not_called(self) -> None:
         assert "replayed" in demo().stdout
@@ -86,7 +86,7 @@ class TestTheCardRunsGreen:
 
     def test_every_wire_holds(self) -> None:
         stdout = demo().stdout
-        for wire in ("never:pay_invoice", "at_most:search_direct_flight"):
+        for wire in ("never:pay_invoice", "at_most:request_second_approval"):
             assert wire in stdout
         assert "FAIL" not in stdout
 
@@ -95,7 +95,7 @@ class TestTheLockIsEnforced:
     def test_an_edited_card_refuses_to_run(self, tmp_path: Path) -> None:
         edited = _copy_cards(tmp_path)
         card = edited / CARD.name
-        card.write_text(card.read_text().replace("refuses to", "declines to"))
+        card.write_text(card.read_text().replace("requests a second approval", "requests a countersignature"))
         result = _run_copy(edited, card)
         assert result.exit_code == 2
         assert "--relock" in result.stdout
@@ -120,8 +120,8 @@ class TestTheRateTableIsFoundBesideTheCard:
     def test_a_rates_file_beside_the_card_prices_the_run(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)
         (cards / "rates.toml").write_text(self.OVERRIDE)
-        # 241 input + 95 output tokens at $100/M is $0.0336, against $0.0014 built-in.
-        assert "~$0.0336 estimate" in " ".join(_run_copy(cards, cards / CARD.name).stdout.split())
+        # 17,651 input + 647 output tokens at $100/M is $1.8298, against $0.0418 built-in.
+        assert "~$1.8298 estimate" in " ".join(_run_copy(cards, cards / CARD.name).stdout.split())
 
     def test_the_merged_table_cannot_claim_the_newer_date(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)
@@ -153,7 +153,7 @@ class TestTheRateTableIsFoundBesideTheCard:
         assert "no `verified` date" in text
         assert "rates.toml" in text
         # Priced from the built-in table, which carries its own date. Never silently.
-        assert "~$0.0014 estimate" in text
+        assert "~$0.0418 estimate" in text
 
 
 class TestTheTraceIsOtlp:
@@ -406,13 +406,13 @@ class TestTheBaseline:
         written = (cards / "spec.baseline.toml").read_text()
         # 95 output tokens on the recorded trace, the same number the cost line prices.
         assert f'[cards."{CARD.name}"."default"]' in written
-        assert "output_tokens = 95" in written
+        assert "output_tokens = 647" in written
 
     def test_a_recorded_baseline_becomes_a_wire_on_the_next_run(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)
         self._run(cards, cards / CARD.name, "--update-baseline")
         stdout = " ".join(self._run(cards, cards / CARD.name).stdout.split())
-        assert "token_baseline 95, under 105" in stdout
+        assert "token_baseline 647, under 712" in stdout
 
     def test_recording_a_baseline_does_not_fail_the_card_that_set_it(self, tmp_path: Path) -> None:
         cards = _copy_cards(tmp_path)
@@ -546,7 +546,7 @@ class TestTheBaseline:
     @pytest.mark.parametrize(
         "text",
         [
-            '[cards."over-threshold-second-approval.md"]\noutput_tokens = 95\n',
+            '[cards."over-threshold-second-approval.md"]\noutput_tokens = 647\n',
             "cards = 5\n",
             '[cards]\n"over-threshold-second-approval.md" = 5\n',
         ],
@@ -568,7 +568,7 @@ class TestTheBaseline:
         # ran — and, exiting before the report, without even the note that says so.
         cards = _copy_cards(tmp_path)
         committed = cards / "spec.baseline.toml"
-        before = f'[cards."{CARD.name}"."default"]\noutput_tokens = 95\n'
+        before = f'[cards."{CARD.name}"."default"]\noutput_tokens = 647\n'
         committed.write_text(before)
         result = self._run(cards, cards / CARD.name, "--runs", "5", "--update-baseline")
         assert result.exit_code == 2, result.stdout
@@ -817,7 +817,7 @@ class TestTheWholeDeck:
         # CI reading 1 would call that an eval regression.
         cards = _copy_cards(tmp_path)
         card = cards / CARD.name
-        card.write_text(card.read_text().replace("refuses to", "declines to"))
+        card.write_text(card.read_text().replace("requests a second approval", "requests a countersignature"))
         result = invoke(str(cards))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
