@@ -6,6 +6,7 @@ delivered what #48 said it would.
 
 from __future__ import annotations
 
+import json
 import shutil
 import xml.etree.ElementTree as ET
 from pathlib import Path
@@ -95,7 +96,9 @@ class TestTheLockIsEnforced:
     def test_an_edited_card_refuses_to_run(self, tmp_path: Path) -> None:
         edited = _copy_cards(tmp_path)
         card = edited / CARD.name
-        card.write_text(card.read_text().replace("requests a second approval", "requests a countersignature"))
+        card.write_text(
+            card.read_text().replace("requests a second approval", "requests a countersignature")
+        )
         result = _run_copy(edited, card)
         assert result.exit_code == 2
         assert "--relock" in result.stdout
@@ -188,9 +191,7 @@ class TestFailingCellExitsOne:
         # A failing card that exits 0 would pass CI silently.
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        broken = trace_path.read_text().replace(
-            "get_purchase_order", "pay_invoice"
-        )
+        broken = trace_path.read_text().replace("get_purchase_order", "pay_invoice")
         trace_path.write_text(broken)
         result = _run_copy(cards, cards / CARD.name)
         assert result.exit_code == 1, result.stdout
@@ -476,9 +477,7 @@ class TestTheBaseline:
         """
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        trace_path.write_text(
-            trace_path.read_text().replace("get_purchase_order", "pay_invoice")
-        )
+        trace_path.write_text(trace_path.read_text().replace("get_purchase_order", "pay_invoice"))
         result = self._run(cards, cards / CARD.name, "--update-baseline")
         assert result.exit_code == 1, result.stdout
         text = " ".join(result.stdout.split())
@@ -492,9 +491,7 @@ class TestTheBaseline:
         committed = (cards / "spec.baseline.toml").read_text()
 
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        trace_path.write_text(
-            trace_path.read_text().replace("get_purchase_order", "pay_invoice")
-        )
+        trace_path.write_text(trace_path.read_text().replace("get_purchase_order", "pay_invoice"))
         result = self._run(cards, cards / CARD.name, "--update-baseline")
         assert result.exit_code == 1, result.stdout
         assert (cards / "spec.baseline.toml").read_text() == committed
@@ -522,11 +519,16 @@ class TestTheBaseline:
         # it summed to 0. Recorded, it would exit 3 on every later run of the card.
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        trace_path.write_text(
-            trace_path.read_text()
-            .replace('"intValue": "8"', '"intValue": "0"')
-            .replace('"intValue": "87"', '"intValue": "0"')
-        )
+        # Every reported output count to zero. The attribute stays present and sums to 0,
+        # which is a different fact from an adapter that never reported one at all.
+        raw = json.loads(trace_path.read_text())
+        for resource in raw["resourceSpans"]:
+            for scope in resource["scopeSpans"]:
+                for span in scope["spans"]:
+                    for attribute in span.get("attributes", []):
+                        if attribute["key"] == "gen_ai.usage.output_tokens":
+                            attribute["value"] = {"intValue": "0"}
+        trace_path.write_text(json.dumps(raw))
         result = self._run(cards, cards / CARD.name, "--update-baseline")
         assert result.exit_code == 2, result.stdout
         assert "totalling 0" in " ".join(result.stdout.split())
@@ -596,13 +598,23 @@ class TestTheBaseline:
     ) -> None:
         # measurement.md says this out loud rather than leaving it to be discovered: the
         # fresh median gates the same run, so at n=3 with k=3 a single run more than 10%
-        # above the median fails the invocation that recorded it. 95, 95, 123 -> median
-        # 95, bound 105, run 3 over it.
+        # above the median fails the invocation that recorded it. 647, 647, 900 -> median
+        # 647, bound 712, run 3 well over it.
         cards = _copy_cards(tmp_path)
         traces = cards / "traces"
         cheap = traces / "over-threshold-second-approval.1.otlp.json"
         dear = traces / "dear.otlp.json"
-        dear.write_text(cheap.read_text().replace('"intValue": "87"', '"intValue": "115"'))
+        raw = json.loads(cheap.read_text())
+        seen = False
+        for resource in raw["resourceSpans"]:
+            for scope in resource["scopeSpans"]:
+                for span in scope["spans"]:
+                    for attribute in span.get("attributes", []):
+                        if attribute["key"] == "gen_ai.usage.output_tokens" and not seen:
+                            attribute["value"] = {"intValue": "900"}
+                            seen = True
+        assert seen, "the captured trace reports output tokens"
+        dear.write_text(json.dumps(raw))
         result = invoke(
             str(cards / CARD.name),
             "--trace",
@@ -617,7 +629,7 @@ class TestTheBaseline:
         )
         assert result.exit_code == 1, result.stdout
         text = " ".join(result.stdout.split())
-        assert "token_baseline 123, under 105" in text
+        assert "token_baseline 1470, under 712" in text
         assert "2/3 runs" in text
         # The wire is still folded in and still fires — that is what the two assertions
         # above prove. What #102 changed is only what reaches disk: this invocation
@@ -640,9 +652,7 @@ class TestJUnitOutput:
         # The whole point in CI: the red build is the one that needs the file.
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        trace_path.write_text(
-            trace_path.read_text().replace("get_purchase_order", "pay_invoice")
-        )
+        trace_path.write_text(trace_path.read_text().replace("get_purchase_order", "pay_invoice"))
         report = tmp_path / "r.xml"
         result = invoke(
             str(cards / CARD.name),
@@ -758,7 +768,9 @@ class TestTheCardDeclaresItsOwnTraces:
         cards = _copy_cards(tmp_path)
         card = cards / CARD.name
         card.write_text(
-            card.read_text().replace("  traces: traces/over-threshold-second-approval.otlp.json\n", "")
+            card.read_text().replace(
+                "  traces: traces/over-threshold-second-approval.*.otlp.json\n", ""
+            )
         )
         result = invoke(str(card), "--relock")
         assert result.exit_code == 2
@@ -772,7 +784,7 @@ class TestTheCardDeclaresItsOwnTraces:
         card = cards / CARD.name
         card.write_text(
             card.read_text().replace(
-                "traces: traces/over-threshold-second-approval.otlp.json",
+                "traces: traces/over-threshold-second-approval.*.otlp.json",
                 "traces: traces/absent-*.json",
             )
         )
@@ -801,9 +813,7 @@ class TestTheWholeDeck:
         # A deck that aborts on the first failure hides four results that were free.
         cards = _copy_cards(tmp_path)
         trace_path = cards / "traces" / "over-threshold-second-approval.1.otlp.json"
-        trace_path.write_text(
-            trace_path.read_text().replace("get_purchase_order", "pay_invoice")
-        )
+        trace_path.write_text(trace_path.read_text().replace("get_purchase_order", "pay_invoice"))
         result = invoke(str(cards))
         assert result.exit_code == 1, result.stdout
         unwrapped = " ".join(result.stdout.split())
@@ -817,7 +827,9 @@ class TestTheWholeDeck:
         # CI reading 1 would call that an eval regression.
         cards = _copy_cards(tmp_path)
         card = cards / CARD.name
-        card.write_text(card.read_text().replace("requests a second approval", "requests a countersignature"))
+        card.write_text(
+            card.read_text().replace("requests a second approval", "requests a countersignature")
+        )
         result = invoke(str(cards))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
@@ -830,7 +842,7 @@ class TestTheWholeDeck:
         (cards / "not-a-card.md").write_text("no heading here\n")
         result = invoke(str(cards))
         assert result.exit_code == 2, result.stdout
-        assert "4 cards, 4 passed, 1 could not run" in " ".join(result.stdout.split())
+        assert "5 cards, 5 passed, 1 could not run" in " ".join(result.stdout.split())
 
     def test_an_empty_directory_is_a_user_error_never_a_green_deck(self, tmp_path: Path) -> None:
         # "All zero of them passed" is the empty report a deck exists to make impossible.
@@ -854,7 +866,7 @@ class TestTheWholeDeck:
         (cards / CARD.name).rename(nested / CARD.name)
         for source, name in (
             (cards / "traces", TRACE.name),
-            (cards / "policy", "airline.md"),
+            (cards / "policy", "ap.md"),
             (cards / "fixtures", "data.json"),
         ):
             shutil.copy(source / name, nested / source.name / name)
@@ -945,7 +957,7 @@ class TestTheWholeDeck:
         card = cards / CARD.name
         card.write_text(
             card.read_text().replace(
-                "traces: traces/over-threshold-second-approval.otlp.json", "traces: traces/arch*"
+                "traces: traces/over-threshold-second-approval.*.otlp.json", "traces: traces/arch*"
             )
         )
         result = invoke(str(cards))
