@@ -88,6 +88,51 @@ cache pricing: the semconv carries only `gen_ai.usage.input_tokens` and
 `gen_ai.usage.output_tokens`, so a prompt-cached run is over-estimated, its cache reads
 charged at the full input rate.
 
+## What a deck costs to run
+
+Two figures, and they do not count the same thing. The cell's `cost` line is **agent tokens
+only** — it is read off the trace, so it covers the model your agent called and nothing
+else. The matrix's `spent` line is what the budget cap tracks, which is all-in: the agent's
+tokens plus specdeck's own judge and simulator calls. A cap that ignored the judge would not
+be a cap, and a per-cell figure that silently included it would charge your agent for our
+measuring instrument.
+
+One sweep in this repo has been run live end to end, and it is the only all-in figure we
+have measured:
+
+| | |
+|---|---|
+| shape | 1 card × 5 columns × 5 runs = 25 cells |
+| all-in | **~$1.5389** estimate, rates as of 2026-08-24 |
+| columns | `claude-opus-5` through `gpt-5-nano` |
+
+There is deliberately no table here projecting that to a 25-, 100- or 250-card deck. The
+columns span $5.00/$25.00 per million tokens down to $0.05/$0.40 — a 100× spread on
+input — and the grid reports a total with no per-column breakdown
+([#115](https://github.com/jacquardlabs/specdeck/issues/115)), so $1.5389 cannot be
+decomposed into a per-run rate. Picking a representative one to multiply out would be
+substituting a rate under an "estimate" label, which is the single thing `rates.py` refuses
+to do; the prose here follows the same rule as the code.
+
+What survives without a number is the shape of the spend, and it is the part that matters
+for planning:
+
+- **The recurring run is the cheap one.** A deck run is one model over N cards. Model choice
+  dominates it — the same card held by `gpt-4o-mini` and by `claude-opus-5` differs by more
+  than an order of magnitude, which is the finding the matrix exists to produce.
+- **The matrix is not recurring.** You run it when you change models or rewrite a prompt: a
+  handful of times a year, not a handful of times a day. It is the expensive shape precisely
+  because it multiplies columns, and it buys a decision rather than a signal.
+- **`--affected-by` narrows a pull request, within limits.** Selection is file-level: a diff
+  touching a card, its policy, its fixture or its traces selects that card, and a diff
+  touching `spec.lock.toml` or the vocabulary file selects every card, because those two pin
+  what correct means deck-wide. So the common case is a few cards and the shared-file case is
+  all of them. Both are true, and the second is why no per-pull-request figure is quoted here.
+
+Run the numbers for your own deck the way this repo got its one: with a hard `[budget]` cap
+in the matrix file, which refuses to price a model the table does not know rather than
+guessing at it.
+
 ## The token baseline
 
 `spec.baseline.toml`, beside `spec.lock.toml`, records what each card's cell cost in output
