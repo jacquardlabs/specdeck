@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import importlib
 import inspect
+import json
 import sys
 from datetime import date
 from itertools import groupby
@@ -55,7 +56,7 @@ from specdeck.report import (
 )
 from specdeck.simulator import SimulatorError
 from specdeck.trace import SEMCONV, Trace
-from specdeck.traceio import TraceError, load_trace
+from specdeck.traceio import TraceError, dump_trace, load_trace
 from specdeck.wires import WireError, compile_wires, wires_text
 
 app = typer.Typer(
@@ -203,6 +204,11 @@ def run(
     junit_xml: Path | None = typer.Option(  # noqa: B008
         None, "--junit-xml", help="Write a JUnit XML report here, for CI to render."
     ),
+    save_trace: Path | None = typer.Option(  # noqa: B008
+        None,
+        "--save-trace",
+        help="Write each run's trace into this directory, so the run can be replayed.",
+    ),
     matrix_path: Path | None = typer.Option(  # noqa: B008
         None, "--matrix", help="A matrix of providers x prompt variants, with --agent."
     ),
@@ -346,6 +352,8 @@ def run(
                 if adapter is not None
                 else recordings
             )
+            if save_trace is not None and adapter is not None:
+                _save_traces(save_trace, card, traces, console)
             builtin, pending = _builtin(
                 card_path,
                 baseline_path,
@@ -992,6 +1000,30 @@ def _builtin(
     return (
         BuiltinConfig(latency_budget_s=latency_budget, token_baseline=recorded.get(key)),
         pending,
+    )
+
+
+def _save_traces(directory: Path, card: Card, traces: list[Trace], console: Console) -> None:
+    """Keep what a live run produced, named so a card can declare it back (#112).
+
+    `<slug>.<index>.otlp.json`, which `traces: <slug>.*.otlp.json` picks up whole — the
+    round trip that turns one paid run into a fixture every later run replays for free.
+
+    OTLP, via `traceio.dump_trace`, so the file is interchangeable with one a real
+    exporter wrote rather than readable only here.
+
+    Refused loudly on a bad path, like `--junit-xml` and `--baseline`: a directory the user
+    named is part of the invocation, so a typo exits 2 rather than surfacing as exit 3.
+    """
+    try:
+        directory.mkdir(parents=True, exist_ok=True)
+        for index, trace in enumerate(traces, start=1):
+            path = directory / f"{card.slug}.{index}.otlp.json"
+            path.write_text(json.dumps(dump_trace(trace, service_name=card.slug), indent=2) + "\n")
+    except OSError as error:
+        raise CardError(f"could not write traces to {directory}: {error}") from None
+    console.print(
+        f"  [dim]saved[/dim] {len(traces)} trace(s) to {directory}",
     )
 
 

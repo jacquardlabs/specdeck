@@ -21,6 +21,11 @@ from .trace import Span, SpanEvent, Trace
 
 NANOS_PER_SECOND = 1_000_000_000
 
+#: Every span of one saved trace shares a trace id. A constant rather than a random one so
+#: a saved trace is byte-stable across runs of the same conversation — the property that
+#: lets `tools/make_traces.py --check` exist, and the one a committed fixture needs.
+TRACE_ID = "4bf92f3577b34da6a3ce929d0e0e4736"
+
 
 class TraceError(Exception):
     """The file is not a readable event log. Always names the file."""
@@ -115,3 +120,86 @@ def _value(value: dict[str, Any]) -> Any:
             for entry in value["kvlistValue"].get("values") or []
         }
     return None
+
+
+def dump_trace(trace: Trace, *, service_name: str | None = None) -> dict[str, Any]:
+    """A trace as an OTLP/JSON export — the round trip of `load_trace` (#112).
+
+    OTLP rather than specdeck's own `{"spans": [...]}` shape, which `load_trace` also
+    reads, because a saved trace has to be interchangeable with one a real exporter
+    produced. A file only this project can read would let "an agent already emitting
+    OpenTelemetry needs no adapter" go untested by the very artefacts meant to demonstrate
+    it — the same reason `tools/make_traces.py` writes OTLP rather than the easier format.
+
+    `load_trace(dump_trace(t))` is the property that matters and the one the tests hold.
+    """
+    return {
+        "resourceSpans": [
+            {
+                "resource": {
+                    "attributes": _dump_attributes({"service.name": service_name})
+                    if service_name
+                    else []
+                },
+                "scopeSpans": [
+                    {
+                        "scope": {
+                            "name": "opentelemetry.instrumentation.genai",
+                            "version": trace.semconv,
+                        },
+                        "spans": [_dump_span(span) for span in trace.spans],
+                    }
+                ],
+            }
+        ]
+    }
+
+
+def _dump_span(span: Span) -> dict[str, Any]:
+    raw: dict[str, Any] = {
+        "traceId": TRACE_ID,
+        "spanId": span.span_id,
+        "name": span.name,
+        "startTimeUnixNano": _dump_timestamp(span.start_time),
+        "endTimeUnixNano": _dump_timestamp(span.end_time),
+        "attributes": _dump_attributes(span.attributes),
+    }
+    # Absent rather than empty for the root: OTLP marks a root by having no parent, and a
+    # parent id of "" is a different claim from no parent at all.
+    if span.parent_span_id:
+        raw["parentSpanId"] = span.parent_span_id
+    if span.events:
+        raw["events"] = [
+            {
+                "name": event.name,
+                "timeUnixNano": _dump_timestamp(span.end_time),
+                "attributes": _dump_attributes(event.attributes),
+            }
+            for event in span.events
+        ]
+    return raw
+
+
+def _dump_timestamp(when: datetime) -> str:
+    """Nanoseconds since the epoch, as the string OTLP carries them in."""
+    return str(int(when.timestamp() * NANOS_PER_SECOND))
+
+
+def _dump_attributes(mapping: dict[str, Any]) -> list[dict[str, Any]]:
+    return [{"key": key, "value": _dump_value(value)} for key, value in mapping.items()]
+
+
+def _dump_value(value: Any) -> dict[str, Any]:
+    """One Python value as an OTLP AnyValue. The mirror of `_value`, and bool is checked
+    before int because `bool` is a subclass of it and `True` is not the integer 1 here."""
+    if isinstance(value, bool):
+        return {"boolValue": value}
+    if isinstance(value, int):
+        return {"intValue": str(value)}
+    if isinstance(value, float):
+        return {"doubleValue": value}
+    if isinstance(value, list):
+        return {"arrayValue": {"values": [_dump_value(item) for item in value]}}
+    if isinstance(value, dict):
+        return {"kvlistValue": {"values": _dump_attributes(value)}}
+    return {"stringValue": str(value)}
