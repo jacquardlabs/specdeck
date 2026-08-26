@@ -104,6 +104,10 @@ class Never(BaseModel):
     pattern: Literal["never"] = "never"
     selector: Selector
 
+    def tested(self, spans: list[Span], trace: Trace) -> bool:
+        """Whether this run exercised the rule at all. Unconditional, so always."""
+        return True
+
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         hits = [s for s in spans if self.selector.matches(s)]
         return not hits, f"{len(hits)} occurrence{'' if len(hits) == 1 else 's'}"
@@ -119,6 +123,10 @@ class NeverRequested(BaseModel):
 
     pattern: Literal["never_requested"] = "never_requested"
     selector: Selector
+
+    def tested(self, spans: list[Span], trace: Trace) -> bool:
+        """Whether this run exercised the rule at all. Unconditional, so always."""
+        return True
 
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         # Spans, not logical calls: a tool requested in a `chat` span and then executed
@@ -141,6 +149,10 @@ class AtMost(BaseModel):
             raise ValueError(f"at_most budget must not be negative, got {self.n}")
         return self
 
+    def tested(self, spans: list[Span], trace: Trace) -> bool:
+        """Whether this run exercised the rule at all. Unconditional, so always."""
+        return True
+
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         count = sum(1 for s in spans if self.selector.matches(s))
         detail = f"{count} call{'' if count == 1 else 's'}, budget {self.n}"
@@ -157,6 +169,10 @@ class Bound(BaseModel):
     pattern: Literal["bound"] = "bound"
     measure: Measure
     limit: float
+
+    def tested(self, spans: list[Span], trace: Trace) -> bool:
+        """Whether this run exercised the rule at all. Unconditional, so always."""
+        return True
 
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         if self.measure is Measure.TOTAL_OUTPUT_TOKENS and not trace.reports_output_tokens:
@@ -191,10 +207,22 @@ class AfterKThen(BaseModel):
             raise ValueError(f"after-K-then-Y needs k of at least 1, got {self.k}")
         return self
 
+    def tested(self, spans: list[Span], trace: Trace) -> bool:
+        """Whether the trigger reached k, so the obligation was actually put to the run.
+
+        Below k this rule is vacuously true and a run that never provoked the antecedent
+        proved nothing about it — which is a different fact from "the agent did the right
+        thing", and #109 is what happens when a report cannot tell them apart.
+        """
+        return len([s for s in spans if self.trigger.matches(s)]) >= self.k
+
     def check(self, spans: list[Span], trace: Trace) -> tuple[bool, str]:
         triggers = [s for s in spans if self.trigger.matches(s)]
         if len(triggers) < self.k:
-            return True, f"{self.trigger.describe()} occurred {len(triggers)}x, under k={self.k}"
+            return True, (
+                f"{self.trigger.describe()} occurred {len(triggers)}x, under k={self.k} — "
+                "never tested"
+            )
         cutoff = triggers[self.k - 1].start_time
         after = [s for s in spans if self.then.matches(s) and s.start_time >= cutoff]
         detail = f"k={self.k} reached, {len(after)} follow-up{'' if len(after) == 1 else 's'}"
@@ -225,16 +253,35 @@ class Property(BaseModel):
 
 
 class Verdict(BaseModel):
+    """One rule's outcome for one run.
+
+    `passed` and `tested` are separate facts. A conditional rule whose antecedent never
+    fired passed — it asserts nothing about such a run, and failing it would be wrong — but
+    nothing was checked, and a reader scanning a column of verdicts must not read the two
+    the same way. specdeck already draws this line for coverage tables and for
+    introspection depth; #109 is the wire report catching up.
+    """
+
     id: str
     tier: Tier
     weight: int
     passed: bool
     detail: str
+    #: False when the rule was vacuously satisfied: real, but not evidence.
+    tested: bool = True
 
 
 def evaluate(prop: Property, trace: Trace) -> Verdict:
-    passed, detail = prop.rule.check(prop.scope.restrict(trace), trace)
-    return Verdict(id=prop.id, tier=prop.tier, weight=prop.weight, passed=passed, detail=detail)
+    spans = prop.scope.restrict(trace)
+    passed, detail = prop.rule.check(spans, trace)
+    return Verdict(
+        id=prop.id,
+        tier=prop.tier,
+        weight=prop.weight,
+        passed=passed,
+        detail=detail,
+        tested=prop.rule.tested(spans, trace),
+    )
 
 
 def evaluate_all(props: list[Property], trace: Trace) -> list[Verdict]:

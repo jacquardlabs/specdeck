@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from specdeck.trace import GenAI, Operation
-from specdeck.traceio import TraceError, load_trace
+from specdeck.traceio import TraceError, dump_trace, load_trace
 
 SEMCONV = "semantic-conventions-genai@1.38.0"
 
@@ -200,3 +200,62 @@ class TestErrors:
     def test_an_unrecognised_shape_says_what_it_accepts(self, tmp_path: Path) -> None:
         with pytest.raises(TraceError, match=r"resourceSpans"):
             load_trace(write(tmp_path, "run.json", {"events": []}))
+
+
+class TestDumpTrace:
+    """#112. `load_trace(dump_trace(t))` is the property that makes a saved run a fixture."""
+
+    def _trace(self):
+        return load_trace(
+            Path(
+                "examples/payable/tutorial/traces-before/payment-ceiling-denied-at-the-rail.2.otlp.json"
+            )
+        )
+
+    def _round_trip(self, trace, tmp_path: Path):
+        out = tmp_path / "rt.otlp.json"
+        out.write_text(json.dumps(dump_trace(trace), indent=2))
+        return load_trace(out)
+
+    def test_a_trace_survives_the_round_trip_intact(self, tmp_path: Path) -> None:
+        one = self._trace()
+        back = self._round_trip(one, tmp_path)
+        assert back.semconv == one.semconv
+        assert [s.span_id for s in back.spans] == [s.span_id for s in one.spans]
+        assert [s.attributes for s in back.spans] == [s.attributes for s in one.spans]
+        assert [s.start_time for s in back.spans] == [s.start_time for s in one.spans]
+
+    def test_the_denial_convention_survives(self, tmp_path: Path) -> None:
+        """A reserved attribute that did not round trip would make a saved denial an
+        ordinary execution, which is the misreading the attribute exists to prevent."""
+        back = self._round_trip(self._trace(), tmp_path)
+        denied = [s for s in back.spans if s.denied_tool]
+        assert [s.denied_tool for s in denied] == ["pay_invoice"]
+        assert all(s.executed_tool is None for s in denied)
+
+    def test_it_writes_otlp_rather_than_specdecks_own_shape(self, tmp_path: Path) -> None:
+        """A file only this project can read would let "an agent already emitting OTel
+        needs no adapter" go untested by the artefacts meant to demonstrate it."""
+        raw = dump_trace(self._trace())
+        assert "resourceSpans" in raw
+        spans = raw["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        assert all("startTimeUnixNano" in s for s in spans)
+        assert all(isinstance(a["value"], dict) for s in spans for a in s["attributes"])
+
+    def test_the_root_has_no_parent_rather_than_an_empty_one(self, tmp_path: Path) -> None:
+        """OTLP marks a root by absence; a parent id of "" is a different claim."""
+        spans = dump_trace(self._trace())["resourceSpans"][0]["scopeSpans"][0]["spans"]
+        roots = [s for s in spans if "parentSpanId" not in s]
+        assert len(roots) == 1
+
+    def test_a_bool_does_not_round_trip_as_an_integer(self, tmp_path: Path) -> None:
+        """`bool` is a subclass of `int`, so the writer checks it first or True becomes 1."""
+        one = self._trace()
+        one.spans[0].attributes["specdeck.flag"] = True
+        back = self._round_trip(one, tmp_path)
+        assert back.spans[0].attributes["specdeck.flag"] is True
+
+    def test_a_service_name_reaches_the_resource(self, tmp_path: Path) -> None:
+        raw = dump_trace(self._trace(), service_name="meridian")
+        attrs = raw["resourceSpans"][0]["resource"]["attributes"]
+        assert {"key": "service.name", "value": {"stringValue": "meridian"}} in attrs

@@ -361,11 +361,11 @@ class TestTheCoverageBlock:
 
     def _document(self, **overrides) -> PolicyDocument:
         fields: dict = {
-            "path": "cards/policy/airline.md",
+            "path": "cards/policy/ap.md",
             "clauses": [
                 Clause(
                     id="refund/1",
-                    document="cards/policy/airline.md",
+                    document="cards/policy/ap.md",
                     section="Refund",
                     text="the agent must not write to [/tmp]",
                     line=3,
@@ -378,7 +378,7 @@ class TestTheCoverageBlock:
 
     def test_a_policy_document_prints_its_path_its_count_and_its_sections(self) -> None:
         text = coverage_text(Coverage(policy=[self._document()]))
-        assert "cards/policy/airline.md" in text
+        assert "cards/policy/ap.md" in text
         assert "1 clause" in text
         assert "Refund" in text
 

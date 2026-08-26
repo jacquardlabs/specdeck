@@ -183,8 +183,12 @@ class TestDeniedCallsInTheTranscript:
         assert recordings, "the committed cassettes are the fixture this asserts against"
         for recording in recordings:
             slug = recording.name.partition(".")[0]
-            rendered = render_transcript(load_trace(cards / "traces" / f"{slug}.otlp.json"))
-            assert rendered in json.loads(recording.read_text())["prompt"], slug
+            # Globbed, not constructed: a card's traces are captured per run by
+            # --save-trace (#112), so a card has `<slug>.1.otlp.json` and may have more.
+            traces = sorted((cards / "traces").glob(f"{slug}.*.otlp.json"))
+            assert traces, slug
+            prompt = json.loads(recording.read_text())["prompt"]
+            assert any(render_transcript(load_trace(t)) in prompt for t in traces), slug
 
 
 class TestParseResponse:

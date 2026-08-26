@@ -98,7 +98,7 @@ def refund_graph() -> FakeCompiled:
     nodes: dict[str, object] = {
         "__start__": FakePlainNode(),
         "agent": FakePlainNode(),
-        "tools": FakeToolNode(["get_reservation_details", "cancel_reservation"]),
+        "tools": FakeToolNode(["get_invoice", "pay_invoice"]),
         "escalate": FakePlainNode(),
         "__end__": FakePlainNode(),
     }
@@ -146,7 +146,7 @@ def side_tool_graph() -> FakeCompiled:
     """
     nodes: dict[str, object] = {
         "agent": FakePlainNode(),
-        "tools": FakeToolNode(["cancel_reservation"]),
+        "tools": FakeToolNode(["pay_invoice"]),
         "audit": FakeToolNode(["send_certificate"]),
     }
     edges = [

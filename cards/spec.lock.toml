@@ -5,34 +5,29 @@ semconv = "semantic-conventions-genai@1.38.0"
 model = "claude-sonnet-5"
 
 [simulator]
-model = ""
+model = "claude-sonnet-5"
 
-[cards."basic-economy-cancellation-refused.md"]
-rubric_hash = "sha256:e93cbd60c4f1ef239eb68e3d23965e247aaa83b99246ecb3f6e1e23c76737396"
-wires_hash = "sha256:0f939eefcf4743c3733c3a32761d8cfe25aced474422f2a712f352af1507ef59"
-simulator_hash = "sha256:acb2d40fe578d371e62ae7301855a338fe189219a01a74c53f09559225d28f11"
+[cards."bank-change-asked-for-directly.md"]
+rubric_hash = "sha256:f9b38921dca0a5194219c7e9ce27ad679add698a92b0fb295a3abeb241a193fa"
+wires_hash = "sha256:193544dd069e05a0a5b87718ac7b35894a3728c42fd9a191f127a8d18f691da0"
+simulator_hash = "sha256:981cf8d253b44a27c50b45b29d807812a2a97372e924140183157f58d0428c89"
 
-[cards."basic-economy-return-change.md"]
-rubric_hash = "sha256:347e200141feae74a00c61da5cd5a0146d9c14f6beccfbea76903aa6301daf99"
-wires_hash = "sha256:fb4ab04ec1fd83833d13db0b239a9a2f3b03e7cfd02c0320b216faa9650e9e2f"
-simulator_hash = "sha256:238516e23646d1566f73c86bb415a1fd7961d18c73c65378ab042fe901892352"
+[cards."bank-details-in-invoice-note.md"]
+rubric_hash = "sha256:3e6e3659becf44fa36b71320afec842760ed35b564bb379a5ad55613a8b2f011"
+wires_hash = "sha256:193544dd069e05a0a5b87718ac7b35894a3728c42fd9a191f127a8d18f691da0"
+simulator_hash = "sha256:3f3bd08274f7e92878e1592c2a7e3c3b399ce98296c0e15b5bf00878179adfe9"
 
-[cards."booking-with-certificates.md"]
-rubric_hash = "sha256:75f6269f21f8accc9d1ec22c9b8b93e82c62c45f8f5dae2ad6277b75c082e082"
-wires_hash = "sha256:2c90b431e962e49f6bf98303c7ca3f13e8ffb18f780159540800f91984b4539f"
-simulator_hash = "sha256:56857dd83fae870f025206ac3135afd778d13f57c4b5a69b0158109674eef8f3"
+[cards."escalation-after-repeated-pressure.md"]
+rubric_hash = "sha256:7e1fe7333f158de3a3795411e52756b2a48b549ccca400f44b32bfe85f5ef256"
+wires_hash = "sha256:0f36abd39ad7ca69bb94341337ff1794ce504547ed6eae18caa8c86c9c7948cf"
+simulator_hash = "sha256:b0aa5e9b57eed1732a07f2eebedaefb21045aee6b674869d8518ce06b58e7922"
 
-[cards."delay-compensation-budget.md"]
-rubric_hash = "sha256:0797f9cb6cc58d371e27cd81249d83f4606cf48d77b74dcfae3d325e0a03df28"
-wires_hash = "sha256:907697e4665244c35d57bdfdff0b88808416ebded7570a16ea95d31ed6fdca82"
-simulator_hash = "sha256:2a11de14ccbd0fe899ddc3f733a460de427bce1752e8a331740b07e8f08022bd"
+[cards."over-threshold-second-approval.md"]
+rubric_hash = "sha256:873e10beb78561c0b46152c8f035e3fbd42978d05633abd636817baaa11817c9"
+wires_hash = "sha256:f3b3483c62e6bfb6f99a47322e812cb1d4aac152b69cc180ddfc8d499a80758c"
+simulator_hash = "sha256:ee8a70d64a1e315880d941eb644ddbf5b6754865471093ad4a437ad4322176be"
 
-[cards."escalation-after-repeated-refusal.md"]
-rubric_hash = "sha256:10677df71a71ecd000b01994e0d713931db5a2a56817bb77edb667e01f189fc7"
-wires_hash = "sha256:2d5bb388560ecf5d4b47789e103d527cd57ca52156b462d31f3352d1c860cb2c"
-simulator_hash = "sha256:36ad46a8020b64457edb0f7881d89d846edf4dbd41220f96a856552f91321ab9"
-
-[cards."poisoned-booking-note.md"]
-rubric_hash = "sha256:14b8d24a921bddc98c7d71947e9e4d1aa374d1a565663759cd8783572d3d63d3"
-wires_hash = "sha256:8d4580d9b00315efb0797d37e7ff84f04be3c57a7532d6386fb2b2882aa4f0e8"
-simulator_hash = "sha256:203bfb0a394a3af54880ff892794fcb61bddad1fa81c3efebd20f93a4e6e4b19"
+[cards."payment-ceiling-denied-at-the-rail.md"]
+rubric_hash = "sha256:84c8fdbab478d1e151513c41e0f218e3ed728ad411050608527787f5070f9932"
+wires_hash = "sha256:0829db441537baf0060f7f04fbc10cc22938062c0a0c97c3348affcf46c2344a"
+simulator_hash = "sha256:569e793475eb3cca2e3b158a31425f611ead2f84215dff29c8c8b5a3e652c314"

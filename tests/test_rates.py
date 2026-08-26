@@ -9,7 +9,7 @@ from typer.testing import CliRunner
 
 from specdeck.cli import app
 from specdeck.judge import DEFAULT_JUDGE_MODEL
-from specdeck.rates import RATES_FILE, Estimate, RateError, Rates, load_rates
+from specdeck.rates import RATES_FILE, Estimate, ModelRate, RateError, Rates, load_rates
 
 runner = CliRunner()
 
@@ -336,3 +336,34 @@ class TestTheCommand:
         broken.write_text('verified = 2026-01-15\n[rates]\nanthropic = "nope"\n')
         printed = flat(runner.invoke(app, ["rates", "--rates", str(broken)]).stdout)
         assert "[rates.anthropic]" in printed
+
+
+class TestDatedReleases:
+    """Both shapes a vendor writes a snapshot date in, and nothing looser."""
+
+    TABLE = Rates(
+        verified=date(2026, 8, 25),
+        table={
+            "anthropic": {"claude-sonnet-5": ModelRate(input=2.0, output=10.0)},
+            "openai": {"gpt-5-mini": ModelRate(input=0.25, output=2.0)},
+        },
+    )
+
+    def test_an_anthropic_dated_id_prices_as_its_family(self) -> None:
+        assert self.TABLE.rate_for("claude-sonnet-5-20260514") is not None
+
+    def test_an_openai_dated_id_prices_as_its_family(self) -> None:
+        """`-2025-08-07`, which the original rule did not recognise.
+
+        OpenAI replies name a dated snapshot for a request that said `gpt-5-mini`, so a
+        matrix column declared one model and ran another. The cap refused it, which is the
+        cap doing its job; the rule was what needed widening.
+        """
+        assert self.TABLE.rate_for("openai/gpt-5-mini-2025-08-07") is not None
+
+    def test_a_different_family_that_merely_extends_the_string_is_still_unpriced(
+        self,
+    ) -> None:
+        """The property the widening must not break: no substituted rates."""
+        assert self.TABLE.rate_for("openai/gpt-5-mini-turbo") is None
+        assert self.TABLE.rate_for("openai/gpt-5-turbo-2025-08-07") is None

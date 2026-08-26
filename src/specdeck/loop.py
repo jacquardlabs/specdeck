@@ -86,13 +86,19 @@ async def run_agent(
         # nothing to describe yet, so a marker there is dropped rather than misattributed.
         builder.mark(spoken)
         messages.append({"role": "user", "content": spoken.reply})
-        if spoken.done:
-            break
 
         events = await adapter.run(list(messages), list(tools or []), dict(config or {}))
         if not events:
             raise LoopError("the adapter returned no events for a turn it was asked to take")
         messages.extend(builder.record(events, inputs=list(messages)))
+        # Checked after the agent has answered, never before it (#108). A conversation
+        # ends on the agent's turn, not the user's: the policy of every deck we have makes
+        # the agent ask before it writes, so the traveller's last word is "yes" — and a
+        # loop that broke on `done` discarded exactly the turn that does the booking. The
+        # cap still bounds this: the closing reply is part of this iteration, not an extra
+        # one, so `max_turns` remains the number of times the agent speaks.
+        if spoken.done:
+            break
 
     trace = Trace(semconv=semconv, spans=builder.finish())
     if budget is not None:
@@ -184,6 +190,14 @@ class _Builder:
                 GenAI.TOOL_CALL_ID: event.call_id or self._id("call"),
                 GenAI.TOOL_CALL_ARGUMENTS: json.dumps(event.arguments),
                 GenAI.TOOL_CALL_RESULT: event.result,
+                # Present only for a denial, because its presence is what makes the span
+                # one. An attribute written as None on every ordinary call would make
+                # `Span.denied_tool` answer "not denied" and "denied by nobody" alike.
+                **(
+                    {Specdeck.DENIED_TOOL: event.denied_tool}
+                    if event.denied_tool is not None
+                    else {}
+                ),
             },
         )
 

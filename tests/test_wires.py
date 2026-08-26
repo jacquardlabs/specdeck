@@ -59,28 +59,28 @@ class TestToolWires:
         assert short.model_dump(mode="json") == long.model_dump(mode="json")
 
     def test_never_requested_is_its_own_pattern_and_its_own_id(self) -> None:
-        prop = compile_wire("cancel_reservation: never_requested")
-        assert prop.id == "never_requested:cancel_reservation"
+        prop = compile_wire("pay_invoice: never_requested")
+        assert prop.id == "never_requested:pay_invoice"
         assert isinstance(prop.rule, NeverRequested)
-        assert prop.rule.selector.tool == "cancel_reservation"
+        assert prop.rule.selector.tool == "pay_invoice"
 
     def test_never_requested_selects_no_operation(self) -> None:
         # A request shows on a `chat` span as readily as on an `execute_tool` one, so
         # pinning the operation would make the wire blind to the case it exists for.
-        assert compile_wire("cancel_reservation: never_requested").rule.selector.operation is None
+        assert compile_wire("pay_invoice: never_requested").rule.selector.operation is None
 
     def test_the_new_spellings_did_not_widen_the_grammar(self) -> None:
         with pytest.raises(WireError, match=r"never_asked"):
-            compile_wire("cancel_reservation: never_asked")
+            compile_wire("pay_invoice: never_asked")
 
     def test_a_card_may_state_both_and_gets_two_distinct_properties(self) -> None:
         card = parse_text(
             "# Both\n\nThe agent refuses.\n\nwire:\n"
-            "  - cancel_reservation: never_executed\n"
+            "  - pay_invoice: never_executed\n"
             "  - send_certificate: never_requested\n"
         )
         assert [p.id for p in compile_wires(card)] == [
-            "never:cancel_reservation",
+            "never:pay_invoice",
             "never_requested:send_certificate",
         ]
 

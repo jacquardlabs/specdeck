@@ -19,7 +19,8 @@ from specdeck.judge import Cassette, criteria_of
 from specdeck.judge import build_prompt as judge_prompt
 from specdeck.lockfile import Lockfile
 from specdeck.loop import run_agent
-from specdeck.trace import SEMCONV
+from specdeck.trace import SEMCONV, Operation
+from specdeck.traceio import load_trace
 
 from .fake_agent import BareAgent, FakeAgent, refuses
 from .fake_graph import FakeCompiled, refund_graph
@@ -35,7 +36,7 @@ context:
 The agent refuses to cancel the basic economy fare and explains why.
 
 wire:
-  - cancel_reservation: never
+  - pay_invoice: never
 """
 
 VOCABULARY = """\
@@ -259,7 +260,7 @@ class TestRelockKeepsWhatItWasNotGiven:
             Path(__file__).resolve().parent.parent
             / "cards"
             / "traces"
-            / "basic-economy-return-change.otlp.json"
+            / "over-threshold-second-approval.1.otlp.json"
         )
         result = runner.invoke(
             app,
@@ -282,7 +283,7 @@ class TestTheAgentDefinitionFlag:
 
     def _deck(self, tmp_path: Path) -> Path:
         (tmp_path / "a.md").write_text(
-            "# Scenario: a\nThe agent answers.\n\nwire:\n  - cancel_reservation: at_most 3\n"
+            "# Scenario: a\nThe agent answers.\n\nwire:\n  - pay_invoice: at_most 3\n"
         )
         return tmp_path
 
@@ -411,12 +412,37 @@ class TestPathCoverageInTheRunReport:
             app,
             [
                 "run",
-                str(repo / "cards" / "basic-economy-return-change.md"),
+                str(repo / "cards" / "over-threshold-second-approval.md"),
                 "--trace",
-                str(repo / "cards" / "traces" / "basic-economy-return-change.otlp.json"),
+                str(repo / "cards" / "traces" / "over-threshold-second-approval.1.otlp.json"),
             ],
         )
         assert result.exit_code == 0, result.stdout
         text = flat(result.stdout)
         assert "no agent definition" in text
         assert "declared edge hit" not in text
+
+
+class TestSavingTraces:
+    """#112: what a live run produced, kept, so the run can be replayed for nothing."""
+
+    def test_it_writes_one_file_per_run_named_for_the_card(self, workspace: Path) -> None:
+        out = workspace / "traces"
+        result = run(workspace, "--relock", "--simulator-model", MODEL, "--save-trace", str(out))
+        assert result.exit_code in (0, 1), result.stdout
+        written = sorted(p.name for p in out.glob("*.otlp.json"))
+        assert written, result.stdout
+        assert all(name.endswith(".otlp.json") for name in written)
+        # Named so `traces: <slug>.*.otlp.json` picks the set up whole.
+        assert all(name.split(".")[0] == written[0].split(".")[0] for name in written)
+
+    def test_what_it_writes_loads_back_as_a_trace(self, workspace: Path) -> None:
+        out = workspace / "traces"
+        run(workspace, "--relock", "--simulator-model", MODEL, "--save-trace", str(out))
+        for path in out.glob("*.otlp.json"):
+            trace = load_trace(path)
+            assert trace.spans and trace.root.operation is Operation.INVOKE_AGENT
+
+    def test_nothing_is_written_without_the_flag(self, workspace: Path) -> None:
+        run(workspace, "--relock", "--simulator-model", MODEL)
+        assert not list(workspace.glob("*.otlp.json"))

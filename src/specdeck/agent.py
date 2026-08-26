@@ -31,12 +31,31 @@ class Chat(BaseModel):
 
 
 class ToolCall(BaseModel):
-    """One tool the agent executed, and what came back."""
+    """One tool the agent executed, and what came back — or one a runtime refused.
+
+    A denial is deliberately *not* its own event type. The format encodes one as an
+    `execute_tool` span carrying a reserved attribute (docs/card-format.md), so an event
+    that produced such a span under another name would be a name disagreeing with what it
+    writes. Setting `denied_tool` is what makes this a denial:
+
+        ToolCall(
+            name="ap_guardrail",                     # the component that refused
+            denied_tool="update_vendor_bank_details",  # what the model asked for
+            arguments={...},                          # what it asked with
+            result="denied: bank details are changed out of band by Finance",
+        )
+
+    `name` then carries the policy component rather than anything that ran, which is why
+    `Span.executed_tool` returns None for it: nothing executed, so a card forbidding
+    execution has not been violated — while a card forbidding the *request* has.
+    """
 
     name: str
     arguments: dict = Field(default_factory=dict)
     result: str = ""
     call_id: str | None = None
+    #: The tool a runtime refused at dispatch. None for an ordinary call.
+    denied_tool: str | None = None
 
 
 #: What one agent turn is made of, in the order it happened. A turn ends when the agent

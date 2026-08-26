@@ -1,28 +1,15 @@
-# Tool names available to the agent under test, one per line.
-#
-# A placeholder input. docs/card-format.md says this vocabulary comes from an introspected
-# source — the tool registry, MCP schemas, the agent roster — and none of those exist until
-# the agent step lands (#9). Until then a card's tools are stated here so `unknown-tool`
-# can run at all, and the file is a lint input rather than a spec surface.
-#
-# tau-bench airline domain.
+# Tools the Meridian accounts payable agent is given.
 [tools]
-book_reservation
-calculate
-cancel_reservation
-get_reservation_details
-get_user_details
-list_all_airports
-search_direct_flight
-search_onestop_flight
-send_certificate
-think
-transfer_to_human_agents
-update_reservation_baggages
-update_reservation_flights
-update_reservation_passengers
+escalate_to_human
+get_invoice
+get_purchase_order
+get_vendor
+hold_invoice
+list_open_invoices
+pay_invoice
+request_second_approval
+update_vendor_bank_details
 
-# Domain events the simulator stamps as `specdeck.marker`, which the GenAI semconv has no
-# place for. In production the agent's own instrumentation stamps them instead.
+# Domain events the simulator stamps as `specdeck.marker`.
 [markers]
 non_agreement

@@ -31,8 +31,8 @@ class TestTheCoverageCommand:
     """`specdeck coverage` reports denominators and can never gate CI."""
 
     CARD = "# Scenario: x\ncontext:\n  policy: policy.md\n\nThe agent answers.\n"
-    WIRED = CARD + "\nwire:\n  - cancel_reservation: never\n"
-    VOCABULARY = "[tools]\ncancel_reservation\nlist_all_airports\n"
+    WIRED = CARD + "\nwire:\n  - pay_invoice: never\n"
+    VOCABULARY = "[tools]\npay_invoice\nget_invoice\n"
 
     def _deck(self, tmp_path: Path, card: str) -> Path:
         (tmp_path / "policy.md").write_text("- the agent must confirm before booking\n")
@@ -51,7 +51,7 @@ class TestTheCoverageCommand:
     def test_a_fully_covered_deck_exits_zero_too(self, tmp_path: Path) -> None:
         # The exit code carries no coverage information at all, in either direction.
         deck = self._deck(tmp_path, self.WIRED)
-        (tmp_path / "vocabulary.txt").write_text("[tools]\ncancel_reservation\n")
+        (tmp_path / "vocabulary.txt").write_text("[tools]\npay_invoice\n")
         result = runner.invoke(
             app, ["coverage", str(deck), "--vocabulary", str(tmp_path / "vocabulary.txt")]
         )
@@ -87,10 +87,10 @@ class TestTheCoverageCommand:
     def _policy_deck(self, tmp_path: Path, orphan: str) -> Path:
         """The repo's own layout: cards in the deck root, policies in `policy/`."""
         (tmp_path / "policy").mkdir()
-        (tmp_path / "policy" / "airline.md").write_text("# Airline Policy\n\n- confirm first\n")
+        (tmp_path / "policy" / "ap.md").write_text("# AP Policy\n\n- confirm first\n")
         (tmp_path / "policy" / "refunds.md").write_text(orphan)
         (tmp_path / "card.md").write_text(
-            "# Scenario: x\ncontext:\n  policy: policy/airline.md\n\nThe agent answers.\n"
+            "# Scenario: x\ncontext:\n  policy: policy/ap.md\n\nThe agent answers.\n"
         )
         return tmp_path
 
@@ -141,12 +141,12 @@ class TestTheCoverageCommand:
 
     def test_a_trace_marks_a_tool_exercised(self, tmp_path: Path) -> None:
         deck = self._deck(tmp_path, self.CARD)
-        (tmp_path / "vocabulary.txt").write_text("[tools]\nget_reservation_details\n")
+        (tmp_path / "vocabulary.txt").write_text("[tools]\nget_purchase_order\n")
         recorded = (
             Path(__file__).resolve().parent.parent
             / "cards"
             / "traces"
-            / "basic-economy-return-change.otlp.json"
+            / "over-threshold-second-approval.1.otlp.json"
         )
         result = runner.invoke(
             app,
@@ -160,4 +160,4 @@ class TestTheCoverageCommand:
             ],
         )
         assert result.exit_code == 0
-        assert "get_reservation_details no wire, exercised" in " ".join(result.stdout.split())
+        assert "get_purchase_order no wire, exercised" in " ".join(result.stdout.split())
