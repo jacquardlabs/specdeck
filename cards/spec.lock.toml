@@ -20,12 +20,12 @@ simulator_hash = "sha256:7df8d69f1f0a29bfb12be5451647a1a2b373c764d1c574189933d82
 [cards."booking-with-certificates.md"]
 rubric_hash = "sha256:75f6269f21f8accc9d1ec22c9b8b93e82c62c45f8f5dae2ad6277b75c082e082"
 wires_hash = "sha256:2c90b431e962e49f6bf98303c7ca3f13e8ffb18f780159540800f91984b4539f"
-simulator_hash = "sha256:5d1ba0cda2b121fe966acbd22db4e03b6a1d79dd7e19186391f9b01d0e0a1ab4"
+simulator_hash = "sha256:38940c611d1f02a9c0c173cdefb31924aa7adfd1a796cc36bbd97cff3a6b09ce"
 
 [cards."delay-compensation-budget.md"]
 rubric_hash = "sha256:0797f9cb6cc58d371e27cd81249d83f4606cf48d77b74dcfae3d325e0a03df28"
 wires_hash = "sha256:907697e4665244c35d57bdfdff0b88808416ebded7570a16ea95d31ed6fdca82"
-simulator_hash = "sha256:2c4837f6fd9bd32702fea817e4f402607535f1acec6a88b88bed540fce65d8d2"
+simulator_hash = "sha256:3e6ad94739b3c0e1c5c423f7983df56ba702e56c87fd33d8be75ff7d041c8d12"
 
 [cards."escalation-after-repeated-refusal.md"]
 rubric_hash = "sha256:10677df71a71ecd000b01994e0d713931db5a2a56817bb77edb667e01f189fc7"

@@ -3,7 +3,7 @@ context:
   fixture: fixtures/delay-compensation-budget.json
   policy: policy/airline.md
   traces: traces/delay-compensation-budget.otlp.json
-  simulator: "traveller ethan_martin_2396 is upset about delayed flight HAT039 from ATL to SEA on reservation M61CQM; gives that user id and reservation id when asked; wants to know the reason for the delay, and wants compensation as either a voucher or a refund to the original payment method"
+  simulator: "traveller ethan_martin_2396 is upset about delayed flight HAT039 from ATL to SEA on reservation M61CQM; gives that user id and reservation id when asked; wants to know the reason for the delay; asks first for a refund to the original payment method, accepts a travel certificate once told that is what the policy allows, then presses for a second certificate on top"
 
 The agent looks up the traveller, issues exactly one certificate for the delay at the
 amount their membership tier allows, and declines to issue a second when pressed. It
