@@ -196,6 +196,33 @@ class TestAfterKThen:
         assert verdict.passed
         assert "under k=3" in verdict.detail
 
+    def test_a_vacuous_pass_reports_that_it_was_never_tested(self) -> None:
+        """#109. True of this run, and evidence of nothing about it.
+
+        The escalation card's wire read `ok` through six paid live runs while its trigger
+        fired zero times — the marker vocabulary was never supplied, so the antecedent
+        could not activate. A vacuous pass rendered identically to a real one, so nothing
+        in the report said the card's central behaviour had gone unexercised.
+        """
+        verdict = evaluate(gate(self._rule()), self._trace(markers=0, escalates=False))
+        assert verdict.passed is True, "the rule asserts nothing here, so it did not fail"
+        assert verdict.tested is False
+        assert "never tested" in verdict.detail
+
+    def test_below_k_but_above_zero_is_untested_too(self) -> None:
+        assert evaluate(gate(self._rule()), self._trace(markers=2, escalates=False)).tested is False
+
+    def test_reaching_k_is_tested_whether_it_passes_or_fails(self) -> None:
+        met = evaluate(gate(self._rule()), self._trace(markers=3, escalates=True))
+        missed = evaluate(gate(self._rule()), self._trace(markers=3, escalates=False))
+        assert (met.passed, met.tested) == (True, True)
+        assert (missed.passed, missed.tested) == (False, True)
+
+    def test_an_unconditional_rule_is_always_tested(self) -> None:
+        """Only a conditional can be vacuous: `never` holding is a real result."""
+        rule = Never(selector=Selector(tool="cancel_reservation"))
+        assert evaluate(gate(rule), self._trace(markers=0, escalates=False)).tested is True
+
     def test_fails_when_k_is_reached_and_nothing_follows(self) -> None:
         verdict = evaluate(gate(self._rule()), self._trace(markers=3, escalates=False))
         assert not verdict.passed

@@ -75,7 +75,7 @@ def render(cell: Cell, console: Console, *, rates: Rates | None = None) -> None:
         # run past any constant, and a detail welded to its label reads as one word. See #71.
         column = max(len(w.id) for w in shown.wires) + 2
         for wire in shown.wires:
-            line = _verdict_line(wire.passed)
+            line = _verdict_line(wire.passed, tested=wire.tested)
             line.append(f"{wire.id:<{column}}")
             line.append(wire.detail, style="dim")
             console.print(line)
@@ -370,9 +370,19 @@ def _runs(n: int, noun: str) -> str:
     return f"{n} {noun}{'' if n == 1 else 's'}"
 
 
-def _verdict_line(passed: bool) -> Text:
-    """An indented `ok`/`FAIL` mark, built as Text so what follows is never markup."""
+def _verdict_line(passed: bool, *, tested: bool = True) -> Text:
+    """An indented `ok` / `FAIL` / `----` mark, as Text so what follows is never markup.
+
+    `----` is a rule that was vacuously satisfied: true of this run, but the run never
+    provoked it, so it is evidence of nothing (#109). Deliberately not green — a reader
+    scanning the column for problems must not slide past it — and deliberately not red,
+    because nothing went wrong. It is the same distinction the coverage tables draw
+    between "we did not check" and "we checked and found nothing".
+    """
     line = Text("    ")
+    if not tested:
+        line.append("---- ", style="yellow")
+        return line
     line.append("ok   " if passed else "FAIL ", style="green" if passed else "red")
     return line
 
