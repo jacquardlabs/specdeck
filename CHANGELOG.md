@@ -2,6 +2,73 @@
 
 <!-- version list -->
 
+## v0.8.0 (2026-08-26)
+
+### Bug Fixes
+
+- A wire the run never provoked reports never tested, not ok
+  ([`760ac61`](https://github.com/jacquardlabs/specdeck/commit/760ac614b81c2a524802196b1c55f2888a781078))
+
+- Format the exit-code test, and point cheapest.toml at the policy that exists
+  ([`bbf36b5`](https://github.com/jacquardlabs/specdeck/commit/bbf36b52095e1adf5ff04ea382169cc59d3df33d))
+
+- Personas carry the identity a live caller would have
+  ([`c27f05a`](https://github.com/jacquardlabs/specdeck/commit/c27f05a42ac66320ccff7845adf957ccba92e56a))
+
+- Personas do what their own criteria require
+  ([`a681e60`](https://github.com/jacquardlabs/specdeck/commit/a681e60d26911e1d4513c58b3cbd08c233caafb2))
+
+- Price a dated model id in either shape a vendor writes one
+  ([`1755177`](https://github.com/jacquardlabs/specdeck/commit/1755177d03bd4318356ba2db44bd47bed4664800))
+
+- The agent answers the traveller's last turn
+  ([`a30f504`](https://github.com/jacquardlabs/specdeck/commit/a30f50479253d73842a1311c601dadc17fafdaef))
+
+### Continuous Integration
+
+- Drop the trace generator step, which the deck no longer has
+  ([`a373404`](https://github.com/jacquardlabs/specdeck/commit/a373404597532ef402c8c0abe2ed0033745dfb1f))
+
+### Documentation
+
+- Fix links that moved with the CLI reference out of the README
+  ([`1e89336`](https://github.com/jacquardlabs/specdeck/commit/1e89336a461913cee2cffe38503a06358519426c))
+
+- Make every tutorial step actually run, from a clean clone
+  ([`f389062`](https://github.com/jacquardlabs/specdeck/commit/f389062896231f12f5e40f5f956321e53a2c241e))
+
+- Rewrite the README, tutorial and analysis in the project's own voice
+  ([`59bfab0`](https://github.com/jacquardlabs/specdeck/commit/59bfab0eec947194d30419a7e1766e1e1b29c65a))
+
+- The README becomes a tour, and the tutorial is the way in
+  ([`bebdd71`](https://github.com/jacquardlabs/specdeck/commit/bebdd71b9fb7ed2d0868e937738699f82a14bd5a))
+
+- The tutorial ends on the sweep's real numbers
+  ([`107f046`](https://github.com/jacquardlabs/specdeck/commit/107f046a2f7a7ce78220e2014cf330c45db530d6))
+
+- The tutorial stopped skipping the step where a card gets its traces
+  ([`894c583`](https://github.com/jacquardlabs/specdeck/commit/894c5834afc02a4a6784da9586e50dc64c8e5f12))
+
+### Features
+
+- --save-trace, the escalation card, and a deck that replays for free
+  ([`94373b8`](https://github.com/jacquardlabs/specdeck/commit/94373b8308806fad0620898c20ec76b0645a51e8))
+
+- The Meridian accounts payable example, and denial support to make it possible
+  ([`3eae83c`](https://github.com/jacquardlabs/specdeck/commit/3eae83c95d8e31008f04944f32ab409e5b78add5))
+
+- The trimmed prompt variant for the migration report
+  ([`6371a38`](https://github.com/jacquardlabs/specdeck/commit/6371a38c804c7621354782f69fad59edc234d851))
+
+- Τ-bench is out; Meridian is the deck
+  ([`3bc510a`](https://github.com/jacquardlabs/specdeck/commit/3bc510ad9e1f5f4704f0e2f88640cdd2dfdf9a36))
+
+### Testing
+
+- The Meridian deck, the OTLP writer, and --save-trace
+  ([`aad64dc`](https://github.com/jacquardlabs/specdeck/commit/aad64dca7db92678d16b18b89c3e78f6328e3652))
+
+
 ## v0.7.0 (2026-08-25)
 
 ### Features
