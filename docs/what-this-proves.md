@@ -1,17 +1,13 @@
-# What these scenarios prove, and what they cost
+# What a deck proves, and what it costs
 
-Draft for the migration report (#24). Numbers are measured from this repo's own runs, not
-projected from a pricing page. Every dollar figure is an estimate in the sense the runner
-means it: derived from a committed rate table, never from a bill.
+## The bet
 
-## The question this has to answer
+Six scenarios in one domain isn't coverage, and nobody should pretend it is. So the claim
+has to be narrower than "this proves the agent is correct," and it has to survive a hostile
+reading:
 
-Six scenarios in one domain is not coverage, and nobody should pretend otherwise. So the
-claim cannot be "this deck proves the agent is correct." The claim has to be narrower and
-survive a hostile reading:
-
-> A deck catches a specific class of failure that review, staging and unit tests do not,
-> and it catches it before a customer does.
+> A deck catches a class of failure that review, staging and unit tests don't, and it
+> catches it before a customer does.
 
 Everything below is either evidence for that or a limit on it.
 
@@ -19,36 +15,33 @@ Everything below is either evidence for that or a limit on it.
 
 Four findings, all from real runs in this repo. Only the first is about models.
 
-**1. A model swap changed behaviour on identical prompts.** `claude-opus-4-8` and
-`claude-opus-5` were given the same six cards and the same system prompt. They did not
-score the same. Nothing about that is visible in a changelog, and nothing in a unit test
-would have shown it, because the prompt did not change — only the model behind it did.
+**A model swap changed behaviour on identical prompts.** Two models were given the same
+cards and the same system prompt. They didn't score the same. Nothing about that is visible
+in a changelog and nothing in a unit test would show it, because the prompt didn't change —
+only the model behind it did.
 
-**2. Trimming a prompt is not free, and which way it cuts depends on the model.** The
-grid carries a fourth column nobody asked for: the *old* model on the *trimmed* prompt.
-Without it, a good result from new-model-plus-trimmed-prompt cannot be attributed to the
-model rather than the trim. With it, the two effects separate. This is the difference
-between "the new model is better" and "the new model needs less scaffolding", and only the
-second is actionable.
+**Trimming a prompt isn't free, and which way it cuts depends on the model.** The grid
+carries a column nobody asked for: the old model on the trimmed prompt. Without it, a good
+result from new-model-plus-trimmed-prompt can't be attributed to the model rather than the
+trim. With it, the two effects separate. That's the difference between "the new model is
+better" and "the new model needs less scaffolding," and only the second is actionable.
 
-**3. Both models walked past a policy boundary.** `escalation-after-repeated-refusal`
-requires a hand-off to a human after the traveller has pushed back three times — a boundary
-the airline policy states and the card scores. Neither model does it. Both refuse three
-times, courteously, and keep going. That is a production incident waiting for a customer
-to find, and it took one card to surface.
+**Both models walked past a policy boundary.** One card requires a hand-off to a human after
+three pushbacks. Neither model does it reliably — one manages it four times in five, which
+is worse than failing outright, because four times in five is what you'd see if you checked
+by hand. That's a production incident waiting for a customer to find, and it took one card.
 
-**4. The specs themselves had drifted from what they claimed.** Every card passed against
-its recorded trace and 23 of 24 live cells failed, because no scenario told the simulated
-traveller who they were — the recorded trace already contained the lookups, so replay never
-asked. A spec that only works in replay is not a spec. This was the most valuable finding
-of the exercise and it is not about any model.
+**The specs themselves had drifted from what they claimed.** Every card passed against its
+recorded trace and 23 of 24 live cells failed, because no scenario told the simulated user
+who they were. The recorded trace already contained the lookups, so replay never asked. A
+spec that only works in replay isn't a spec.
 
-Finding 4 is the honest headline. Running the deck did not primarily grade the agent; it
+That last one is the honest headline. Running the deck didn't primarily grade the agent. It
 graded the specification, and the specification lost.
 
 ## What it costs
 
-Measured over the second full grid — 6 cards × 4 columns × 3 runs, 72 agent runs, live:
+Measured over a full grid — 6 cards × 4 columns × 3 runs, 72 live agent runs:
 
 | | |
 |---|---|
@@ -56,7 +49,7 @@ Measured over the second full grid — 6 cards × 4 columns × 3 runs, 72 agent 
 | per run | $0.1616 |
 | per card, one model, 3 runs | $0.48 |
 
-Projected to a real deck, at the same per-run cost:
+Projected to a real deck at the same per-run cost:
 
 | deck | weekly full run, one model | migration matrix, 4 columns |
 |---|---|---|
@@ -64,43 +57,44 @@ Projected to a real deck, at the same per-run cost:
 | 100 cards | $48 | $194 |
 | 250 cards | $121 | $485 |
 
-**The recurring number is the small one.** A full-deck sweep of 100 cards is under $50 a
-week. The matrix — the expensive column-multiplying one — is not recurring at all: you run
-it when you change models or rewrite a prompt, which is a handful of times a year.
+The recurring number is the small one. A full sweep of 100 cards is under $50 a week. The
+matrix — the expensive column-multiplying one — isn't recurring at all: you run it when you
+change models or rewrite a prompt, a handful of times a year.
 
-And most days you run neither. `--affected-by` maps a diff to the cards that depend on the
-files it touched, so a pull request runs the two or three cards its change can reach, not
-the deck: **about $1 per PR**. The deck-wide run is a nightly backstop, not the mechanism.
+Most days you run neither. `--affected-by` maps a diff to the cards that depend on the files
+it touched, so a pull request runs the two or three cards its change can reach: about **$1
+per PR**. The deck-wide run is a nightly backstop, not the mechanism.
 
-So the shape is: dollars per pull request, tens of dollars per week, hundreds per migration
-event. Against one engineer-day of manual spot-checking — call it $600 and far narrower
-coverage — the comparison is not close, and the deck does not get bored on the fortieth
-scenario.
+Dollars per pull request, tens per week, hundreds per migration event. Against one
+engineer-day of manual spot-checking — call it $600 and far narrower coverage — the
+comparison isn't close, and the deck doesn't get bored on the fortieth scenario.
 
-## What it does not prove
+## What it doesn't prove
 
 Stated here rather than left to be discovered, because a reader who finds these themselves
 will discount everything above.
 
-- **Six cards is not coverage.** The coverage tables report denominators and deliberately
+- **Six cards isn't coverage.** The coverage tables report denominators and deliberately
   never gate CI, because a percentage that gates becomes a percentage that gets gamed.
-- **One domain, one provider, one judge model.** Nothing here says how the same deck
-  behaves on a different vendor.
-- **The judge is itself a model.** One cell in the second grid returned no gradable verdict
-  in three attempts and reported as an error rather than a result. A judge with an error
-  rate is a measuring instrument with an error rate, and the report says so on its face
-  rather than hiding it behind a number.
+- **One domain, one judge model.** The agent under test can be any vendor; the judge is
+  Anthropic by decision, and nothing here says how the same deck behaves under another.
+- **The judge is itself a model.** Roughly one cell in fifty returns no gradable verdict in
+  three attempts and reports as an error rather than a result. Cause unknown — the obvious
+  hypothesis, that the injected payload in one card's transcript derails it, was tested and
+  disproved. A judge with an error rate is a measuring instrument with an error rate, and
+  the report says so on its face rather than hiding it behind a number.
 - **Three runs per cell is thin.** Cells that pass 2 of 3 are common enough that a single
-  run would have reported the opposite verdict roughly a third of the time — which is the
-  argument against eyeballing one transcript and calling it good, but also a caution
-  against reading any individual cell here too hard.
-- **Every figure is an estimate.** Priced from a committed rate table, never from a bill.
-- **None of this replays.** Cassettes cover the judge and the simulator — specdeck's own
-  calls — not the agent's, because the agent is the user's code and the runner records its
-  trace rather than its API calls. Reproducing this report costs what it cost.
+  run would have reported the opposite verdict about a third of the time. That's the
+  argument against eyeballing one transcript, and equally a caution against reading any
+  individual cell here too hard.
+- **Every figure is an estimate**, priced from a committed table, never from a bill.
+- **The agent's calls don't replay.** Cassettes cover the judge and the simulator —
+  specdeck's own calls — not the agent's, because the agent is your code and the runner
+  records its trace rather than its API calls. `--save-trace` closes this for a captured
+  run; a fresh live run costs what it costs.
 
-## The argument, in one line
+## The verdict
 
-The deck is not paying for confidence that the agent is right. It is paying for the hour in
-which you find out that it is wrong — before the customer, before the migration ships, and
-including the case where what is wrong is the specification.
+The deck isn't paying for confidence that the agent is right. It's paying for the hour in
+which you find out it's wrong — before the customer, before the migration ships, and
+including the case where the thing that's wrong is the specification.

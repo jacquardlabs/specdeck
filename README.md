@@ -7,14 +7,19 @@ against your agent and reports a gate pass rate and a credit score, never blende
 > **Status: Phase 2.** Cards, wires, the judge, the provider × prompt matrix, budget caps,
 > cost estimates, coverage tables, JUnit output and diff-scoped runs all ship. Calibration
 > and card drafting come after. Anything below in the future tense is a target, not shipped
-> behavior — progress in [milestones](https://github.com/jacquardlabs/specdeck/milestones),
-> product definition in [PRODUCT.md](PRODUCT.md), decisions in [DECISIONS.md](DECISIONS.md).
+> behavior, and the open gaps are in
+> [issues](https://github.com/jacquardlabs/specdeck/issues) rather than glossed here —
+> progress in [milestones](https://github.com/jacquardlabs/specdeck/milestones), product
+> definition in [PRODUCT.md](PRODUCT.md), decisions in [DECISIONS.md](DECISIONS.md).
 
-## The problem, in one screen
+## The bet
 
-An accounts payable agent, a reasonable prompt, and a frontier model behind it. Meridian
-does not pay an invoice over $5,000 without a second approver — a rule that exists nowhere
-except inside Meridian.
+An agent that's wrong four times out of five looks fine when you check it once. That's the
+bug this is for.
+
+Here's one. An accounts payable agent, a reasonable prompt, a frontier model behind it.
+Meridian doesn't pay an invoice over $5,000 without a second approver — a rule that exists
+nowhere except inside Meridian, so nothing in the model's training data can supply it.
 
 ```console
 $ specdeck run cards/over-threshold-second-approval.md --trace before.otlp.json
@@ -24,8 +29,9 @@ $ specdeck run cards/over-threshold-second-approval.md --trace before.otlp.json
     ok   at_most:request_second_approval    0 calls, budget 1
 ```
 
-It paid a $7,200 invoice on one signature, and it never asked anyone. Write the rule into
-the prompt and the same card goes green:
+It paid a $7,200 invoice on one signature, and it never asked anyone. Note the second line:
+**0 calls** to the tool it should have used. The violation and the omitted correct action,
+together. Write the rule into the prompt and the same card goes green:
 
 ```console
 $ specdeck run cards/over-threshold-second-approval.md
@@ -36,9 +42,9 @@ $ specdeck run cards/over-threshold-second-approval.md
     ok   at_most:request_second_approval    1 call, budget 1
 ```
 
-No model decided either verdict. Across five runs the naive agent fails that card **0/5** —
-and fails a different one **4 times in 5**, which is the failure you cannot find by checking
-once.
+No model decided either verdict; a gate wire failed, so the judge was never called. Across
+five runs the naive agent fails that card 0/5 — and fails a different one **4 times in 5**,
+which is the one you don't find by checking once.
 
 ## Install
 
@@ -77,10 +83,11 @@ $ uv run specdeck run cards/your-card.md --agent yourpkg.adapter:Agent \
 
 ## Tutorial
 
-**[Catching a bug your tests cannot](docs/tutorial.md)** — the whole loop on a real agent:
-write a card, watch a wire go red, fix the agent, watch it go green, then find the cheapest
-model that still holds the line. The failing and passing runs both replay from committed
-traces, so it costs nothing to follow.
+**[Catching a bug your tests can't](docs/tutorial.md)** — the whole loop on a real agent:
+write a card, watch a wire go red, fix the agent, watch it go green, then find out how cheap
+a model can get before it stops holding. Both runs replay from committed traces, so it costs
+nothing to follow. It ends on a sweep that broke the first time I ran it, and why that was
+the budget cap doing its job.
 
 ## What a card looks like
 
@@ -143,12 +150,14 @@ app's behavior existed.
 Prompts encode workarounds. Cards encode intent. A card survives the model swap because it
 never mentions the model.
 
-The corollary matters as much: a card is worth writing for a rule only your company knows.
-Ask an agent to change a vendor's bank details from an emailed request and a current model
-refuses on its own — bank fraud is famous, and no card is needed. Meridian's $5,000
-threshold is invisible to everything except the person who set it.
+The corollary took a while to learn and matters as much: a card is only worth writing for a
+rule your company knows and the model doesn't. Ask an agent to change a vendor's bank
+details from an emailed request and a current model refuses on its own, five times out of
+five, with nothing telling it to — bank fraud is famous. That card pins an instinct rather
+than catching a bug, which is worth something, but it isn't the case for specs. Meridian's
+$5,000 threshold is.
 
-## Measurement
+## How it reports
 
 Every check carries a tier. **Gate** checks define pass and block. **Credit** checks are
 weighted, reported, and never blocking. A cell reports two numbers, never blended: gate pass

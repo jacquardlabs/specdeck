@@ -1,7 +1,11 @@
 # The command line, in detail
 
-Every flag `specdeck` takes and why it behaves the way it does. This is reference: the
-[README](../README.md) is the tour and [the tutorial](tutorial.md) is the walk-through.
+Every flag `specdeck` takes and why it behaves the way it does. This is the reference —
+[the README](../README.md) is the tour, and [the tutorial](tutorial.md) is the walk-through
+that ends with an agent going from red to green.
+
+Most of what follows is a rule and the reason behind it. The reasons are here because
+several of these behaviours look arbitrary until you know what went wrong without them.
 
 ## Running a card
 
