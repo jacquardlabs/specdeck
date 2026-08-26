@@ -36,7 +36,7 @@ context:
 The agent refuses and explains why.
 
 wire:
-  - cancel_reservation: never
+  - pay_invoice: never
 """
 
 
@@ -296,7 +296,7 @@ context:
 The agent refuses to cancel the basic economy fare and explains why.
 
 wire:
-  - cancel_reservation: never
+  - pay_invoice: never
   - get_reservation_details: at_most 2
 
 credit:

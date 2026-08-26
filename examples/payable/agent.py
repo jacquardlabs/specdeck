@@ -76,11 +76,16 @@ def _refusal(name: str, arguments: dict, data: dict) -> str | None:
 
 
 HERE = Path(__file__).resolve().parent
-DATA = HERE / "cards" / "fixtures" / "data.json"
+#: The deck this example ships beside. An in-repo path because the example and the deck
+#: are one artefact — your own adapter reads your own database, wherever that lives.
+DATA = HERE.parent.parent / "cards" / "fixtures" / "data.json"
 PROMPTS = HERE / "prompts"
 
 DEFAULT_MODEL = "claude-sonnet-5"
-DEFAULT_PROMPT = PROMPTS / "policy.md"
+#: One policy, serving as both the agent's prompt and the deck's `policy:` context. Two
+#: copies of the same rules is two things that can disagree, and a spec that disagrees with
+#: the prompt it grades is worse than no spec.
+DEFAULT_PROMPT = HERE.parent.parent / "cards" / "policy" / "ap.md"
 
 ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 OPENAI_URL = "https://api.openai.com/v1/chat/completions"

@@ -336,7 +336,7 @@ class TestManyCards:
 
 class TestDiscovery:
     def test_a_policy_document_beside_a_card_is_not_linted_as_one(self, card_dir: Path) -> None:
-        # cards/policy/airline.md is markdown, and it is nobody's card.
+        # cards/policy/ap.md is markdown, and it is nobody's card.
         linted = {Path(f.card).name for f in lint_paths([card_dir]).findings}
         assert "airline.md" not in linted
         assert "refund.md" in linted
@@ -542,16 +542,16 @@ class TestTheRunnerAndLintAgreeOnTheKey:
         source = Path(__file__).resolve().parent.parent / "cards"
         nested = tmp_path / "airline"
         nested.mkdir()
-        copy(source / "basic-economy-return-change.md", nested / "refund.md")
+        copy(source / "over-threshold-second-approval.md", nested / "refund.md")
         (nested / "fixtures").mkdir()
-        copy(source / "fixtures" / "airline_seed.json", nested / "fixtures")
+        copy(source / "fixtures" / "data.json", nested / "fixtures")
         (nested / "policy").mkdir()
         copy(source / "policy" / "airline.md", nested / "policy")
         # The card declares its own `traces:`, so a workspace without them is a card whose
         # glob matches nothing — a `dead-path` error about the fixture, not about the key
         # this class is here to check.
         (nested / "traces").mkdir()
-        copy(source / "traces" / "basic-economy-return-change.otlp.json", nested / "traces")
+        copy(source / "traces" / "over-threshold-second-approval.1.otlp.json", nested / "traces")
         return tmp_path
 
     def _relock(self, tmp_path: Path) -> Path:
@@ -567,7 +567,7 @@ class TestTheRunnerAndLintAgreeOnTheKey:
                 "run",
                 str(tmp_path / "airline" / "refund.md"),
                 "--trace",
-                str(source / "traces" / "basic-economy-return-change.otlp.json"),
+                str(source / "traces" / "over-threshold-second-approval.1.otlp.json"),
                 "--lock",
                 str(lock),
                 "--relock",
@@ -762,7 +762,7 @@ class TestAgentDefinition:
         deck = self._deck(
             tmp_path,
             "\nwire:\n  - latency: under 30s\n",
-            "\nwire:\n  - cancel_reservation: never\n",
+            "\nwire:\n  - pay_invoice: never\n",
         )
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         assert rules(result.findings, Severity.ERROR) == []
@@ -791,7 +791,7 @@ class TestAgentDefinition:
 
     def test_a_tool_wired_on_any_card_in_the_deck_is_referenced(self, tmp_path: Path) -> None:
         deck = self._deck(
-            tmp_path, "", "\nwire:\n  - cancel_reservation: never\n  - tools: never\n"
+            tmp_path, "", "\nwire:\n  - pay_invoice: never\n  - tools: never\n"
         )
         result = lint_paths([deck], agent_def=introspect(refund_graph(), reference="x:y"))
         named = " ".join(f.message for f in result.findings if f.rule == "unreferenced-binding")
@@ -858,7 +858,7 @@ class TestAgentDefinition:
     def test_a_card_that_does_not_compile_does_not_stop_the_obligations(
         self, tmp_path: Path
     ) -> None:
-        self._deck(tmp_path, "\nwire:\n  - cancel_reservation: never\n")
+        self._deck(tmp_path, "\nwire:\n  - pay_invoice: never\n")
         (tmp_path / "bad.md").write_text("# Scenario: bad\nx\n\nwire:\n  - a: eventually b\n")
         result = lint_paths([tmp_path], agent_def=introspect(refund_graph()))
         assert "unbounded-cycle" not in rules(result.findings, Severity.ERROR)

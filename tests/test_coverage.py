@@ -26,7 +26,7 @@ from .fake_agent import BareAgent, FakeAgent
 from .test_trace import span, trace
 
 REPO = Path(__file__).resolve().parent.parent
-AIRLINE = REPO / "cards" / "policy" / "airline.md"
+POLICY = REPO / "cards" / "policy" / "ap.md"
 
 CARD = """\
 # Scenario: refund
@@ -36,8 +36,8 @@ context:
 The agent refuses.
 
 wire:
-  - cancel_reservation: never
-  - transfer_to_human_agents: after 3 non_agreement
+  - pay_invoice: never
+  - escalate_to_human: after 3 non_agreement
 """
 
 
@@ -50,10 +50,10 @@ class TestTheRealPolicyDocument:
     """A golden against the file in the repo, on tests/test_docs.py's precedent."""
 
     def clauses(self) -> list:
-        return extract_clauses(AIRLINE.read_text(), document=str(AIRLINE))
+        return extract_clauses(POLICY.read_text(), document=str(POLICY))
 
     def test_every_column_zero_bullet_is_one_clause(self) -> None:
-        assert len(self.clauses()) == 26
+        assert len(self.clauses()) == 13
 
     def test_the_sections_come_out_in_document_order_with_their_counts(self) -> None:
         found = [(c.section, c.id.split("/")[0]) for c in self.clauses()]
@@ -61,30 +61,29 @@ class TestTheRealPolicyDocument:
         for section, _ in found:
             counts[section] = counts.get(section, 0) + 1
         assert list(counts.items()) == [
-            ("Airline Agent Policy", 5),
-            ("Domain Basic", 3),
-            ("Book flight", 5),
-            ("Modify flight", 6),
-            ("Cancel flight", 4),
-            ("Refund", 3),
+            ("Before paying anything", 4),
+            ("The second-approver threshold", 3),
+            ("Bank details", 3),
+            ("Escalating", 3),
         ]
 
-    def test_nested_bullets_qualify_their_parent_and_are_not_clauses(self) -> None:
-        # airline.md lines 24-26 nest under the flight-status clause opened at line 23.
-        parent = next(c for c in self.clauses() if c.line == 23)
-        assert "available" in parent.text
-        assert "delayed" in parent.text
-        assert "flying" in parent.text
-        assert [c for c in self.clauses() if c.line in (24, 25, 26)] == []
+    def test_a_wrapped_bullet_is_one_clause_and_not_several(self) -> None:
+        """Continuation lines belong to the bullet that opened, not to themselves."""
+        clause = next(c for c in self.clauses() if c.line == 13)
+        assert "within $50" in clause.text
+        assert "partial amount" in clause.text, "the wrapped tail is part of the clause"
+        assert [c for c in self.clauses() if c.line in (14, 15)] == []
 
     def test_column_zero_prose_is_never_a_clause(self) -> None:
         text = " ".join(c.text for c in self.clauses())
-        assert "The current time is" not in text
-        assert "As an airline agent" not in text
+        assert "The current date is" not in text
+        assert "You are the accounts payable assistant" not in text
 
     def test_an_id_is_the_section_slug_and_a_one_based_index(self) -> None:
-        assert next(c for c in self.clauses() if c.line == 44).id == "modify_flight/2"
-        assert self.clauses()[0].id == "airline_agent_policy/1"
+        assert next(c for c in self.clauses() if c.line == 24).id == (
+            "the_second_approver_threshold/1"
+        )
+        assert self.clauses()[0].id == "before_paying_anything/1"
 
     def test_no_two_clauses_share_an_id(self) -> None:
         ids = [c.id for c in self.clauses()]
@@ -144,12 +143,12 @@ class TestPolicyCoverage:
         path.write_text(body)
         return path
 
-    def test_the_committed_deck_groups_six_cards_onto_one_document(self) -> None:
+    def test_the_committed_deck_groups_five_cards_onto_one_document(self) -> None:
         found = policy_coverage(deck())
         assert len(found) == 1
-        assert Path(found[0].path).name == "airline.md"
-        assert len(found[0].cards) == 6
-        assert len(found[0].clauses) == 26
+        assert Path(found[0].path).name == "ap.md"
+        assert len(found[0].cards) == 5
+        assert len(found[0].clauses) == 13
 
     def test_a_card_with_no_policy_contributes_nothing(self, tmp_path: Path) -> None:
         assert policy_coverage([parse_text("# Scenario: x\nThe agent answers.\n")]) == []
@@ -189,12 +188,12 @@ class TestPolicyCoverage:
 
 class TestVocabularyCoverage:
     def test_a_tool_named_by_a_wire_lists_the_cards_that_wire_it(self) -> None:
-        table = vocabulary_coverage(deck(), Vocabulary(tools={"cancel_reservation"}), [])
+        table = vocabulary_coverage(deck(), Vocabulary(tools={"pay_invoice"}), [])
         assert table.rows[0].wired_by
         assert all(path.endswith(".md") for path in table.rows[0].wired_by)
 
     def test_an_escalation_target_counts_as_wired(self) -> None:
-        table = vocabulary_coverage(deck(), Vocabulary(tools={"transfer_to_human_agents"}), [])
+        table = vocabulary_coverage(deck(), Vocabulary(tools={"escalate_to_human"}), [])
         assert table.rows[0].wired_by
 
     def test_a_tool_with_neither_a_wire_nor_a_run_is_the_uncovered_row(self) -> None:
@@ -204,7 +203,7 @@ class TestVocabularyCoverage:
 
     def test_a_tool_a_trace_executed_is_exercised_even_when_no_card_wires_it(self) -> None:
         traces = [_recorded()]
-        table = vocabulary_coverage(deck(), Vocabulary(tools={"get_reservation_details"}), traces)
+        table = vocabulary_coverage(deck(), Vocabulary(tools={"get_invoice"}), traces)
         assert table.rows[0].exercised is True
         assert table.rows[0].wired_by == []
 
@@ -229,7 +228,7 @@ class TestVocabularyCoverage:
         broken = tmp_path / "broken.md"
         broken.write_text("# Scenario: x\nThe agent answers.\n\nwire:\n  - a: eventually b\n")
         cards = [*deck(), parse(broken)]
-        table = vocabulary_coverage(cards, Vocabulary(tools={"cancel_reservation"}), [])
+        table = vocabulary_coverage(cards, Vocabulary(tools={"pay_invoice"}), [])
         assert table.rows[0].wired_by
 
 
@@ -259,10 +258,10 @@ class TestCoverageCanNeverGate:
 
 
 def _recorded():
-    """The committed OTLP export, which executes `get_reservation_details`."""
+    """A committed OTLP export, which executes `get_invoice`."""
     from specdeck.traceio import load_trace
 
-    return load_trace(REPO / "cards" / "traces" / "basic-economy-return-change.otlp.json")
+    return load_trace(REPO / "cards" / "traces" / "over-threshold-second-approval.1.otlp.json")
 
 
 class TestPathCoverage:

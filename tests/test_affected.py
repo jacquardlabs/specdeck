@@ -77,9 +77,9 @@ class TestParsingADiff:
         assert {one.status for one in changes} == {"modified"}
 
     def test_a_deletion_names_the_file_that_was_removed(self) -> None:
-        (change,) = parse_diff(_deleted("cards/policy/airline.md"), root=ROOT)
+        (change,) = parse_diff(_deleted("cards/policy/ap.md"), root=ROOT)
         assert change.status == "deleted"
-        assert change.path == ROOT / "cards/policy/airline.md"
+        assert change.path == ROOT / "cards/policy/ap.md"
         assert change.previous is None
 
     def test_an_addition_reads_its_path_off_the_new_side(self) -> None:
@@ -265,13 +265,13 @@ def _inputs(name: str, **edges: object) -> Inputs:
 DECK = [
     _inputs(
         "one.md",
-        policy=ROOT / "cards/policy/airline.md",
+        policy=ROOT / "cards/policy/ap.md",
         fixture=ROOT / "cards/fixtures/one.json",
         traces=[ROOT / "cards/traces/one.otlp.json"],
     ),
     _inputs(
         "two.md",
-        policy=ROOT / "cards/policy/airline.md",
+        policy=ROOT / "cards/policy/ap.md",
         fixture=ROOT / "cards/fixtures/two.json",
         traces=[ROOT / "cards/traces/two.otlp.json"],
     ),
@@ -308,7 +308,7 @@ class TestSelectingCards:
         assert selection.reasons[str(ROOT / "cards/one.md")] == ["card cards/one.md modified"]
 
     def test_a_shared_policy_selects_every_card_naming_it(self) -> None:
-        selection = _select(_modified("cards/policy/airline.md"))
+        selection = _select(_modified("cards/policy/ap.md"))
         assert len(selection.cards) == 2
         # Not `everything`: every card matched on its own edge, which is a different fact
         # from a deck-wide input having changed.
@@ -337,10 +337,10 @@ class TestSelectingCards:
 
     def test_a_deleted_policy_still_selects_the_cards_that_read_it(self) -> None:
         # Deleting a policy out from under a card is not a reason to stop checking it.
-        selection = _select(_deleted("cards/policy/airline.md"))
+        selection = _select(_deleted("cards/policy/ap.md"))
         assert len(selection.cards) == 2
         assert selection.reasons[str(ROOT / "cards/one.md")] == [
-            "policy cards/policy/airline.md deleted"
+            "policy cards/policy/ap.md deleted"
         ]
 
     def test_a_renamed_fixture_selects_the_card_that_still_names_the_old_path(self) -> None:
@@ -412,34 +412,34 @@ class TestTheCommand:
 
     def test_a_fixture_edit_runs_one_card_of_five(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
-        result = _run(root, _modified("cards/fixtures/delay-compensation-budget.json"))
+        result = _run(root, _modified("cards/fixtures/escalation-after-repeated-pressure.json"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 6 cards" in unwrapped
+        assert "selected 1 of 5 cards" in unwrapped
         assert "1 card, 1 passed" in unwrapped
-        assert "basic-economy-return-change" not in unwrapped
+        assert "over-threshold-second-approval" not in unwrapped
 
     def test_the_same_edit_under_a_mnemonic_prefix_runs_the_same_card(self, tmp_path: Path) -> None:
         # The end the reviewer reproduced at: with `diff.mnemonicPrefix=true` set globally,
         # every path in the diff was read with an `i/` still on it, so the deck reported the
         # ratified "the diff touched no card" answer and exited 0 on a diff that touched one.
         root = _deck_copy(tmp_path)
-        result = _run(root, _prefixed("cards/fixtures/delay-compensation-budget.json", "c/", "i/"))
+        result = _run(root, _prefixed("cards/fixtures/escalation-after-repeated-pressure.json", "c/", "i/"))
         assert result.exit_code == 0, result.stdout
-        assert "selected 1 of 6 cards" in " ".join(result.stdout.split())
+        assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
 
     def test_the_evidence_for_the_selection_is_printed(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
-        result = _run(root, _modified("cards/traces/booking-with-certificates.otlp.json"))
+        result = _run(root, _modified("cards/traces/bank-details-in-invoice-note.1.otlp.json"))
         unwrapped = " ".join(result.stdout.split())
-        assert "trace" in unwrapped and "booking-with-certificates.otlp.json modified" in unwrapped
+        assert "trace" in unwrapped and "bank-details-in-invoice-note.otlp.json modified" in unwrapped
 
     def test_a_diff_that_matched_nothing_runs_nothing_and_exits_zero(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 0 of 6 cards" in unwrapped
+        assert "selected 0 of 5 cards" in unwrapped
         assert "nothing to run" in unwrapped
         # No deck table: "0 cards, 0 passed" where a verdict goes reads as a result.
         assert "0 passed" not in unwrapped
@@ -465,7 +465,7 @@ class TestTheCommand:
         result = _run(root, _modified("cards/spec.lock.toml"))
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 6 of 6 cards" in unwrapped and "6 cards, 6 passed" in unwrapped
+        assert "selected 5 of 5 cards" in unwrapped and "5 cards, 5 passed" in unwrapped
 
     def test_the_vocabulary_reaches_the_selector_when_the_flag_is_given(
         self, tmp_path: Path
@@ -482,18 +482,18 @@ class TestTheCommand:
         )
         assert result.exit_code == 0, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 6 of 6 cards" in unwrapped and "vocabulary.txt" in unwrapped
+        assert "selected 5 of 5 cards" in unwrapped and "vocabulary.txt" in unwrapped
 
     def test_without_the_flag_the_same_diff_selects_nothing(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         result = _run(root, _modified("cards/vocabulary.txt"))
         assert result.exit_code == 0, result.stdout
-        assert "selected 0 of 6 cards" in " ".join(result.stdout.split())
+        assert "selected 0 of 5 cards" in " ".join(result.stdout.split())
 
     def test_a_diff_read_from_a_file_reads_the_same_as_one_from_stdin(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
         patch = tmp_path / "pr.diff"
-        patch.write_text(_modified("cards/fixtures/delay-compensation-budget.json"))
+        patch.write_text(_modified("cards/fixtures/escalation-after-repeated-pressure.json"))
         result = runner.invoke(
             app,
             [
@@ -506,7 +506,7 @@ class TestTheCommand:
             ],
         )
         assert result.exit_code == 0, result.stdout
-        assert "selected 1 of 6 cards" in " ".join(result.stdout.split())
+        assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
 
     def test_a_diff_file_that_does_not_exist_is_a_user_error(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)
@@ -522,7 +522,7 @@ class TestTheCommand:
             app,
             [
                 "run",
-                str(root / "cards" / "basic-economy-return-change.md"),
+                str(root / "cards" / "over-threshold-second-approval.md"),
                 "--affected-by",
                 "-",
             ],
@@ -557,12 +557,12 @@ class TestTheCommand:
         # tree run without `--affected-by` exits 2. A card the deck cannot start cannot be
         # excluded, and the selector now asks the runner's own question to find out.
         root = _deck_copy(tmp_path)
-        recording = "cards/traces/delay-compensation-budget.otlp.json"
+        recording = "cards/traces/escalation-after-repeated-pressure.1.otlp.json"
         (root / recording).unlink()
         result = _run(root, _deleted(recording))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 6 cards" in unwrapped
+        assert "selected 1 of 5 cards" in unwrapped
         assert "cannot start" in unwrapped
         assert "matches no file" in unwrapped
 
@@ -573,7 +573,7 @@ class TestTheCommand:
         # recording deleted from the tree. The deck exits 2 on it either way, so a selection
         # that exits 0 is the selector hiding a card the deck could not run.
         root = _deck_copy(tmp_path)
-        card = root / "cards" / "delay-compensation-budget.md"
+        card = root / "cards" / "escalation-after-repeated-pressure.md"
         card.write_text(
             "".join(
                 line for line in card.read_text().splitlines(keepends=True) if "traces:" not in line
@@ -582,7 +582,7 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 6 cards" in unwrapped
+        assert "selected 1 of 5 cards" in unwrapped
         assert "no traces to run" in unwrapped
 
     def test_a_card_that_does_not_parse_is_selected_by_a_diff_that_matched_nothing(
@@ -594,5 +594,5 @@ class TestTheCommand:
         result = _run(root, _modified("src/agent.py"))
         assert result.exit_code == 2, result.stdout
         unwrapped = " ".join(result.stdout.split())
-        assert "selected 1 of 7 cards" in unwrapped
+        assert "selected 1 of 5 cards" in unwrapped
         assert "cannot start" in unwrapped

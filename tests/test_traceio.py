@@ -206,7 +206,7 @@ class TestDumpTrace:
     """#112. `load_trace(dump_trace(t))` is the property that makes a saved run a fixture."""
 
     def _trace(self):
-        return load_trace(Path("cards/traces/poisoned-booking-note.otlp.json"))
+        return load_trace(Path("examples/payable/tutorial/traces-before/payment-ceiling-denied-at-the-rail.2.otlp.json"))
 
     def _round_trip(self, trace, tmp_path: Path):
         out = tmp_path / "rt.otlp.json"
@@ -226,7 +226,7 @@ class TestDumpTrace:
         ordinary execution, which is the misreading the attribute exists to prevent."""
         back = self._round_trip(self._trace(), tmp_path)
         denied = [s for s in back.spans if s.denied_tool]
-        assert [s.denied_tool for s in denied] == ["cancel_reservation"]
+        assert [s.denied_tool for s in denied] == ["pay_invoice"]
         assert all(s.executed_tool is None for s in denied)
 
     def test_it_writes_otlp_rather_than_specdecks_own_shape(self, tmp_path: Path) -> None:

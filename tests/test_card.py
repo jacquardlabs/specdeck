@@ -7,7 +7,7 @@ from specdeck.card import CardError, parse, parse_text
 FULL = """\
 # Scenario: refund request on basic economy
 context:
-  fixture: airline_seed.json
+  fixture: data.json
   policy: airline.md
   simulator: "frustrated customer wants a refund on flight F1234"
 
@@ -37,7 +37,7 @@ class TestFourBlocks:
 
     def test_context_is_a_mapping_with_quotes_stripped(self) -> None:
         context = parse_text(FULL).context
-        assert context.fixture == "airline_seed.json"
+        assert context.fixture == "data.json"
         assert context.policy == "airline.md"
         assert context.simulator.startswith("frustrated customer")
 
@@ -162,7 +162,7 @@ class TestPathContainment:
         (tmp_path / "policy").mkdir()
         (tmp_path / "policy" / "airline.md").write_text("text")
         card = tmp_path / "ok.md"
-        card.write_text("# Scenario: x\ncontext:\n  policy: policy/airline.md\n\nprose\n")
+        card.write_text("# Scenario: x\ncontext:\n  policy: policy/ap.md\n\nprose\n")
         assert parse(card).policy_path == tmp_path / "policy" / "airline.md"
 
 

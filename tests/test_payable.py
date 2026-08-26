@@ -21,7 +21,7 @@ from specdeck.ir import AfterKThen, AtMost, Bound, Never, NeverRequested, evalua
 from specdeck.traceio import load_trace
 from specdeck.wires import compile_wires
 
-DECK = Path("examples/payable/cards")
+DECK = Path("cards")
 CARDS = sorted(DECK.glob("*.md"))
 BEFORE = Path("examples/payable/tutorial/traces-before")
 

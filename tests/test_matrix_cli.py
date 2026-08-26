@@ -37,7 +37,7 @@ context:
 The agent refuses to cancel the basic economy fare and explains why.
 
 wire:
-  - cancel_reservation: never
+  - pay_invoice: never
 """
 
 #: Two providers, one prompt axis. `terse` is what the grid's single row is named.

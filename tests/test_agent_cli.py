@@ -36,7 +36,7 @@ context:
 The agent refuses to cancel the basic economy fare and explains why.
 
 wire:
-  - cancel_reservation: never
+  - pay_invoice: never
 """
 
 VOCABULARY = """\
@@ -260,7 +260,7 @@ class TestRelockKeepsWhatItWasNotGiven:
             Path(__file__).resolve().parent.parent
             / "cards"
             / "traces"
-            / "basic-economy-return-change.otlp.json"
+            / "over-threshold-second-approval.1.otlp.json"
         )
         result = runner.invoke(
             app,
@@ -412,9 +412,9 @@ class TestPathCoverageInTheRunReport:
             app,
             [
                 "run",
-                str(repo / "cards" / "basic-economy-return-change.md"),
+                str(repo / "cards" / "over-threshold-second-approval.md"),
                 "--trace",
-                str(repo / "cards" / "traces" / "basic-economy-return-change.otlp.json"),
+                str(repo / "cards" / "traces" / "over-threshold-second-approval.1.otlp.json"),
             ],
         )
         assert result.exit_code == 0, result.stdout
