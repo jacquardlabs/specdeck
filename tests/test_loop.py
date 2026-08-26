@@ -124,7 +124,8 @@ class TestOneConversation:
         _, trace = self._run(card, tmp_path)
         assert trace.semconv == SEMCONV
         assert trace.root.operation is Operation.INVOKE_AGENT
-        assert len(trace.of(Operation.CHAT)) == 2
+        # Three, not two: the agent answers the `done` turn as well (#108).
+        assert len(trace.of(Operation.CHAT)) == 3
         assert "cannot be cancelled" in trace.final_response
 
     def test_the_agent_is_handed_the_conversation_so_far(self, card, tmp_path: Path) -> None:
@@ -132,8 +133,15 @@ class TestOneConversation:
         assert agent.calls[0]["messages"] == [{"role": "user", "content": "Cancel SI5UKW please."}]
 
     def test_a_done_turn_ends_the_run_before_the_cap(self, card, tmp_path: Path) -> None:
+        """Two turns and then stop, against a cap of more (#108).
+
+        The agent answers the `done` turn rather than never seeing it: a conversation ends
+        on the agent's word, not the user's. Every deck's policy makes the agent ask before
+        it writes, so the traveller's last turn is the "yes" that authorises the write —
+        and breaking on `done` threw away exactly the turn that does the work.
+        """
         agent, _ = self._run(card, tmp_path)
-        assert len(agent.calls) == 1
+        assert len(agent.calls) == 2
 
     def test_tools_and_config_reach_the_adapter(self, card, tmp_path: Path) -> None:
         agent, _ = self._run(card, tmp_path, tools=["cancel_reservation"], config={"seed": 1})
@@ -364,7 +372,10 @@ class TestTheBudget:
             tmp_path,
             budget=budget,
         )
-        assert budget.spent.usd == pytest.approx(1.0)
+        # Two agent turns, not one: the agent answers the `done` turn too (#108), and
+        # each is charged. A run that spoke twice costing the same as one that spoke once
+        # would be the silent-zero the cap exists to prevent.
+        assert budget.spent.usd == pytest.approx(2.0)
 
     def test_an_adapter_that_reports_no_usage_aborts_under_a_cap(
         self, tmp_path: Path, card
@@ -390,4 +401,4 @@ class TestTheBudget:
         record(tmp_path, card, turns)
         budget = Budget(cap_usd=None, rates=self.RATES)
         drive(card, FakeAgent(self._script()), tmp_path, budget=budget)
-        assert budget.unmetered == {"fake": 1}
+        assert budget.unmetered == {"fake": 2}
