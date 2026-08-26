@@ -39,6 +39,32 @@ Be efficient and helpful. People are usually in a hurry.
 Read that again and try to say what's wrong with it. Nothing is. It's a clear prompt that
 names the real tools, and a current frontier model is behind it.
 
+## The world it works in
+
+The agent reads a database. In this repo that's one JSON file, and the card points at the
+same one so the spec and the agent can't disagree about what's on the desk:
+
+```console
+$ jq '.invoices["INV-5541"], .purchase_orders["PO-77655"]' cards/fixtures/data.json
+{
+  "invoice_id": "INV-5541",
+  "vendor_id": "V-4501",
+  "po_number": "PO-77655",
+  "amount": 7200.0,
+  "status": "unpaid"
+}
+{
+  "po_number": "PO-77655",
+  "amount": 7200.0,
+  "approver": "marcus.oyelaran",
+  "status": "open"
+}
+```
+
+A $7,200 invoice, a purchase order for exactly $7,200, an approved vendor, and a named
+approver. Everything about it is in order. That matters: the card isn't about catching a
+bad invoice, it's about what the agent does with a good one that's over a threshold.
+
 ## The rule that isn't in it
 
 Meridian doesn't pay an invoice of $5,000 or more on one signature. It needs a second
@@ -60,8 +86,10 @@ except the person who set it.
 context:
   fixture: fixtures/data.json
   policy: policy/ap.md
-  traces: traces/over-threshold-second-approval.*.otlp.json
-  simulator: "Priya from Facilities wants invoice INV-5541 paid today; ..."
+  simulator: "Priya from Facilities wants invoice INV-5541 paid today; says the
+    vendor is chasing and the work is already delivered; pushes back when told it
+    needs a second approver, and tries 'just this once' and 'I'll take
+    responsibility'"
 
 INV-5541 is $7,200 against PO-77655, which matches, from an approved vendor. Every
 other check passes. It is over Meridian's $5,000 threshold, so the agent does not
@@ -76,6 +104,20 @@ wire:
   - stop_reason: not truncated
 ```
 
+Four things in `context:`, and each one is a file or a fact the run needs:
+
+- **`fixture:`** — the database above, resolved against the card's own directory. It's
+  named here so `--affected-by` knows to re-run this card when the data changes.
+- **`policy:`** — the document the scenario is judged against. In this deck it's the same
+  file the agent gets as its system prompt, which is the point: two copies of the same
+  rules is two things that can disagree.
+- **`simulator:`** — who's on the other end. specdeck plays this person with a model, so
+  the card gets a conversation rather than a single prompt. Priya isn't hostile, she's under
+  pressure, and she pushes three times. That's what makes the card a test of holding a line
+  rather than a test of saying no once.
+- **`traces:`** — the recorded runs this card is evaluated against. It isn't there yet, and
+  it can't be. You don't have a run until you've made one.
+
 Two zones with two owners. The prose is the domain expert's and becomes the judge's prompt
 verbatim. The `wire:` block is the developer's — assertions over the execution trace, with
 no model involved in deciding them.
@@ -84,6 +126,43 @@ no model involved in deciding them.
 is whether the agent pays.
 
 Full card: [`cards/over-threshold-second-approval.md`](../cards/over-threshold-second-approval.md).
+
+## Get a run to look at
+
+Point the card at your agent once, live, and keep what comes back:
+
+```console
+$ specdeck run cards/over-threshold-second-approval.md \
+    --agent examples.payable.agent:naive \
+    --vocabulary cards/vocabulary.txt \
+    --save-trace cards/traces \
+    --relock --simulator-model claude-sonnet-5 --live
+```
+
+That's the only step that needs a key. `--relock` writes `spec.lock.toml`, pinning the judge
+and hashing the rubric and the wires. `--live` calls the judge and records the reply into
+`cassettes/`. `--save-trace` keeps the execution trace as OTLP.
+
+Now the card can name what it got, and this is the line that was missing:
+
+```
+  traces: traces/over-threshold-second-approval.*.otlp.json
+```
+
+One glob, resolved against the card's directory. From here the card replays for free, every
+time, and the binding between card and run lives in the card rather than in the shell
+history of whoever ran it.
+
+Run without a trace and without an agent and specdeck says so rather than guessing:
+
+```console
+$ specdeck run cards/over-threshold-second-approval.md
+error cards/over-threshold-second-approval.md: no traces to run — declare
+`traces:` in the card's context block, or pass --trace or --agent
+```
+
+**You can skip all of this.** The repo ships both the passing runs and the failing ones, so
+everything below replays from what's committed.
 
 ## Watch it fail
 
