@@ -7,17 +7,37 @@ the user's repo. Prose criteria are judged; wires are checked deterministically 
 the execution trace. The runner executes cards across a provider × prompt matrix and
 reports gate pass rate, credit score, cost, and judge agreement drift.
 
-## Primary persona
+specdeck is the runner and the card format. A **deck** is an audience: a set of cards,
+fixtures and an agent under test that share a reason to exist. Two ship
+([DECISIONS.md](DECISIONS.md), 2026-09-01):
+
+- **Meridian** (`examples/payable`), the model-measurement deck. An invented accounts
+  payable domain whose rules exist nowhere in training data, so a pass is reasoning and
+  not recall. Two owners: an SME writes the prose, a developer wires under it.
+- **Coding agents**, the config-measurement deck. One repo, two arms — old `CLAUDE.md`,
+  skill, hook or model against new — the same model in both, N runs each, and a paired
+  comparison of gate pass rate and cost. One owner: the developer whose config is under
+  test writes both zones.
+
+## Thesis
+
+**Two zones by evaluator, optionally two owners.** The prose zone goes to a pinned judge.
+The wire zone runs deterministically at zero tokens. That split is what the card format
+is for, and it pays whether or not two people write the card: lint and wires run in
+pre-commit, the judge runs in CI over N runs.
+
+## Personas
 
 **The subject-matter expert** who owns what "correct" means and cannot write Python. They
 write a paragraph describing the behavior they expect and assign weights to the things
 that matter but do not block. They review cards in PRs. They never open a Python file.
+Primary in the Meridian deck.
 
-## Secondary persona
-
-**The developer** who owns the agent. They wire deterministic constraints under the SME's
-prose — forbidden tools, call budgets, hand-off bounds, latency, truncation — and they
-own the adapter that produces traces. They do not decide what "correct" means.
+**The developer** who owns the agent. They wire deterministic constraints under the prose
+— forbidden tools, call budgets, hand-off bounds, latency, truncation, terminal state —
+and they own the adapter that produces traces. In the Meridian deck they do not decide
+what "correct" means. In the coding-agent deck they own both zones: the config under test
+is theirs, and so is the paragraph saying what a correct run of it looks like.
 
 ## What specdeck is NOT for
 
@@ -34,8 +54,8 @@ Do not relitigate these without a DECISIONS.md entry.
 
 1. **The card is the product.** One markdown file per scenario, in the user's repo,
    reviewed in PRs.
-2. **Two owned zones.** Prose is the SME zone. Wires are the dev zone. CI routes review by
-   zone.
+2. **Two zones by evaluator, optionally two owners.** Prose goes to the judge. Wires run
+   deterministically. When the zones have different owners, CI routes review by zone.
 3. **A prose-only card runs immediately**, judge-only. Wires are never a prerequisite.
 4. **Every check has a tier.** *Gate* defines pass and blocks. *Credit* is weighted,
    reported, never blocking. Execution order: gate wires → gate criteria → credit checks.
