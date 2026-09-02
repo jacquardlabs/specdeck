@@ -4,10 +4,11 @@ Card-based eval runner for LLM systems. Read [PRODUCT.md](PRODUCT.md) and the
 [open milestones](https://github.com/jacquardlabs/specdeck/milestones) before proposing
 anything; read [DECISIONS.md](DECISIONS.md) before proposing anything that contradicts it.
 
-**Repo state: Phase 1, walking skeleton.** `src/specdeck/` runs one card against a
-recorded trace: trace schema, property IR, lockfile, card parser, wires engine, trace
-input, judge step, cell runner, report, lint, CLI. Not yet built: running the agent
-and the provider matrix.
+**Repo state: Phase 2.** `src/specdeck/` runs cards against a recorded trace or a live
+agent: trace schema, property IR, lockfile, card parser, wires engine, trace input, judge
+step, execution loop and simulator, cell runner, provider × prompt matrix, budget and cost,
+coverage, JUnit, diff-scoped runs, report, lint, CLI. Not yet built: calibration and card
+drafting, and the coding-agent deck (DECISIONS.md, 2026-09-01).
 
 ## Non-negotiables
 
