@@ -394,12 +394,6 @@ class TestSelectingCards:
         assert selection.cards == [card]
 
 
-def _renamed(old: str, new: str) -> str:
-    return (
-        f"diff --git a/{old} b/{new}\nsimilarity index 100%\nrename from {old}\nrename to {new}\n"
-    )
-
-
 class TestAGlobThatStillMatchesOthers:
     """#97: a recording the diff took away is gone from the resolved paths, so the card's
     `traces:` glob is matched too. Over-selection is the safe direction; under-matching is
@@ -425,7 +419,12 @@ class TestAGlobThatStillMatchesOthers:
     def test_the_old_side_of_a_renamed_away_recording_selects_the_card(self) -> None:
         # The new side is outside the glob, so only the old path can select it.
         card = self._card("traces/*.json", "traces/two.json")
-        body = _renamed("cards/traces/one.json", "cards/archive/one.json")
+        body = (
+            "diff --git a/cards/traces/one.json b/cards/archive/one.json\n"
+            "similarity index 100%\n"
+            "rename from cards/traces/one.json\n"
+            "rename to cards/archive/one.json\n"
+        )
         selection = _select(body, deck=[card])
         assert selection.cards == [card.card]
         assert selection.reasons[str(card.card)] == [

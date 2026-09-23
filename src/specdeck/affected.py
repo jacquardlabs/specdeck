@@ -222,7 +222,14 @@ def _why(one: Inputs, touched: dict[Path, Change]) -> list[str]:
             seen.append(change)
             lines.append(f"{kind} {change.label} {change.status}")
     if one.trace_glob:
-        pattern = _pattern(one.card.resolve().parent, one.trace_glob)
+        # Never narrower than `Path.glob`: a path it missed would be a card silently not
+        # run, while matching more only selects a card that did not need running.
+        # `fnmatch`'s `*` already crosses `/`, and `**/` is dropped to `*` because
+        # `Path.glob` reads it as zero or more directories — keeping its `/` would miss
+        # `traces/a.json` under `traces/**/*.json`. `PurePath.match` goes the other way:
+        # its `**` is a `*` that does not cross `/`.
+        glob = re.sub(r"(?:\*\*/)+|\*\*", "*", one.trace_glob)
+        pattern = os.path.normpath(one.card.resolve().parent / glob)
         for path, change in touched.items():
             if change not in seen and fnmatchcase(path.as_posix(), pattern):
                 seen.append(change)
@@ -230,20 +237,6 @@ def _why(one: Inputs, touched: dict[Path, Change]) -> list[str]:
                     f"trace {change.label} {change.status} (matched traces: {one.trace_glob})"
                 )
     return lines
-
-
-def _pattern(root: Path, glob: str) -> str:
-    """`glob` as an `fnmatch` pattern over absolute paths, never narrower than `Path.glob`.
-
-    Every path `root.glob(glob)` matches, this matches — the direction that matters, since a
-    path it missed would be a card silently not run. It may match more, which only selects a
-    card that did not need running. `fnmatch`'s `*` already crosses `/`, which is what makes
-    that hold: `**/` is dropped to `*`, because `Path.glob` reads it as zero or more
-    directories and a pattern that kept its `/` would miss the zero case, `traces/a.json`
-    under `traces/**/*.json`. `PurePath.match` is not used because it goes the other way:
-    its `**` is a `*` that does not cross `/`.
-    """
-    return os.path.normpath(root / re.sub(r"(?:\*\*/)+|\*\*", "*", glob))
 
 
 class _Stanza:
