@@ -42,7 +42,9 @@ so the cap and the report cannot disagree about what a run cost.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 
 from .matrix import Column
 from .rates import Estimate, Rates
@@ -62,6 +64,14 @@ class BudgetStop(Exception):
     """
 
 
+#: The column whose work is running, for attributing a charge to it. A context variable
+#: because columns run concurrently: `asyncio.gather` gives each column its own task with
+#: its own copy of the context, and every task that column's work spawns inherits it, so a
+#: charge lands on the column that incurred it however the columns interleave. Taking the
+#: shared total before and after a column would hand it every other column's charges too.
+_SCOPE: ContextVar[str | None] = ContextVar("specdeck_budget_scope", default=None)
+
+
 class Budget:
     """What has been spent, and whether anything more may be.
 
@@ -69,7 +79,8 @@ class Budget:
     concurrency primitive is asyncio (see `matrix_run`), so every charge happens on one
     thread with no await between reading `_spent` and writing it back. A lock here would
     be ceremony that implies a thread-safety this object does not have and does not need;
-    if a thread pool ever appears, this comment is the thing that has to change first.
+    if a thread pool ever appears, this comment is the thing that has to change first —
+    and so does `_SCOPE`, which a thread pool would not copy into its workers.
     """
 
     def __init__(self, *, cap_usd: float | None, rates: Rates) -> None:
@@ -81,6 +92,9 @@ class Budget:
         #: Models whose calls reported no usage at all. Counted, never charged as zero:
         #: the footer names them so the spend figure reads as the floor it is.
         self.unmetered: dict[str, int] = {}
+        #: What each scope charged, keyed by the name `scope` was given. Every charge is
+        #: in `_spent` as well; this only says whose it was.
+        self._ledger: dict[str, Estimate] = {}
 
     @property
     def capped(self) -> bool:
@@ -119,9 +133,25 @@ class Budget:
         if input_tokens is None and output_tokens is None:
             self._unmetered(model)
             return
-        self._spent = self._spent + self.rates.estimate(
+        cost = self.rates.estimate(
             model, input_tokens=input_tokens or 0, output_tokens=output_tokens or 0
         )
+        self._spent = self._spent + cost
+        if (scope := _SCOPE.get()) is not None:
+            self._ledger[scope] = self.spent_in(scope) + cost
+
+    @contextmanager
+    def scope(self, name: str) -> Iterator[None]:
+        """Attribute every charge made inside this block, and in tasks it spawns, to `name`."""
+        token = _SCOPE.set(name)
+        try:
+            yield
+        finally:
+            _SCOPE.reset(token)
+
+    def spent_in(self, name: str) -> Estimate:
+        """What was charged inside `scope(name)` — nothing, if it charged nothing."""
+        return self._ledger.get(name, Estimate.nothing(self.rates.verified))
 
     def _unmetered(self, model: str, count: int = 1) -> None:
         """Record calls that said nothing about what they spent. The one writer, so

@@ -15,12 +15,16 @@ import pytest
 from typer.testing import CliRunner
 
 from specdeck.baseline import BASELINE_NAME, DEFAULT_CELL, Baseline
+from specdeck.budget import Budget
 from specdeck.card import parse
 from specdeck.cli import app
 from specdeck.judge import Cassette, criteria_of
 from specdeck.judge import build_prompt as judge_prompt
 from specdeck.lockfile import lock_key
 from specdeck.loop import run_agent
+from specdeck.matrix import Column
+from specdeck.matrix_run import Status, run_matrix
+from specdeck.rates import Rates
 from specdeck.trace import SEMCONV
 
 from . import fake_agent
@@ -601,6 +605,102 @@ class TestTheBaseline:
         result = run(workspace)
         assert result.exit_code == 0, result.stdout
         assert "no column gets a token-regression wire" in " ".join(result.stdout.split())
+
+
+class TestWhatEachColumnCost:
+    """#115: the grid answers "which is the cheapest column that still passes"."""
+
+    def _grid(self, workspace: Path, *extra: str, runs: str = "1", **columns: dict):
+        (workspace / "costed.toml").write_text(matrix_text(**columns))
+        result = run(workspace, *extra, matrix="costed.toml", runs=runs)
+        # The grid is everything above the footer's `spent` line.
+        return result, " ".join(result.stdout.split("spent")[0].split())
+
+    def test_each_priced_column_prints_its_own_estimate_under_credit(self, workspace: Path) -> None:
+        # A million output tokens at Sonnet's $10/M is ~$10 a turn, over two agent turns;
+        # the other column's default 100 in / 20 out is a fraction of a cent. Two figures,
+        # not one total printed twice.
+        result, grid = self._grid(
+            workspace,
+            dear={"model": "claude-sonnet-5", "reply": REPLY, "output_tokens": 1_000_000},
+            cheap={"model": "claude-sonnet-5", "reply": REPLY},
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "cost ~$20.0004 estimate" in grid, grid
+        assert "cost ~$0.0008 estimate" in grid, grid
+        lines = result.stdout.splitlines()
+        credit = next(i for i, line in enumerate(lines) if "credit" in line)
+        assert "cost" in lines[credit + 1], "the cost row sits under credit"
+
+    def test_an_unpriced_column_says_n_a_and_names_the_model_never_zero(
+        self, workspace: Path
+    ) -> None:
+        result, grid = self._grid(
+            workspace,
+            mystery={"model": "claude-sonnet-5", "reply": REPLY, "reported_model": "not-a-model-9"},
+        )
+        assert result.exit_code == 0, result.stdout
+        assert "cost n/a — no rate for not-a-model-9" in grid, grid
+        assert "$0.00" not in grid, grid
+
+    def test_a_stopped_column_shows_what_it_spent_marked_partial(self, workspace: Path) -> None:
+        # Run 1 charges ~$20 and blows a one-cent cap; run 2 is refused, so the column is
+        # stopped — and the $20 it already spent is on the page, not hidden behind n/a.
+        result, grid = self._grid(
+            workspace,
+            "--budget-usd",
+            "0.01",
+            runs="2",
+            sonnet={"model": "claude-sonnet-5", "reply": REPLY, "output_tokens": 1_000_000},
+        )
+        assert result.exit_code == 4, result.stdout
+        assert "stopped" in grid
+        assert "cost ~$20.0004 estimate (rates as of 2026-08-24); partial — stopped" in grid, grid
+
+    def test_the_footer_total_is_unchanged(self, workspace: Path) -> None:
+        result, _ = self._grid(
+            workspace,
+            dear={"model": "claude-sonnet-5", "reply": REPLY, "output_tokens": 1_000_000},
+            cheap={"model": "claude-sonnet-5", "reply": REPLY},
+        )
+        flat = " ".join(result.stdout.split())
+        assert "spent ~$20.0012 estimate (rates as of 2026-08-24), 2 columns" in flat, flat
+
+
+class TestColumnSpendUnderConcurrency:
+    """The attribution itself, without a card: `run_matrix`'s own seam."""
+
+    @staticmethod
+    def _column(name: str) -> Column:
+        return Column(name=name, provider=name, prompt="", model="claude-sonnet-5", config={})
+
+    def test_interleaved_columns_each_carry_only_their_own_spend(self) -> None:
+        # Both columns charge, yield to each other, charge again and raise. A figure taken
+        # as the shared total before and after a column would hand each one the other's
+        # charges; each must carry exactly its own two, marked by status as partial.
+        rates = Rates.builtin()
+        budget = Budget(cap_usd=None, rates=rates)
+        tokens = {"a": 1_000, "b": 1_000_000}
+
+        async def run_column(column: Column):
+            budget.charge("claude-sonnet-5", input_tokens=0, output_tokens=tokens[column.name])
+            await asyncio.sleep(0)
+            budget.charge("claude-sonnet-5", input_tokens=0, output_tokens=tokens[column.name])
+            await asyncio.sleep(0)
+            raise RuntimeError("the adapter fell over")
+
+        result = asyncio.run(
+            run_matrix(
+                [self._column("a"), self._column("b")], run_column, budget=budget, concurrency=2
+            )
+        )
+        for one in result.columns:
+            assert one.status is Status.ERRORED
+            own = rates.estimate(
+                "claude-sonnet-5", input_tokens=0, output_tokens=tokens[one.column.name]
+            )
+            assert one.spent_label == (own + own).label, one
+        assert result.spent_label == budget.spent.label
 
 
 class TestTheSingleCellPathIsUntouched:

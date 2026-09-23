@@ -610,15 +610,23 @@ def _cell_summary(one: ColumnResult | None) -> Text:
     word, style = _STATUS[one.status]
     line = Text()
     line.append(f"{word:<8}", style=style)
-    if one.cell is None:
-        return line
-    line.append(f"gate {one.cell.passes}/{one.cell.runs}", style="dim")
-    credit = (
-        f"  credit {one.cell.credit_mean:g}/{one.cell.credit_total}"
-        if one.cell.credit_mean is not None
-        else "  credit n/a"
-    )
-    line.append(credit, style="dim")
+    if one.cell is not None:
+        line.append(f"gate {one.cell.passes}/{one.cell.runs}", style="dim")
+        credit = (
+            f"  credit {one.cell.credit_mean:g}/{one.cell.credit_total}"
+            if one.cell.credit_mean is not None
+            else "  credit n/a"
+        )
+        line.append(credit, style="dim")
+    if one.spent_label:
+        # Everything this column charged — agent, judge and simulator — so the column
+        # figures sum to the footer's `spent`. A column cut short shows what it spent
+        # before the stop, marked partial: hiding money already charged behind n/a is the
+        # silent spend a cap exists to name.
+        cost = f"\n{'':<8}cost {one.spent_label}"
+        if one.status in (Status.STOPPED_BUDGET, Status.ERRORED):
+            cost += f"; partial — {word}"
+        line.append(cost, style="dim")
     return line
 
 

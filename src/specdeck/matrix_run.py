@@ -65,6 +65,10 @@ class ColumnResult(BaseModel):
     #: Whether an `ERRORED` column raised something `cli.USER_ERRORS` covers. It decides
     #: exit 2 against exit 3, which is the distinction the exit-3 comment exists to hold.
     user_error: bool = False
+    #: What this column alone charged, as `Estimate.label`. Empty for a column that never
+    #: started. For a stopped or errored column it is the spend up to the stop, which the
+    #: grid marks partial.
+    spent_label: str = ""
 
 
 class MatrixResult(BaseModel):
@@ -136,10 +140,16 @@ async def run_matrix(
             except BudgetStop as stop:
                 return ColumnResult(column=column, status=Status.SKIPPED_BUDGET, detail=str(stop))
             try:
-                cell = await run_column(column)
+                with budget.scope(column.name):
+                    cell = await run_column(column)
             except BudgetStop as stop:
                 halted.append(stop)
-                return ColumnResult(column=column, status=Status.STOPPED_BUDGET, detail=str(stop))
+                return ColumnResult(
+                    column=column,
+                    status=Status.STOPPED_BUDGET,
+                    detail=str(stop),
+                    spent_label=budget.spent_in(column.name).label,
+                )
             except Exception as error:
                 # Deliberately broad, and the type is kept rather than flattened: a column
                 # that raised a user error is exit 2 and anything else is exit 3, which is
@@ -149,11 +159,13 @@ async def run_matrix(
                     status=Status.ERRORED,
                     detail=f"{type(error).__name__}: {error}",
                     user_error=isinstance(error, user_errors),
+                    spent_label=budget.spent_in(column.name).label,
                 )
         return ColumnResult(
             column=column,
             status=Status.PASSED if cell.passed else Status.FAILED,
             cell=cell,
+            spent_label=budget.spent_in(column.name).label,
         )
 
     results = list(await asyncio.gather(*(one(column) for column in columns)))
