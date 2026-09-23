@@ -307,7 +307,7 @@ That's the whole argument for the matrix. Not that the expensive model is unnece
 maybe the credit point matters for your product — but that the question stopped being a
 matter of opinion.
 
-Two things it also found, which is why I'm showing you the real output rather than a tidy
+One thing it also found, which is why I'm showing you the real output rather than a tidy
 version of it.
 
 **The cheapest column didn't grade.** `gpt-5-nano` came back
@@ -316,11 +316,6 @@ column, so that's our measuring instrument failing, not their model — and it f
 exactly the column whose answer was most interesting. It's
 [#113](https://github.com/jacquardlabs/specdeck/issues/113), it happens about one cell in
 fifty, and the cause is still unknown. A figure this repo publishes carries that.
-
-**And the grid doesn't print what each column cost.** Look again: there's a total at the
-bottom and nothing per column. I worked out the 33× by hand from `specdeck rates` and a
-calculator, for a report whose entire subject is cost
-([#115](https://github.com/jacquardlabs/specdeck/issues/115)).
 
 The first time I ran this sweep it stopped after two columns:
 
@@ -345,8 +340,6 @@ hard cap is for.
   overwrite each other ([#112](https://github.com/jacquardlabs/specdeck/issues/112))
 - Denial spans still count as executions in coverage and waste
   ([#91](https://github.com/jacquardlabs/specdeck/issues/91))
-- The matrix prints a total and no per-column cost, which is half the question it exists
-  to answer ([#115](https://github.com/jacquardlabs/specdeck/issues/115))
 
 ## The verdict
 

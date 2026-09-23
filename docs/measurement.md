@@ -115,9 +115,7 @@ reason, independent of the model spread below, not to treat the total as a rate.
 
 There is deliberately no table here projecting that to a 25-, 100- or 250-card deck. The
 columns span $5.00/$25.00 per million tokens down to $0.05/$0.40 — a 100× spread on
-input — and the grid reports a total with no per-column breakdown
-([#115](https://github.com/jacquardlabs/specdeck/issues/115)), so $1.5389 cannot be
-decomposed into a per-run rate. Picking a representative one to multiply out would be
+input — so $1.5389 cannot be decomposed into a per-run rate. Picking a representative one to multiply out would be
 substituting a rate under an "estimate" label, which is the single thing `rates.py` refuses
 to do; the prose here follows the same rule as the code.
 
