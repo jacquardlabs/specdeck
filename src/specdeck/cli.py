@@ -678,6 +678,8 @@ def _inputs(path: Path) -> Inputs:
     selector's test of whether a card can run *is* the runner's rather than a second copy
     of it: a recording the diff deleted or renamed away resolves to nothing, and the card
     is selected and fails the run instead of being dropped from a deck that then exits 0.
+    A recording deleted while the glob still matches others resolves away silently, so the
+    glob itself is handed over too and the selector matches the diff against it (#97).
     """
     try:
         card = parse(path)
@@ -686,6 +688,7 @@ def _inputs(path: Path) -> Inputs:
             policy=card.policy_path,
             fixture=card.fixture_path,
             traces=_traces(card, path, [], None),
+            trace_glob=card.context.traces,
         )
     except USER_ERRORS as error:
         return Inputs(card=path, unreadable=str(error))

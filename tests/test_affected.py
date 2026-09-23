@@ -394,6 +394,72 @@ class TestSelectingCards:
         assert selection.cards == [card]
 
 
+def _renamed(old: str, new: str) -> str:
+    return (
+        f"diff --git a/{old} b/{new}\nsimilarity index 100%\nrename from {old}\nrename to {new}\n"
+    )
+
+
+class TestAGlobThatStillMatchesOthers:
+    """#97: a recording the diff took away is gone from the resolved paths, so the card's
+    `traces:` glob is matched too. Over-selection is the safe direction; under-matching is
+    a card silently not run while the deck exits 0."""
+
+    @staticmethod
+    def _card(glob: str, *traces: str) -> Inputs:
+        return _inputs("sub.md", trace_glob=glob, traces=[ROOT / "cards" / one for one in traces])
+
+    def test_a_deleted_recording_under_a_recursive_glob_selects_the_card(self) -> None:
+        card = self._card("traces/**/*.otlp.json", "traces/sub/two.otlp.json")
+        selection = _select(_deleted("cards/traces/sub/one.otlp.json"), deck=[card])
+        assert selection.cards == [card.card]
+        (reason,) = selection.reasons[str(card.card)]
+        assert reason.startswith("trace cards/traces/sub/one.otlp.json deleted")
+        assert "traces/**/*.otlp.json" in reason
+
+    def test_a_deleted_recording_under_a_single_level_glob_selects_the_card(self) -> None:
+        card = self._card("traces/*.json", "traces/two.json")
+        selection = _select(_deleted("cards/traces/one.json"), deck=[card])
+        assert selection.cards == [card.card]
+
+    def test_the_old_side_of_a_renamed_away_recording_selects_the_card(self) -> None:
+        # The new side is outside the glob, so only the old path can select it.
+        card = self._card("traces/*.json", "traces/two.json")
+        body = _renamed("cards/traces/one.json", "cards/archive/one.json")
+        selection = _select(body, deck=[card])
+        assert selection.cards == [card.card]
+        assert selection.reasons[str(card.card)] == [
+            "trace cards/traces/one.json -> cards/archive/one.json renamed"
+            " (matched traces: traces/*.json)"
+        ]
+
+    def test_a_recursive_glob_stands_for_zero_directories_too(self) -> None:
+        # `Path.glob` reads `**/` as zero or more directories; a matcher that required one
+        # would miss exactly the recording that sits directly under `traces/`.
+        card = self._card("traces/**/*.otlp.json", "traces/sub/two.otlp.json")
+        selection = _select(_deleted("cards/traces/a.otlp.json"), deck=[card])
+        assert selection.cards == [card.card]
+
+    def test_a_recursive_glob_between_literal_directories(self) -> None:
+        card = self._card("traces/**/runs/**/*.json", "traces/runs/b.json")
+        for path in ("cards/traces/runs/a.json", "cards/traces/x/runs/y/a.json"):
+            assert _select(_deleted(path), deck=[card]).cards == [card.card], path
+
+    def test_a_dotted_glob_still_matches(self) -> None:
+        card = self._card("./traces/*.json", "traces/two.json")
+        assert _select(_deleted("cards/traces/one.json"), deck=[card]).cards == [card.card]
+
+    def test_a_modified_recording_is_reported_once(self) -> None:
+        card = self._card("traces/*.json", "traces/two.json")
+        selection = _select(_modified("cards/traces/two.json"), deck=[card])
+        assert selection.reasons[str(card.card)] == ["trace cards/traces/two.json modified"]
+
+    def test_a_path_the_glob_cannot_match_selects_nothing(self) -> None:
+        card = self._card("traces/*.json", "traces/two.json")
+        for path in ("cards/traces/notes.txt", "cards/other/one.json", "traces/one.json"):
+            assert _select(_deleted(path), deck=[card]).cards == [], path
+
+
 def _deck_copy(tmp_path: Path) -> Path:
     shutil.copytree(CARDS, tmp_path / "cards")
     return tmp_path
@@ -445,6 +511,19 @@ class TestTheCommand:
         )
         assert result.exit_code == 0, result.stdout
         assert "selected 1 of 5 cards" in " ".join(result.stdout.split())
+
+    def test_deleting_one_of_several_recordings_runs_the_card_over_the_rest(
+        self, tmp_path: Path
+    ) -> None:
+        # #97: the card still resolves to its other recording, so the deleted one is in no
+        # resolved edge — only the glob says the card read it.
+        # The committed deck is the post-diff tree: `.1` is still there, `.2` is gone.
+        root = _deck_copy(tmp_path)
+        result = _run(root, _deleted("cards/traces/escalation-after-repeated-pressure.2.otlp.json"))
+        assert result.exit_code == 0, result.stdout
+        unwrapped = " ".join(result.stdout.split())
+        assert "selected 1 of 5 cards" in unwrapped
+        assert "escalation-after-repeated-pressure.2.otlp.json deleted" in unwrapped
 
     def test_the_evidence_for_the_selection_is_printed(self, tmp_path: Path) -> None:
         root = _deck_copy(tmp_path)

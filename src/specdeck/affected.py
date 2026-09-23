@@ -1,19 +1,20 @@
 """Which cards a diff touches.
 
 **Selection is file-level and nothing more.** A card is selected when the diff touches the
-card file itself, the policy it names, the fixture it names, or any recording its `traces:`
-glob resolves to; a diff touching the lockfile or the vocabulary selects every card,
-because those two pin what "correct" means for the whole deck rather than for one card.
+card file itself, the policy it names, the fixture it names, or any path its `traces:` glob
+matches — resolved, or matched against the glob itself, so a recording the diff deleted or
+renamed away still selects the card while the glob goes on matching others; a diff
+touching the lockfile or the vocabulary selects every card, because those two pin what
+"correct" means for the whole deck rather than for one card.
 There is no clause layer here — see the module's follow-up issue for the two independent
 blockers, one of which is that intersecting the *old* side of a hunk needs the base blob
 that a unified diff does not carry. Hunk ranges are therefore not parsed at all: a range
 nothing reads is a range that drifts.
 
-Two known holes sit outside that edge set on purpose, so neither reads as an oversight:
+One known hole sits outside that edge set on purpose, so it does not read as an oversight:
 the replayed cassette and `spec.baseline.toml` each decide a verdict and neither is an
 edge, because the set above is ratified and enumerated and widening it is a decision rather
-than a fix (#96); and a deleted recording that leaves a card's glob still matching others
-selects nothing (#97).
+than a fix (#96).
 
 Two failures that look alike and must never be conflated:
 
@@ -32,7 +33,10 @@ the caller hands in already-resolved card inputs — and never at the comparison
 
 from __future__ import annotations
 
+import os
+import re
 from collections.abc import Sequence
+from fnmatch import fnmatchcase
 from pathlib import Path
 from typing import Literal
 
@@ -94,6 +98,11 @@ class Inputs(BaseModel):
     policy: Path | None = None
     fixture: Path | None = None
     traces: list[Path] = Field(default_factory=list)
+    #: The `traces:` glob as the card wrote it, unresolved. The resolved `traces` are what
+    #: is on disk *after* the diff, so a recording the diff deleted or renamed away is in
+    #: none of them while the glob still matches others — the glob is what says the card
+    #: read it.
+    trace_glob: str = ""
     unreadable: str = ""
 
 
@@ -206,11 +215,35 @@ def _why(one: Inputs, touched: dict[Path, Change]) -> list[str]:
     edges += [("fixture", one.fixture)] if one.fixture else []
     edges += [("trace", trace) for trace in one.traces]
     lines: list[str] = []
+    seen: list[Change] = []
     for kind, path in edges:
         change = touched.get(path)
-        if change is not None:
+        if change is not None and change not in seen:
+            seen.append(change)
             lines.append(f"{kind} {change.label} {change.status}")
+    if one.trace_glob:
+        pattern = _pattern(one.card.resolve().parent, one.trace_glob)
+        for path, change in touched.items():
+            if change not in seen and fnmatchcase(path.as_posix(), pattern):
+                seen.append(change)
+                lines.append(
+                    f"trace {change.label} {change.status} (matched traces: {one.trace_glob})"
+                )
     return lines
+
+
+def _pattern(root: Path, glob: str) -> str:
+    """`glob` as an `fnmatch` pattern over absolute paths, never narrower than `Path.glob`.
+
+    Every path `root.glob(glob)` matches, this matches — the direction that matters, since a
+    path it missed would be a card silently not run. It may match more, which only selects a
+    card that did not need running. `fnmatch`'s `*` already crosses `/`, which is what makes
+    that hold: `**/` is dropped to `*`, because `Path.glob` reads it as zero or more
+    directories and a pattern that kept its `/` would miss the zero case, `traces/a.json`
+    under `traces/**/*.json`. `PurePath.match` is not used because it goes the other way:
+    its `**` is a `*` that does not cross `/`.
+    """
+    return os.path.normpath(root / re.sub(r"(?:\*\*/)+|\*\*", "*", glob))
 
 
 class _Stanza:

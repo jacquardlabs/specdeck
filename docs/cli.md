@@ -91,8 +91,9 @@ $ git diff origin/main... | uv run specdeck run cards/ --affected-by -
 ```
 
 Selection is **file-level and nothing more**. A card is selected when the diff touches the
-card file itself, the policy it names, the fixture it names, or any recording its `traces:`
-glob resolves to; a diff touching `spec.lock.toml` or the `--vocabulary` file selects every
+card file itself, the policy it names, the fixture it names, or any path its `traces:` glob
+matches — including a recording the diff deleted or renamed away while the glob still
+matches others, so the card runs over the ones that are left; a diff touching `spec.lock.toml` or the `--vocabulary` file selects every
 card, because those two pin what correct means for the whole deck. There is no clause-level
 narrowing — a diff editing one bullet of a shared policy selects every card that names that
 policy, and the two blockers on doing better are in
