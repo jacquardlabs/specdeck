@@ -36,7 +36,7 @@ from .card import Card
 from .introspect import Depth, Introspection
 from .judge import slug
 from .lint import Vocabulary
-from .trace import GenAI, Operation, Trace
+from .trace import Trace
 from .wires import WireError, compile_wires, named_tools
 
 #: A clause starts at a list marker in column zero. `-`, `*`, `+`, `1.` and `1)`.
@@ -329,8 +329,8 @@ def vocabulary_coverage(
     scenario" is a suite-level question, so it needs no card-to-trace binding and does not
     wait on #70 — at the cost that this table cannot say *which* card exercised a tool.
 
-    "Exercised" means an `execute_tool` span was recorded. A tool the model asked for and
-    the runtime refused does not count; #68 is the issue that re-keys that.
+    "Exercised" means a span's `executed_tool` named it. A tool the model asked for and
+    the runtime refused does not count, and nor does the policy component that refused it.
     """
     if vocabulary is None:
         return VocabularyTable(
@@ -345,11 +345,7 @@ def vocabulary_coverage(
             continue  # lint owns `wire-syntax`; a card that does not compile wires nothing
         for tool in named_tools(properties):
             wired.setdefault(tool, []).append(card.path)
-    executed = {
-        str(span.attributes.get(GenAI.TOOL_NAME))
-        for trace in traces
-        for span in trace.of(Operation.EXECUTE_TOOL)
-    }
+    executed = {tool for trace in traces for span in trace.spans if (tool := span.executed_tool)}
     return VocabularyTable(
         rows=[
             ToolRow(tool=tool, wired_by=sorted(wired.get(tool, [])), exercised=tool in executed)
@@ -417,9 +413,10 @@ def _hit_edges(trace: Trace) -> set[tuple[str, str]]:
     """Edges one run traversed. **A recorded interim, in `ir.bound`'s spirit.**
 
     Nothing in the trace schema carries graph-node identity, so this maps a node onto a
-    tool name: an edge is hit when two `execute_tool` spans carrying those names are
-    consecutive in `trace.ordered`. The consequence is stated wherever the figure is
-    printed — see `UNDERSTATED`.
+    tool name: an edge is hit when two spans that executed those tools are consecutive
+    among the executions in `trace.ordered`. A denial ran nothing, so it drops out and the
+    executions either side of it are adjacent. The consequence is stated wherever the
+    figure is printed — see `UNDERSTATED`.
 
     Temporal order, never the span tree: `loop.py` parents every tool span under the last
     chat span, so the tree gives no tool-to-tool adjacency at all.
@@ -429,11 +426,7 @@ def _hit_edges(trace: Trace) -> set[tuple[str, str]]:
     (https://github.com/jacquardlabs/specdeck/issues/89); replacing this is then a
     one-function change.
     """
-    names = [
-        str(span.attributes.get(GenAI.TOOL_NAME))
-        for span in trace.ordered
-        if span.operation is Operation.EXECUTE_TOOL
-    ]
+    names = [tool for span in trace.ordered if (tool := span.executed_tool)]
     return set(pairwise(names))
 
 

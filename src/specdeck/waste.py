@@ -127,7 +127,7 @@ def _step(index: int, span: Span) -> Step:
     return Step(
         index=index,
         is_chat=span.operation is Operation.CHAT,
-        tool_name=str(span.attributes.get(GenAI.TOOL_NAME) or ""),
+        tool_name=span.executed_tool or "",
         arguments=_arguments(span.attributes.get(GenAI.TOOL_CALL_ARGUMENTS)),
         result=None if result is None else str(result),
         failed=_failed(span, result),

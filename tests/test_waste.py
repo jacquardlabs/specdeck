@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import json
 
-from specdeck.trace import ERROR_TYPE, GenAI, Operation, SpanEvent, Trace
+from specdeck.trace import ERROR_TYPE, GenAI, Operation, SpanEvent, Specdeck, Trace
 from specdeck.waste import (
     N_STALE,
     STALE_HIGH_THRESHOLD,
@@ -40,11 +40,15 @@ def tool(
     *,
     offset: float,
     failed: bool = False,
+    denied: str | None = None,
 ) -> object:
+    """An `execute_tool` span; with `denied`, a refusal of that tool by `name`."""
     attributes: dict[str, object] = {
         GenAI.TOOL_NAME: name,
         GenAI.TOOL_CALL_ARGUMENTS: json.dumps(arguments),
     }
+    if denied is not None:
+        attributes[Specdeck.DENIED_TOOL] = denied
     if result is not None:
         attributes[GenAI.TOOL_CALL_RESULT] = result
     if failed:
@@ -397,3 +401,37 @@ class TestBothClassifiers:
         findings = classify(trace(*spans))
         assert {f.kind for f in findings} == {Kind.RETRY_LOOP, Kind.STALE_CONTEXT}
         assert [f.first_span for f in findings] == sorted(f.first_span for f in findings)
+
+
+class TestDenials:
+    """specdeck-only: a denial is not a tool call (#68), so neither classifier reads one.
+
+    On a denial span `gen_ai.tool.name` is the policy component that refused, so a raw
+    read would see `runtime_policy` failing on repeat, or carrying a large refusal.
+    """
+
+    def refusal(self, span_id: str, result: str, *, offset: float) -> object:
+        return tool(
+            span_id,
+            "runtime_policy",
+            {"command": "rm -rf /"},
+            result,
+            offset=offset,
+            failed=True,
+            denied="Bash",
+        )
+
+    def test_repeated_identical_denials_are_not_a_retry_loop(self) -> None:
+        spans = [root()]
+        for index in range(4):
+            spans.append(chat(f"c{index}", offset=1.0 + 2 * index))
+            spans.append(self.refusal(f"t{index}", "Error: refused", offset=2.0 + 2 * index))
+        assert classify(trace(*spans)) == []
+
+    def test_a_large_refusal_carried_past_n_stale_is_not_stale_context(self) -> None:
+        spans = [root(), chat("c0", offset=1.0), self.refusal("t0", LARGE, offset=2.0)]
+        spans += [
+            chat(f"cs{index}", offset=3.0 + index, text="unrelated work here")
+            for index in range(N_STALE + 2)
+        ]
+        assert classify(trace(*spans)) == []

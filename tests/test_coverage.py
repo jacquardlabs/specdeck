@@ -12,6 +12,7 @@ from specdeck.card import parse, parse_text
 from specdeck.coverage import (
     CoverageError,
     PathCoverage,
+    _hit_edges,
     collect,
     extract_clauses,
     path_coverage,
@@ -20,7 +21,7 @@ from specdeck.coverage import (
 )
 from specdeck.introspect import Depth, introspect
 from specdeck.lint import Vocabulary, cards_under
-from specdeck.trace import GenAI, Operation, Trace
+from specdeck.trace import GenAI, Operation, Specdeck, Trace
 
 from .fake_agent import BareAgent, FakeAgent
 from .test_trace import span, trace
@@ -231,6 +232,20 @@ class TestVocabularyCoverage:
         table = vocabulary_coverage(cards, Vocabulary(tools={"pay_invoice"}), [])
         assert table.rows[0].wired_by
 
+    def test_a_denied_tool_is_not_exercised_and_neither_is_the_policy_that_refused_it(
+        self,
+    ) -> None:
+        denied = trace(
+            span("root", Operation.INVOKE_AGENT, parent=None, duration=60.0),
+            span("tool-0", Operation.EXECUTE_TOOL, offset=1.0, **{GenAI.TOOL_NAME: "a"}),
+            span("tool-1", Operation.EXECUTE_TOOL, offset=2.0, **_denial("cancel_reservation")),
+        )
+        table = vocabulary_coverage(
+            deck(), Vocabulary(tools={"cancel_reservation", "runtime_policy", "a"}), [denied]
+        )
+        exercised = {row.tool: row.exercised for row in table.rows}
+        assert exercised == {"a": True, "cancel_reservation": False, "runtime_policy": False}
+
 
 class TestCoverageCanNeverGate:
     def test_the_module_imports_no_severity_and_no_finding(self) -> None:
@@ -257,6 +272,12 @@ class TestCoverageCanNeverGate:
             assert not names & {"passed", "ok", "failed", "errors"}
 
 
+def _denial(tool: str) -> dict[str, object]:
+    """A refused call, traced the way #68 fixes it: the policy component in
+    `gen_ai.tool.name`, the refused tool in `specdeck.denied_tool`."""
+    return {GenAI.TOOL_NAME: "runtime_policy", Specdeck.DENIED_TOOL: tool}
+
+
 def _recorded():
     """A committed OTLP export, which executes `get_invoice`."""
     from specdeck.traceio import load_trace
@@ -270,6 +291,8 @@ class TestPathCoverage:
     def _trace(self, *tools: str) -> Trace:
         """A run that executed these tools in this order, all under one chat span.
 
+        A name written `!x` is a denial of `x` rather than an execution of it.
+
         Parented the way `loop` parents them — every tool under the same chat — so a
         reading that used the span tree instead of temporal order would find no adjacency.
         """
@@ -282,7 +305,7 @@ class TestPathCoverage:
             for index in range(len(tools))
         ]
         for one, name in zip(spans[2:], tools, strict=True):
-            one.attributes[GenAI.TOOL_NAME] = name
+            one.attributes |= _denial(name[1:]) if name.startswith("!") else {GenAI.TOOL_NAME: name}
         return trace(*spans)
 
     def test_a_recorded_trace_run_has_no_denominator_and_says_so(self) -> None:
@@ -339,6 +362,20 @@ class TestPathCoverage:
     def test_a_trace_with_no_tool_spans_yields_nothing(self) -> None:
         agent = FakeAgent([], edges=[("a", "b")])
         assert path_coverage(introspect(agent), [self._trace()]).covered == 0
+
+    def test_a_denial_is_not_a_node_so_the_executions_either_side_of_it_are_adjacent(
+        self,
+    ) -> None:
+        """Nothing ran at a denial, so the path is the executions around it: `a` then `b`.
+
+        One equality pins all of it — no edge into or out of the refused tool, none through
+        the policy component that refused it, and the two real executions joined.
+        """
+        assert _hit_edges(self._trace("x", "a", "!c", "b", "y")) == {
+            ("x", "a"),
+            ("a", "b"),
+            ("b", "y"),
+        }
 
     def test_it_round_trips_as_json_with_its_tuples_intact(self) -> None:
         agent = FakeAgent([], edges=[("a", "b")])
