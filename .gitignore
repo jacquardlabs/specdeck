@@ -36,7 +36,6 @@ coverage.xml
 
 # Agent tool state (never commit local session state)
 .gg/
-.studious/
 .viva/
 
 # Live-run output (cassettes are committed; live results are not)
